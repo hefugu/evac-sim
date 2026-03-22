@@ -1,0 +1,224 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>避難システム（管理画面）</title>
+<style>
+body {
+  margin: 0;
+  background: #111;
+  color: #eee;
+  font-family: sans-serif;
+  overflow: hidden;
+}
+#canvas {
+  width: 100vw;
+  height: 100vh;
+  display: block;
+  background: #222;
+}
+.panel {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  background: #000a;
+  padding: 8px;
+  border-radius: 8px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+button, select, input {
+  background: #333;
+  color: #eee;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 3px 5px;
+}
+.mode-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+</style>
+</head>
+<body>
+<div class="panel">
+  <div>
+    <label>階層: </label><select id="floorSelect"></select>
+    <button id="addFloorBtn">＋階追加</button>
+  </div>
+  <div class="mode-btns">
+    <button data-mode="fire">火災</button>
+    <button data-mode="exit">出口</button>
+    <button data-mode="stair">階段</button>
+    <button data-mode="stairLink">階段リンク</button>
+    <button data-mode="none">通常</button>
+  </div>
+  <div>
+    <button id="startBtn">避難開始</button>
+    <button id="stopBtn">避難終了</button>
+    <span id="timer">--</span>
+  </div>
+  <input type="file" id="mapInput" />
+</div>
+<canvas id="canvas"></canvas>
+
+<script>
+const cvs = document.getElementById("canvas");
+const ctx = cvs.getContext("2d");
+const ws = new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.hostname+":8000/ws");
+const clientId = "admin-"+Math.random().toString(36).slice(2);
+
+const floorSelect = document.getElementById("floorSelect");
+const mapInput = document.getElementById("mapInput");
+const timerEl = document.getElementById("timer");
+const startBtn = document.getElementById("startBtn");
+const stopBtn = document.getElementById("stopBtn");
+const addFloorBtn = document.getElementById("addFloorBtn");
+
+let maps = {};
+let currentFloor = 1;
+let mode = "none";
+let fireRad = 30;
+let stairLinkBuffer = [];
+let evacStartTime = null;
+let evacTimer = null;
+
+function setupHiDPI() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = cvs.clientWidth, h = cvs.clientHeight;
+  if (cvs.width !== w*dpr || cvs.height !== h*dpr) {
+    cvs.width = w*dpr;
+    cvs.height = h*dpr;
+  }
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+
+function draw() {
+  setupHiDPI();
+  ctx.clearRect(0,0,cvs.clientWidth,cvs.clientHeight);
+  const fd = maps[currentFloor];
+  if(!fd||!fd.img)return;
+  const scale=Math.min(cvs.clientWidth/fd.img.width,cvs.clientHeight/fd.img.height);
+  const ox=(cvs.clientWidth-fd.img.width*scale)/2;
+  const oy=(cvs.clientHeight-fd.img.height*scale)/2;
+  ctx.drawImage(fd.img,ox,oy,fd.img.width*scale,fd.img.height*scale);
+  ctx.save();
+  ctx.translate(ox,oy);
+  ctx.scale(scale,scale);
+
+  if(fd.fire){
+    ctx.strokeStyle="red";ctx.beginPath();
+    ctx.arc(fd.fire.x,fd.fire.y,fd.fire.rad,0,Math.PI*2);ctx.stroke();
+  }
+  ctx.fillStyle="yellow";
+  fd.exits?.forEach(([x,y])=>{ctx.beginPath();ctx.arc(x,y,6,0,Math.PI*2);ctx.fill();});
+  ctx.fillStyle="lime";
+  fd.stairs?.forEach(([x,y])=>{ctx.beginPath();ctx.arc(x,y,6,0,Math.PI*2);ctx.fill();});
+  ctx.restore();
+}
+
+function refreshFloorSelect() {
+  const keys = Object.keys(maps).map(Number).sort((a,b)=>a-b);
+  floorSelect.innerHTML = keys.map(f=>`<option value="${f}" ${f===currentFloor?"selected":""}>${f}階</option>`).join("");
+}
+
+document.querySelectorAll(".mode-btns button").forEach(b=>{
+  b.onclick=()=>{mode=b.dataset.mode;};
+});
+
+addFloorBtn.onclick=()=>{
+  const nf = Math.max(0,...Object.keys(maps).map(Number),0)+1;
+  maps[nf]={};
+  currentFloor=nf;
+  refreshFloorSelect();
+  draw();
+};
+
+floorSelect.onchange=()=>{
+  currentFloor=parseInt(floorSelect.value);
+  draw();
+};
+
+mapInput.onchange=async e=>{
+  const f=e.target.files[0];
+  if(!f)return;
+  const form=new FormData();
+  form.append("file",f);
+  form.append("floor",currentFloor);
+  const res=await fetch("/api/map",{method:"POST",body:form});
+  const js=await res.json();
+  const img=new Image();
+  img.src=js.url;
+  img.onload=()=>{
+    maps[currentFloor]={img,exits:[],stairs:[]};
+    refreshFloorSelect();
+    draw();
+  };
+};
+
+cvs.addEventListener("pointerdown",async e=>{
+  const fd=maps[currentFloor];
+  if(!fd||!fd.img)return;
+  const rect=cvs.getBoundingClientRect();
+  const scale=Math.min(cvs.clientWidth/fd.img.width,cvs.clientHeight/fd.img.height);
+  const ox=(cvs.clientWidth-fd.img.width*scale)/2;
+  const oy=(cvs.clientHeight-fd.img.height*scale)/2;
+  const x=Math.round((e.clientX-rect.left-ox)/scale);
+  const y=Math.round((e.clientY-rect.top-oy)/scale);
+
+  if(mode==="fire"){
+    await fetch("/api/fire",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({floor:currentFloor,x,y,rad:fireRad})});
+    fd.fire={x,y,rad:fireRad};
+  } else if(mode==="exit"){
+    fd.exits=fd.exits||[];
+    fd.exits.push([x,y]);
+    await fetch("/api/exits",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({floor:currentFloor,exits:fd.exits.map(([xx,yy])=>({x:xx,y:yy}))})});
+  } else if(mode==="stair"){
+    fd.stairs=fd.stairs||[];
+    fd.stairs.push([x,y]);
+    await fetch("/api/stairs",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({floor:currentFloor,stairs:fd.stairs.map(([xx,yy])=>({x:xx,y:yy}))})});
+  } else if(mode==="stairLink"){
+    stairLinkBuffer.push({floor:currentFloor,x,y});
+    if(stairLinkBuffer.length===2){
+      const [a,b]=stairLinkBuffer;
+      const upper=a.floor>b.floor?a.floor:b.floor;
+      const lower=a.floor<b.floor?a.floor:b.floor;
+      await fetch("/api/stair_link",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({upper,lower,pairs:[{up:{x:a.x,y:a.y},down:{x:b.x,y:b.y}}]})});
+      stairLinkBuffer=[];
+      alert(`${upper}階 ↔ ${lower}階 階段リンク設定完了`);
+    }
+  }
+  draw();
+});
+
+startBtn.onclick=()=>{
+  evacStartTime=Date.now();
+  evacTimer=setInterval(()=>{
+    const t=(Date.now()-evacStartTime)/1000;
+    timerEl.textContent=t.toFixed(1)+" s";
+  },100);
+  fetch("/api/evac",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({status:"start"})});
+};
+
+stopBtn.onclick=()=>{
+  if(evacTimer){clearInterval(evacTimer);}
+  const t=(Date.now()-evacStartTime)/1000;
+  timerEl.textContent=t.toFixed(1)+" s";
+  fetch("/api/evac",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({status:"stop",time:t})});
+};
+
+window.addEventListener("resize",draw);
+draw();
+</script>
+</body>
+</html>

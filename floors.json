@@ -1,0 +1,16 @@
+{
+  "floors": {
+    "0": {
+      "floor_id": 0,
+      "map_filename": "1F.png",
+      "width": 600,
+      "height": 800,
+      "white_thr": 200,
+      "exits": [],
+      "stairs": [],
+      "fire": null,
+      "fire_rad": 0
+    }
+  },
+  "links": []
+}

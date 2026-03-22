@@ -1,0 +1,1233 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>避難シミュレーション</title>
+  <style>
+    :root {
+      --bg: #050104;
+      --panel: #220007dd;
+      --accent: #e0002a;
+      --accent-soft: #aa0022;
+      --accent-warn: #ff6600;
+      --text-main: #f4f0f0;
+      --text-dim: #b08080;
+      --grid-line: #440011;
+    }
+    * {
+      box-sizing: border-box;
+      user-select: none;
+    }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at top left,#330000,#050104 60%);
+      color: var(--text-main);
+      font-family: "Consolas","Menlo",monospace;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+    }
+    #leftPanel {
+      width: 320px;
+      padding: 10px 12px;
+      background: linear-gradient(#150006,#050104);
+      border-right: 1px solid #550011;
+      box-shadow: 0 0 20px #000;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      position: relative;
+      z-index: 2;
+    }
+    #leftPanel::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border: 1px solid #550011;
+      pointer-events: none;
+      box-shadow: 0 0 25px #ff003044;
+    }
+    #mainArea {
+      flex: 1;
+      position: relative;
+      background: #080509;
+    }
+    #simCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: radial-gradient(circle at center,#201016,#020003);
+    }
+    h1 {
+      margin: 0 0 6px;
+      font-size: 14px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent-warn);
+    }
+    .sectionTitle {
+      font-size: 11px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      border-bottom: 1px solid #44000f;
+      padding-bottom: 3px;
+      margin-bottom: 4px;
+    }
+    .block {
+      background: var(--panel);
+      border: 1px solid #44000f;
+      padding: 6px 7px;
+      box-shadow: 0 0 16px #000;
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      margin-bottom: 4px;
+      font-size: 11px;
+    }
+    .row label {
+      flex: 0 0 100px;
+    }
+    .row input[type="number"],
+    .row input[type="range"],
+    .row select {
+      flex: 1;
+      background: #120008;
+      color: var(--text-main);
+      border: 1px solid #550011;
+      padding: 2px 4px;
+      border-radius: 3px;
+      font-size: 11px;
+    }
+    input[type="range"] {
+      accent-color: var(--accent-warn);
+    }
+    .modeButtons,
+    .simButtons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 4px;
+    }
+    button {
+      cursor: pointer;
+      border-radius: 3px;
+      border: 1px solid #550011;
+      background: #190008;
+      color: var(--text-main);
+      padding: 4px 6px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      transition: all 0.12s ease-out;
+      position: relative;
+      overflow: hidden;
+    }
+    button::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(120deg, transparent, #ff003022, transparent);
+      transform: translateX(-120%);
+      transition: transform 0.25s linear;
+    }
+    button:hover::before {
+      transform: translateX(120%);
+    }
+    button:hover {
+      border-color: var(--accent);
+      box-shadow: 0 0 12px #ff002044;
+      background: #26000c;
+    }
+    button.modeActive {
+      background: var(--accent-soft);
+      border-color: var(--accent);
+      box-shadow: 0 0 10px #ff003055;
+    }
+    button.danger {
+      border-color: var(--accent-warn);
+      color: var(--accent-warn);
+    }
+    button.danger.modeActive {
+      background: #661a00;
+      color: #ffe0c0;
+    }
+    #floorLabel {
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+    #log {
+      width: 100%;
+      height: 150px;
+      background: #090006;
+      border: 1px solid #44000f;
+      color: #f3d0d0;
+      font-size: 10px;
+      padding: 4px;
+      resize: none;
+    }
+    #overlayHUD {
+      position: absolute;
+      right: 10px;
+      bottom: 10px;
+      background: #150005dd;
+      border: 1px solid #550011;
+      padding: 6px 8px;
+      font-size: 11px;
+      min-width: 200px;
+      color: var(--text-dim);
+    }
+    #overlayHUD strong {
+      color: var(--accent-warn);
+    }
+    .badge {
+      padding: 1px 4px;
+      border-radius: 999px;
+      border: 1px solid #660011;
+      font-size: 9px;
+      text-transform: uppercase;
+      margin-left: 4px;
+      color: #ffaaaa;
+    }
+    #statusBar {
+      font-size: 11px;
+      color: var(--accent-warn);
+      margin-top: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    @keyframes pulseWarn {
+      0%,100% { box-shadow: 0 0 6px #ff660033; }
+      50% { box-shadow: 0 0 16px #ff6600aa; }
+    }
+    .pulse {
+      animation: pulseWarn 1.2s infinite;
+    }
+  </style>
+</head>
+<body>
+  <div id="leftPanel">
+    <h1>EVAC FLOW SIMULATOR</h1>
+
+    <div class="block">
+      <div class="sectionTitle">MAP</div>
+      <div class="row">
+        <label>マップ画像</label>
+        <input type="file" id="mapFile" accept="image/*">
+      </div>
+      <div class="row">
+        <label>白閾値</label>
+        <input type="range" id="thrRange" min="120" max="255" value="200">
+      </div>
+      <div class="row">
+        <label id="floorLabel">単一フロア・シミュ</label>
+        <span style="font-size:10px;color:var(--text-dim);">（白＝通路、黒＝壁）</span>
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="sectionTitle">編集モード</div>
+      <div class="modeButtons">
+        <button id="modeSpawn" data-mode="spawn">SPAWN</button>
+        <button id="modeExit" data-mode="exit">EXIT</button>
+        <button id="modeFire" data-mode="fire" class="danger">FIRE</button>
+        <button id="modeErase" data-mode="erase">ERASE</button>
+        <button id="btnMonte">MC x100</button>
+      </div>
+      <div style="margin-top:4px;font-size:10px;color:var(--text-dim);">
+        左クリック：配置／削除<br>
+        Spawn…群集の初期位置<br>
+        Exit…出口<br>
+        Fire…進入禁止ゾーン扱い
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="sectionTitle">人流パラメータ</div>
+      <div class="row">
+        <label>人数</label>
+        <input type="number" id="numAgents" min="1" max="2000" value="80">
+      </div>
+      <div class="row">
+        <label>平均速度[m/s]</label>
+        <input type="number" id="speed" min="0.2" max="4" step="0.1" value="1.2">
+      </div>
+      <div class="row">
+        <label>スピードバラつき[%]</label>
+        <input type="number" id="speedVar" min="0" max="100" value="25">
+      </div>
+      <div class="row">
+        <label>セル=何m</label>
+        <input type="number" id="cellSizeMeters" min="0.2" max="2" step="0.1" value="0.5">
+      </div>
+      <div class="simButtons">
+        <button id="btnStart" class="danger pulse">SIM START</button>
+        <button id="btnStop">STOP</button>
+        <button id="btnReset">RESET</button>
+        <button id="btnClearMap">CLEAR</button>
+      </div>
+      <div id="statusBar">待機中 - マップを読み込み、SpawnとExitを配置して下さい。</div>
+    </div>
+
+    <div class="block">
+      <div class="sectionTitle">
+        レポート
+        <span class="badge">AUTO</span>
+      </div>
+      <textarea id="log" readonly></textarea>
+    </div>
+  </div>
+
+  <div id="mainArea">
+    <canvas id="simCanvas"></canvas>
+
+    <div id="overlayHUD">
+      <div>TIME: <strong id="hudTime">0.0 s</strong></div>
+      <div>EVAC: <strong id="hudEvac">0 / 0</strong></div>
+      <div>AVG: <strong id="hudAvg">--</strong>  MAX: <strong id="hudMax">--</strong></div>
+    </div>
+  </div>
+
+<script>
+  // ==== 基本セットアップ ====
+  const cvs = document.getElementById("simCanvas");
+  const ctx = cvs.getContext("2d");
+
+  function resizeCanvas() {
+    const dpr = window.devicePixelRatio || 1;
+    const rect = cvs.getBoundingClientRect();
+    const w = rect.width;
+    const h = rect.height;
+    if (cvs.width !== w * dpr || cvs.height !== h * dpr) {
+      cvs.width = w * dpr;
+      cvs.height = h * dpr;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawScene();
+  }
+  window.addEventListener("resize", resizeCanvas);
+
+  // ==== UI参照 ====
+  const mapFileInput = document.getElementById("mapFile");
+  const thrRange = document.getElementById("thrRange");
+  const numAgentsInput = document.getElementById("numAgents");
+  const speedInput = document.getElementById("speed");
+  const speedVarInput = document.getElementById("speedVar");
+  const cellSizeMetersInput = document.getElementById("cellSizeMeters");
+
+  const btnStart = document.getElementById("btnStart");
+  const btnStop = document.getElementById("btnStop");
+  const btnReset = document.getElementById("btnReset");
+  const btnClearMap = document.getElementById("btnClearMap");
+  const btnMonte = document.getElementById("btnMonte");
+
+  const logEl = document.getElementById("log");
+  const statusBar = document.getElementById("statusBar");
+
+  const modeButtons = {
+    spawn: document.getElementById("modeSpawn"),
+    exit: document.getElementById("modeExit"),
+    fire: document.getElementById("modeFire"),
+    erase: document.getElementById("modeErase")
+  };
+
+  const hudTime = document.getElementById("hudTime");
+  const hudEvac = document.getElementById("hudEvac");
+  const hudAvg = document.getElementById("hudAvg");
+  const hudMax = document.getElementById("hudMax");
+
+  // ==== マップ / グリッド ====
+  let baseImage = null;
+  let grid = null;        // {walkable:boolean, fire:boolean}
+  let gridW = 0, gridH = 0;
+  const CELL_SIZE_PX = 4; // 元画像→セルへの縮小倍率
+
+  let exits = [];         // {cx,cy}
+  let spawns = [];        // {cx,cy,r}
+  let mode = "spawn";
+
+  // ==== シミュレーション ====
+  let agents = [];        // {x,y,cx,cy,v,finished,startTime,finishTime}
+  let simRunning = false;
+  let simTime = 0;
+  let lastFrameTime = 0;
+  let heatmap = null;     // 滞留回数
+
+  let maxHeatCell = null;
+  let maxHeatValue = 0;
+
+  let smokeMap = null; 
+  let smokeCeil = null; 
+
+  let mcRunning = false;
+  let mcRuns = 0;
+  let mcTargetRuns = 100;
+  let mcResults = [];
+
+  function log(line) {
+    const ts = new Date().toISOString().slice(11,19);
+    logEl.value = `[${ts}] ${line}\n` + logEl.value;
+  }
+
+  function setStatus(text) {
+    statusBar.textContent = text;
+  }
+
+  function setMode(m) {
+    mode = m;
+    Object.entries(modeButtons).forEach(([k,btn]) => {
+      btn.classList.toggle("modeActive", k === m);
+    });
+    setStatus(`モード: ${m.toUpperCase()}`);
+  }
+
+  // ==== マップ読み込みとグリッド生成 ====
+  mapFileInput.addEventListener("change", e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const img = new Image();
+    img.onload = () => {
+      baseImage = img;
+      buildGridFromImage();
+      resetSim(true);
+      log(`マップ読み込み: ${file.name} (${img.width}x${img.height}px)`);
+    };
+    img.src = URL.createObjectURL(file);
+  });
+
+  thrRange.addEventListener("input", () => {
+    if (!baseImage) return;
+    buildGridFromImage();
+    resetSim(true);
+  });
+
+  function buildGridFromImage() {
+    if (!baseImage) return;
+    // 画像をオフスクリーンに描画してピクセル取得
+    const tmp = document.createElement("canvas");
+    const tctx = tmp.getContext("2d");
+    tmp.width = baseImage.width;
+    tmp.height = baseImage.height;
+    tctx.drawImage(baseImage, 0, 0);
+    const imgData = tctx.getImageData(0, 0, baseImage.width, baseImage.height).data;
+
+    gridW = Math.floor(baseImage.width / CELL_SIZE_PX);
+    gridH = Math.floor(baseImage.height / CELL_SIZE_PX);
+    grid = new Array(gridH);
+    for (let y = 0; y < gridH; y++) {
+      grid[y] = new Array(gridW);
+      for (let x = 0; x < gridW; x++) {
+        // セル内中央の画素で判定
+        const px = x * CELL_SIZE_PX + Math.floor(CELL_SIZE_PX / 2);
+        const py = y * CELL_SIZE_PX + Math.floor(CELL_SIZE_PX / 2);
+        const idx = (py * baseImage.width + px) * 4;
+        const r = imgData[idx], g = imgData[idx+1], b = imgData[idx+2];
+        const thr = parseInt(thrRange.value, 10);
+        const walk = (r > thr && g > thr && b > thr);
+        grid[y][x] = { walkable: walk, fire: false };
+      }
+    }
+    exits = [];
+    spawns = [];
+    heatmap = new Array(gridH).fill(null).map(() => new Array(gridW).fill(0));
+    smokeMap  = new Array(gridH).fill(null).map(() => new Array(gridW).fill(0));
+    smokeCeil = new Array(gridH).fill(null).map(() => new Array(gridW).fill(false));
+    setStatus("グリッド生成完了。Spawn/Exit/Fire を設定してください。");
+    drawScene();
+  }
+
+  // ==== キャンバス座標 → セル座標 ====
+  function worldLayout() {
+    if (!baseImage) {
+      const rect = cvs.getBoundingClientRect();
+      return { scale: 1, ox: 0, oy: 0, w: rect.width, h: rect.height };
+    }
+    const rect = cvs.getBoundingClientRect();
+    const imgW = baseImage.width;
+    const imgH = baseImage.height;
+    const s = Math.min(rect.width / imgW, rect.height / imgH);
+    const ox = (rect.width - imgW * s) / 2;
+    const oy = (rect.height - imgH * s) / 2;
+    return { scale: s, ox, oy, w: rect.width, h: rect.height };
+  }
+
+  function canvasToCell(clientX, clientY) {
+    if (!baseImage || !grid) return null;
+    const rect = cvs.getBoundingClientRect();
+    const { scale, ox, oy } = worldLayout();
+    const x = (clientX - rect.left - ox) / scale;
+    const y = (clientY - rect.top - oy) / scale;
+    const cx = Math.floor(x / CELL_SIZE_PX);
+    const cy = Math.floor(y / CELL_SIZE_PX);
+    if (cx < 0 || cy < 0 || cx >= gridW || cy >= gridH) return null;
+    return { cx, cy };
+  }
+
+  // ==== モードごとのクリック処理 ====
+  cvs.addEventListener("pointerdown", e => {
+    if (!grid) return;
+    const cell = canvasToCell(e.clientX, e.clientY);
+    if (!cell) return;
+    const { cx, cy } = cell;
+    const cellObj = grid[cy][cx];
+
+    if (mode === "spawn") {
+      spawns.push({ cx, cy, r: 0 }); // rは将来用（今は点）
+      log(`Spawn 追加: (${cx},${cy})`);
+    } else if (mode === "exit") {
+      exits.push({ cx, cy });
+      log(`Exit 追加: (${cx},${cy})`);
+    } else if (mode === "fire") {
+      cellObj.fire = true;
+      cellObj.walkable = false;
+      log(`Fire 設定: (${cx},${cy})`);
+    } else if (mode === "erase") {
+      // spawn/exit/fire を全部消す
+      spawns = spawns.filter(p => !(p.cx === cx && p.cy === cy));
+      exits = exits.filter(p => !(p.cx === cx && p.cy === cy));
+      cellObj.fire = false;
+      // 壁に戻すか通路に戻すかは再生成時まで不明なので、とりあえず通路扱い
+      cellObj.walkable = true;
+      if (smokeMap) smokeMap[cy][cx] = 0;
+      log(`マーカー削除: (${cx},${cy})`);
+    }
+
+    drawScene();
+  });
+
+  // ==== ポテンシャル場法：計算関数 ====
+  function computePotentialField() {
+    if (!grid || exits.length === 0) return null;
+    
+    const potential = new Array(gridH).fill(null)
+      .map(() => new Array(gridW).fill(Infinity));
+    
+    // 初期化：出口のポテンシャルを0に設定
+    for (let i = 0; i < exits.length; i++) {
+      const {cx, cy} = exits[i];
+      if (grid[cy][cx].walkable) {
+        potential[cy][cx] = 0;
+      }
+    }
+    
+    // BFS で通路のみでポテンシャルを計算（基準値）
+    const q = [];
+    exits.forEach(({cx,cy}) => {
+      if (grid[cy][cx].walkable && isFinite(potential[cy][cx])) {
+        q.push({cx,cy});
+      }
+    });
+    
+    const dirs = [
+      {dx:1,dy:0,c:1},{dx:-1,dy:0,c:1},
+      {dx:0,dy:1,c:1},{dx:0,dy:-1,c:1},
+      {dx:1,dy:1,c:1.414},{dx:-1,dy:1,c:1.414},
+      {dx:1,dy:-1,c:1.414},{dx:-1,dy:-1,c:1.414}
+    ];
+    
+    let qi = 0;
+    while (qi < q.length) {
+      const {cx,cy} = q[qi++];
+      const base = potential[cy][cx];
+      
+      for (const d of dirs) {
+        const nx = cx + d.dx, ny = cy + d.dy;
+        if (nx<0 || ny<0 || nx>=gridW || ny>=gridH) continue;
+        if (!grid[ny][nx].walkable) continue;
+        
+        const newPot = base + d.c;
+        if (newPot < potential[ny][nx]) {
+          potential[ny][nx] = newPot;
+          q.push({cx:nx, cy:ny});
+        }
+      }
+    }
+    
+    // ポテンシャル値を保存（後で勾配計算に使用）
+    return potential;
+  }
+
+  // ==== エージェント生成 ====
+  function spawnAgents() {
+    agents = [];
+    if (!grid || spawns.length === 0 || exits.length === 0) {
+      alert("Spawn と Exit の両方が必要です。");
+      return false;
+    }
+    const n = Math.max(1, Math.floor(parseInt(numAgentsInput.value, 10) || 1));
+    const baseSpeed = parseFloat(speedInput.value) || 1.0;
+    const varPct = Math.max(0, Math.min(100, parseFloat(speedVarInput.value) || 0));
+    const cellMeters = parseFloat(cellSizeMetersInput.value) || 0.5;
+
+    // ポテンシャル場（出口からのポテンシャル）
+    const potentialField = computePotentialField();
+    if (!potentialField) {
+      alert("出口に到達できる通路がありません。");
+      return false;
+    }
+
+    const walkableCells = [];
+    for (let y=0; y<gridH; y++) {
+      for (let x=0; x<gridW; x++) {
+        if (grid[y][x].walkable) walkableCells.push({cx:x, cy:y});
+      }
+    }
+    if (walkableCells.length === 0) {
+      alert("通路セルが存在しません。");
+      return false;
+    }
+
+    for (let i=0; i<n; i++) {
+      // spawn の中からランダムで選択 → 近傍 walkable を探す
+      let chosen = null;
+      for (let retry=0; retry<20 && !chosen; retry++) {
+        const sp = spawns[Math.floor(Math.random()*spawns.length)];
+        const {cx,cy} = sp;
+        if (cx>=0 && cy>=0 && cx<gridW && cy<gridH && grid[cy][cx].walkable) {
+          chosen = {cx,cy};
+        }
+      }
+      if (!chosen) {
+        chosen = walkableCells[Math.floor(Math.random()*walkableCells.length)];
+      }
+
+      // 速度ランダム
+      const k = (Math.random()*2-1) * (varPct/100);
+      const speedMps = baseSpeed * (1 + k);    // m/s
+      const speedCellsPerSec = speedMps / cellMeters;
+
+      agents.push({
+        cx: chosen.cx,
+        cy: chosen.cy,
+        x: chosen.cx,
+        y: chosen.cy,
+        v: speedCellsPerSec,
+        finished: false,
+        startTime: simTime,
+        finishTime: null,
+        potentialField
+      });
+    }
+
+    heatmap = new Array(gridH).fill(null).map(() => new Array(gridW).fill(0));
+    smokeMap  = new Array(gridH).fill(null).map(() => new Array(gridW).fill(0));
+    smokeCeil = new Array(gridH).fill(null).map(() => new Array(gridW).fill(false));
+    log(`エージェント生成: ${agents.length}人, 平均速度=${baseSpeed}m/s, ばらつき=${varPct}%`);
+    return true;
+  }
+
+  // ==== シミュレーション制御 ====
+  function resetSim() {
+    //simstop
+    simRunning = false;
+
+    //timereset
+    simTime = 0;
+    lastFrameTime = 0;
+
+    //agentsclear
+    agents = [];
+
+    //HUDreset
+    hudTime.textContent = "0.0 s";
+    hudEvac.textContent = "0 / 0";
+    hudAvg.textContent = "--";
+    hudMax.textContent = "--";
+
+    //heatmapreset
+    if (grid) {
+      heatmap = new Array(gridH)
+        .fill(null)
+        .map(() => new Array(gridW).fill(0));
+
+      smokeMap = new Array(gridH)
+        .fill(null)
+        .map(() => new Array(gridW).fill(0));
+
+      smokeCeil = new Array(gridH)
+        .fill(null)
+        .map(() => new Array(gridW).fill(false));
+    }
+
+    maxHeatCell = null;
+    maxHeatValue = 0;
+
+    //UI状態
+    btnStart.disabled = null;
+    btnStart.classList.add("pulse");
+
+    drawScene();
+  }
+
+  btnReset.addEventListener("click", () => {
+    resetSim(false);
+    log("シミュレーションをリセットしました。");
+    setStatus("リセット完了。");
+  });
+
+  btnClearMap.addEventListener("click", () => {
+    spawns = [];
+    exits = [];
+    if (grid) {
+      for (let y=0;y<gridH;y++)for(let x=0;x<gridW;x++){
+        grid[y][x].fire=false;
+      }
+    }
+    log("Spawn/Exit/Fire マーカーを全消去しました。");
+    drawScene();
+  });
+
+  btnMonte.addEventListener("click", () => {
+
+  if (!baseImage || !grid) {
+    alert("先にマップを読み込んでください。");
+    return;
+  }
+
+  mcRunning = true;
+  mcRuns = 0;
+  mcResults = [];
+
+  log("MonteCarlo開始: " + mcTargetRuns + " runs");
+
+  startSimulation();
+
+});
+ btnStart.addEventListener("click", () => {
+  startSimulation();
+  });
+
+  function startSimulation() {
+    
+    if (!baseImage || !grid) {
+      alert("先にマップを読み込んでください。");
+      return false;
+    }
+    if (!spawnAgents()) return false;
+    simRunning = true;
+    simTime = 0;
+    lastFrameTime = performance.now();
+    btnStart.disabled = true;
+    btnStart.classList.remove("pulse");
+    setStatus("シミュレーション実行中…");
+    requestAnimationFrame(loop);
+
+    return true;
+  };
+
+  btnStop.addEventListener("click", () => {
+
+  if (!simRunning) return;
+
+  simRunning = false;
+
+  summarize();
+
+  setStatus("手動停止しました。");
+  log("シミュレーションを手動停止。");
+
+});
+  // ==== メインループ ====
+  function loop(now) {
+    if (!simRunning) return;
+    if (!lastFrameTime) lastFrameTime = now;
+    const dt = (now - lastFrameTime) / 1000; // sec
+    lastFrameTime = now;
+    simTime += dt;
+
+    stepSimulation(dt);
+    drawScene();
+    requestAnimationFrame(loop);
+  }
+
+  function stepSimulation(dt) {
+    // === 煙の生成・拡散 ===
+// ==============================
+// 煙シミュレーション（物理寄り）
+// ==============================
+if (smokeMap && grid) {
+
+  const cellMeters = parseFloat(cellSizeMetersInput.value) || 0.5;
+
+  // 実世界スピード
+  const SMOKE_UP_MPS = 4.0;      // 上昇 3〜5m/s → 平均
+  const SMOKE_H_MPS  = 0.75;     // 水平 0.5〜1m/s
+
+  // セル換算
+  const upStep     = (SMOKE_UP_MPS / cellMeters) * dt;
+  const spreadStep = (SMOKE_H_MPS  / cellMeters) * dt;
+
+  const nextSmoke = new Array(gridH).fill(null)
+    .map(() => new Array(gridW).fill(0));
+
+  const nextCeil = smokeCeil.map(row => row.slice());
+
+  for (let y = 0; y < gridH; y++) {
+    for (let x = 0; x < gridW; x++) {
+
+      // 壁は煙なし（Fire除く）
+      if (!grid[y][x].walkable && !grid[y][x].fire) continue;
+
+      // --- Fireセル：煙を無限供給 ---
+     if (grid[y][x].fire) {
+      nextSmoke[y][x] = 3.0;
+      nextCeil[y][x] = true;
+      const dirs4 = [
+        {dx:1,dy:0},{dx:-1,dy:0},
+        {dx:0,dy:1},{dx:0,dy:-1}
+      ];
+      for (const d of dirs4) {
+        const nx = x + d.dx;
+        const ny = y + d.dy;
+        if (nx>=0 && ny>=0 && nx<gridW && ny<gridH && grid[ny][nx].walkable) {
+          nextSmoke[ny][nx] += 1.2; // 初期噴出
+          }
+        }
+        continue;
+      }
+
+
+      let s = smokeMap[y][x];
+      if (s <= 0.0001) continue;
+
+      let remain = s;
+
+      // =====================
+      // ① 上昇フェーズ（最大で50%まで）
+      // =====================
+      if (!smokeCeil[y][x]) {
+        const upAmount = Math.min(upStep, remain * 0.5);
+        const ny = y - 1; // 上に移動
+        if (ny >= 0 && grid[ny][x].walkable) {
+          nextSmoke[ny][x] += upAmount;
+          remain -= upAmount;
+        } else {
+          // 天井に達した
+          nextCeil[y][x] = true;
+        }
+      }
+
+      // =====================
+      // ② 水平拡散（常に実行）
+      // =====================
+      if (remain > 0.001) {
+        const dirs = [
+          {dx:1, dy:0},
+          {dx:-1, dy:0},
+          {dx:0, dy:1},
+          {dx:0, dy:-1}
+        ];
+
+        let targets = [];
+        for (const d of dirs) {
+          const nx = x + d.dx;
+          const ny = y + d.dy;
+          if (
+            nx>=0 && ny>=0 &&
+            nx<gridW && ny<gridH &&
+            grid[ny][nx].walkable
+          ) {
+            targets.push({x:nx, y:ny});
+          }
+        }
+
+        if (targets.length > 0) {
+          // 拡散率を強める
+          const DIFFUSE = 0.75;
+          const move = remain * DIFFUSE;
+          const per = move / targets.length;
+
+          for (const t of targets) {
+            nextSmoke[t.y][t.x] += per;
+          }
+
+          remain -= move;
+        }
+      }
+
+      // 残留分
+      nextSmoke[y][x] += remain;
+    }
+  }
+
+  // 正規化
+  for (let y = 0; y < gridH; y++) {
+    for (let x = 0; x < gridW; x++) {
+      nextSmoke[y][x] = Math.min(3.0, nextSmoke[y][x]);
+    }
+  }
+
+  smokeMap = nextSmoke;
+  smokeCeil = nextCeil;
+}
+
+
+    if (!agents || agents.length === 0) return;
+
+    const dirs = [
+      {dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1},
+      {dx:1,dy:1},{dx:-1,dy:1},{dx:1,dy:-1},{dx:-1,dy:-1}
+    ];
+
+    let finishedCount = 0;
+    const cellMeters = parseFloat(cellSizeMetersInput.value) || 0.5;
+
+    agents.forEach(a => {
+      if (a.finished) {
+        finishedCount++;
+        return;
+      }
+      const potentialField = a.potentialField;
+      const cx = Math.round(a.x);
+      const cy = Math.round(a.y);
+      if (cx<0||cy<0||cx>=gridW||cy>=gridH) {
+        a.finished = true;
+        a.finishTime = simTime;
+        finishedCount++;
+        return;
+      }
+      const curPot = potentialField[cy][cx];
+      if (!isFinite(curPot) || curPot < 0.01) {
+        a.finished = true;
+        a.finishTime = simTime;
+        finishedCount++;
+        return;
+      }
+
+      // ポテンシャル場法：ポテンシャル勾配に従う
+      let bestScore = -Infinity;
+      let best = null;
+
+      for (const d of dirs) {
+        const nx = cx + d.dx;
+        const ny = cy + d.dy;
+
+        if (nx<0||ny<0||nx>=gridW||ny>=gridH) continue;
+        if (!grid[ny][nx].walkable) continue;
+
+        // ポテンシャル勾配：現在地との差（正なら出口に近づいている）
+        const nextPot = potentialField[ny][nx];
+        let score = curPot - nextPot;
+
+        // 混雑回避(斥力)
+        if (heatmap) {
+          score -= heatmap[ny][nx] * 0.02;
+        }
+
+        // 煙回避(斥力)
+        if (smokeMap) {
+          score -= smokeMap[ny][nx] * 3.0;
+        }
+
+        if (score > bestScore) {
+          bestScore = score;
+          best = d;
+        }
+      }
+      if(!best){
+        best = {dx:0,dy:0};
+      }
+      let speedFactor = 1;
+
+const gx = Math.round(a.x);
+const gy = Math.round(a.y);
+
+if (smokeMap && gx>=0 && gy>=0 && gx<gridW && gy<gridH) {
+
+  const smoke = smokeMap[gy][gx];
+
+  // 煙濃度で速度低下
+  speedFactor = Math.max(0.25, 1 - smoke * 0.35);
+
+}
+
+const stepCells = a.v * speedFactor * dt;
+
+a.x += best.dx * stepCells;
+a.y += best.dy * stepCells;
+      const gx2 = Math.round(a.x);
+      const gy2 = Math.round(a.y);
+      if (gx2>=0 && gy2>=0 && gx2<gridW && gy2<gridH) {
+        heatmap[gy2][gx2] += 1;
+      }
+    });
+
+    // HUD更新
+    hudTime.textContent = simTime.toFixed(1) + " s";
+    hudEvac.textContent = `${finishedCount} / ${agents.length}`;
+
+    if (finishedCount === agents.length) {
+      simRunning = false;
+      summarize();
+      setStatus("全員の避難が完了しました。");
+      log("全エージェントの避難完了。");
+      drawScene();
+    }
+        // === 混雑セル算出 ===
+    maxHeatValue = 0;
+    maxHeatCell = null;
+    if (heatmap) {
+      for (let y = 0; y < gridH; y++) {
+        for (let x = 0; x < gridW; x++) {
+          if (heatmap[y][x] > maxHeatValue) {
+            maxHeatValue = heatmap[y][x];
+            maxHeatCell = { x, y };
+          }
+        }
+      }
+    }
+  }
+
+  // ==== サマリ生成 ====
+  function summarize() {
+    if (!agents || agents.length === 0) return;
+    const finished = agents.filter(a => a.finishTime != null);
+    if (finished.length === 0) return;
+
+    const times = finished.map(a => a.finishTime - a.startTime);
+    const minT = Math.min(...times);
+    const maxT = Math.max(...times);
+    const avgT = times.reduce((a,b)=>a+b,0) / times.length;
+
+    // ヒートマップ最大値
+    let maxHeat = 0, maxHeatCell = null;
+    if (heatmap) {
+      for (let y=0;y<gridH;y++)for(let x=0;x<gridW;x++){
+        if (heatmap[y][x] > maxHeat) {
+          maxHeat = heatmap[y][x];
+          maxHeatCell = {x,y};
+        }
+      }
+    }
+
+    hudAvg.textContent = avgT.toFixed(1) + " s";
+    hudMax.textContent = maxT.toFixed(1) + " s";
+
+    const cellMeters = parseFloat(cellSizeMetersInput.value) || 0.5;
+
+    const reportLines = [];
+    reportLines.push(`■ 人流シミュレーション結果`);
+    reportLines.push(`  - 総人数: ${agents.length} 人`);
+    reportLines.push(`  - 最初の脱出: ${minT.toFixed(1)} s`);
+    reportLines.push(`  - 最後の脱出: ${maxT.toFixed(1)} s`);
+    reportLines.push(`  - 平均避難時間: ${avgT.toFixed(1)} s`);
+    reportLines.push(``);
+    if (maxHeatCell) {
+      const mx = maxHeatCell.x, my = maxHeatCell.y;
+      const crowdLevel =
+        maxHeat > 200 ? "極めて高密度" :
+        maxHeat > 80  ? "高密度" :
+        maxHeat > 30  ? "やや混雑" :
+        maxHeat > 10  ? "ほぼスムーズ" :
+                        "ほぼ通行なし";
+      reportLines.push(`■ 混雑ボトルネック`);
+      reportLines.push(`  - 座標(セル): (${mx},${my})`);
+      reportLines.push(`  - 通過回数: ${maxHeat} 回`);
+      reportLines.push(`  - 評価: ${crowdLevel}`);
+      reportLines.push(``);
+    }
+    reportLines.push(`■ 文章サマリ`);
+    reportLines.push(
+      `  約 ${agents.length} 人が、平均 ${avgT.toFixed(1)} 秒で出口に到達しました。` +
+      `最も遅い避難は ${maxT.toFixed(1)} 秒で、主な滞留箇所はセル(${maxHeatCell?maxHeatCell.x:"?"},${maxHeatCell?maxHeatCell.y:"?"}) 付近です。` +
+      `この地点は局所的なボトルネックとなっており、通路幅の拡張や出口の追加で改善できる可能性があります。`
+    );
+
+    logEl.value = reportLines.join("\n") + "\n\n" + logEl.value;
+
+    // MonteCarlo処理
+if (mcRunning) {
+
+  mcResults.push({
+    avg: avgT,
+    max: maxT
+  });
+
+  mcRuns++;
+
+  if (mcRuns < mcTargetRuns) {
+
+    resetSim();
+    startSimulation();
+
+  } else {
+
+    mcRunning = false;
+
+    const avgAll =
+      mcResults.reduce((s,r)=>s+r.avg,0) / mcResults.length;
+
+    const maxAll =
+      Math.max(...mcResults.map(r=>r.max));
+
+    log("MonteCarlo結果");
+    log("平均避難時間平均: " + avgAll.toFixed(2) + " s");
+    log("最悪ケース: " + maxAll.toFixed(2) + " s");
+
+    setStatus("MonteCarlo完了");
+  }
+}
+  }
+
+  // ==== 描画 ====
+  function drawScene() {
+    const rect = cvs.getBoundingClientRect();
+    ctx.clearRect(0, 0, rect.width, rect.height);
+
+    const layout = worldLayout();
+    const { scale, ox, oy } = layout;
+
+    // ベース画像
+    if (baseImage) {
+      ctx.drawImage(baseImage, ox, oy, baseImage.width*scale, baseImage.height*scale);
+    } else {
+      ctx.strokeStyle = "#330011";
+      ctx.strokeRect(20, 20, rect.width-40, rect.height-40);
+      ctx.fillStyle = "#501020";
+      ctx.fillText("マップ画像を読み込んでください", 40, 50);
+      return;
+    }
+
+    // グリッドオーバーレイ（薄く）
+    if (grid) {
+      ctx.save();
+      ctx.translate(ox, oy);
+      ctx.scale(scale, scale);
+
+      ctx.strokeStyle = "rgba(80,0,40,0.25)";
+      ctx.lineWidth = 0.2;
+      for (let y=0; y<=gridH; y++) {
+        ctx.beginPath();
+        ctx.moveTo(0, y*CELL_SIZE_PX);
+        ctx.lineTo(gridW*CELL_SIZE_PX, y*CELL_SIZE_PX);
+        ctx.stroke();
+      }
+      for (let x=0; x<=gridW; x++) {
+        ctx.beginPath();
+        ctx.moveTo(x*CELL_SIZE_PX, 0);
+        ctx.lineTo(x*CELL_SIZE_PX, gridH*CELL_SIZE_PX);
+        ctx.stroke();
+      }
+
+      // Fireセル
+      ctx.fillStyle = "rgba(255,40,40,0.5)";
+      for (let y=0;y<gridH;y++)for(let x=0;x<gridW;x++){
+        if (grid[y][x].fire) {
+          ctx.fillRect(x*CELL_SIZE_PX, y*CELL_SIZE_PX, CELL_SIZE_PX, CELL_SIZE_PX);
+        }
+      }
+      // Smokeセル
+// Smokeセル描画
+// Smokeセル描画（グレースケール・段階強調）
+if (smokeMap) {
+  for (let y = 0; y < gridH; y++) {
+    for (let x = 0; x < gridW; x++) {
+      const s = smokeMap[y][x];
+      if (s <= 0.02) continue;
+
+      // ===== 視覚用スケーリング =====
+      const v = Math.min(s / 2.0, 1.0); // 0〜1 に潰す
+
+      let gray, alpha;
+
+      if (v < 0.33) {
+        // 薄煙：明るい灰
+        gray  = 180;
+        alpha = 0.35;
+      } else if (v < 0.66) {
+        // 中煙：濃い灰
+        gray  = 110;
+        alpha = 0.65;
+      } else {
+        // 濃煙：ほぼ黒
+        gray  = 40;
+        alpha = 0.9;
+      }
+
+      ctx.fillStyle = `rgba(${gray},${gray},${gray},${alpha})`;
+      ctx.fillRect(
+        x * CELL_SIZE_PX,
+        y * CELL_SIZE_PX,
+        CELL_SIZE_PX,
+        CELL_SIZE_PX
+      );
+
+      // 濃煙は重ね塗り（重要）
+      if (v > 0.66) {
+        ctx.fillStyle = "rgba(0,0,0,0.25)";
+        ctx.fillRect(
+          x * CELL_SIZE_PX,
+          y * CELL_SIZE_PX,
+          CELL_SIZE_PX,
+          CELL_SIZE_PX
+        );
+      }
+    }
+  }
+}
+
+
+
+      // Exit
+      ctx.fillStyle = "#ffdd33";
+      exits.forEach(p => {
+        const px = (p.cx+0.5)*CELL_SIZE_PX;
+        const py = (p.cy+0.5)*CELL_SIZE_PX;
+        ctx.beginPath();
+        ctx.arc(px, py, CELL_SIZE_PX*0.6, 0, Math.PI*2);
+        ctx.fill();
+      });
+
+      // Spawn
+      ctx.fillStyle = "#33ffaa";
+      spawns.forEach(p => {
+        const px = (p.cx+0.5)*CELL_SIZE_PX;
+        const py = (p.cy+0.5)*CELL_SIZE_PX;
+        ctx.beginPath();
+        ctx.arc(px, py, CELL_SIZE_PX*0.6, 0, Math.PI*2);
+        ctx.fill();
+      });
+
+      // Agents
+      if (agents && agents.length > 0) {
+        agents.forEach(a => {
+          const px = (a.x+0.5)*CELL_SIZE_PX;
+          const py = (a.y+0.5)*CELL_SIZE_PX;
+          ctx.fillStyle = a.finished ? "#8888ff" : "#ff3366";
+          ctx.beginPath();
+          ctx.arc(px, py, CELL_SIZE_PX*0.4, 0, Math.PI*2);
+          ctx.fill();
+        });
+      }
+            // === 最混雑セルのハイライト ===
+      if (!simRunning && maxHeatCell && maxHeatValue > 5) {
+        const px = (maxHeatCell.x + 0.5) * CELL_SIZE_PX;
+        const py = (maxHeatCell.y + 0.5) * CELL_SIZE_PX;
+        const pulse = 0.5 + 0.5 * Math.sin(simTime * 4);
+        ctx.strokeStyle = `rgba(255,120,0,${pulse})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(px, py, CELL_SIZE_PX * (1.2 + pulse), 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      ctx.restore();
+      
+    }
+  }
+
+  // ==== 初期化 ====
+  Object.values(modeButtons).forEach(btn => {
+    btn.addEventListener("click", () => setMode(btn.dataset.mode));
+  });
+
+  setMode("spawn");
+  resizeCanvas();
+  setStatus("マップを読み込み、Spawn/Exit/Fire を設定して SIM START を押してください。");
+</script>
+</body>
+</html>

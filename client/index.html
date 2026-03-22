@@ -1,0 +1,196 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>避難案内（子機）</title>
+<style>
+body {
+  margin: 0;
+  background: #111;
+  color: #eee;
+  font-family: sans-serif;
+}
+#canvas {
+  width: 100vw;
+  height: 100vh;
+  display: block;
+  background: #222;
+  touch-action: none;
+}
+.hud {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  background: #000a;
+  padding: 8px 10px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 10;
+}
+select {
+  background: #333;
+  color: #eee;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 3px 6px;
+}
+</style>
+</head>
+<body>
+<div class="hud">
+  <span>階層:</span>
+  <select id="floorSelect"></select>
+
+  <button onclick="resetBoard()">リセット</button>
+  <span>タップで現在地を送信</span>
+</div>
+<canvas id="canvas"></canvas>
+
+<script>
+const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.hostname + ":8000/ws";
+const ws = new WebSocket(wsUrl);
+const clientId = "c-" + Math.random().toString(36).slice(2);
+
+const cvs = document.getElementById("canvas");
+const ctx = cvs.getContext("2d");
+const floorSelect = document.getElementById("floorSelect");
+
+let maps = {};  // floor -> {img, fire, exits, ...}
+let currentFloor = null;
+let routes = [];  // 複数階層のルート {floor, points}
+let lastPos = null;
+
+function setupHiDPI() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = cvs.clientWidth, h = cvs.clientHeight;
+  if (cvs.width !== w * dpr || cvs.height !== h * dpr) {
+    cvs.width = w * dpr;
+    cvs.height = h * dpr;
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function computeLayout(w, h) {
+  const vw = cvs.clientWidth, vh = cvs.clientHeight;
+  const s = Math.min(vw / w, vh / h);
+  return { scale: s, ox: (vw - w * s) / 2, oy: (vh - h * s) / 2 };
+}
+
+function draw() {
+  setupHiDPI();
+  ctx.clearRect(0, 0, cvs.clientWidth, cvs.clientHeight);
+
+  const fd = maps[currentFloor];
+  if (!fd || !fd.img) return;
+
+  const { scale, ox, oy } = computeLayout(fd.img.width, fd.img.height);
+  ctx.drawImage(fd.img, ox, oy, fd.img.width * scale, fd.img.height * scale);
+
+  ctx.save();
+  ctx.translate(ox, oy);
+  ctx.scale(scale, scale);
+
+  // 現在階のルートだけ描画
+  routes.forEach(r => {
+    if (r.floor !== currentFloor) return;
+    if (r.points.length > 1) {
+      ctx.strokeStyle = "#ff0";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      r.points.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+      ctx.stroke();
+    }
+  });
+
+  // 火災表示
+  if (fd.fire) {
+    ctx.strokeStyle = "red";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(fd.fire.x, fd.fire.y, fd.fire.rad, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // 現在地
+  if (lastPos) {
+    ctx.fillStyle = "#0ff";
+    ctx.beginPath();
+    ctx.arc(lastPos.x, lastPos.y, 5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+window.addEventListener("resize", draw);
+
+cvs.addEventListener("pointerdown", e => {
+  if (!currentFloor) return;
+  const rect = cvs.getBoundingClientRect();
+  const fd = maps[currentFloor];
+  if (!fd || !fd.img) return;
+  const { scale, ox, oy } = computeLayout(fd.img.width, fd.img.height);
+  const x = Math.round((e.clientX - rect.left - ox) / scale);
+  const y = Math.round((e.clientY - rect.top - oy) / scale);
+  lastPos = { x, y };
+  ws.send(JSON.stringify({ type: "pos", client_id: clientId, floor: currentFloor, x, y }));
+});
+
+ws.onopen = () => {
+  ws.send(JSON.stringify({ type: "hello", client_id: clientId }));
+};
+
+ws.onmessage = ev => {
+  const msg = JSON.parse(ev.data);
+
+  if (msg.type === "map") {
+    const f = msg.floor;
+    const image = new Image();
+    image.src = msg.url;
+    image.onload = () => {
+      maps[f] = { img: image };
+      if (currentFloor === null) {
+        currentFloor = f;
+      }
+      updateFloorSelect();
+      draw();
+    };
+  } 
+  else if (msg.type === "fire") {
+    const fd = maps[msg.floor] || {};
+    fd.fire = { x: msg.x, y: msg.y, rad: msg.rad };
+    maps[msg.floor] = fd;
+    if (msg.floor === currentFloor) draw();
+  } 
+  else if (msg.type === "route_full") {
+    routes = msg.routes || [];
+    draw();
+  } 
+  else if (msg.type === "evac") {
+    if (msg.status === "start") alert("避難開始！");
+    else if (msg.status === "stop") alert("避難終了: " + msg.time.toFixed(1) + "秒");
+  }
+  else if (msg.type === "reset") {
+    maps = {};
+    routes = [];
+    lastPos = null;
+    currentFloor = null;
+    floorSelect.innerHTML = "";
+    draw();
+  }
+};
+
+function updateFloorSelect() {
+  const keys = Object.keys(maps).map(Number).sort((a, b) => a - b);
+  floorSelect.innerHTML = keys.map(f => `<option value="${f}" ${f === currentFloor ? "selected" : ""}>${f}階</option>`).join("");
+}
+
+floorSelect.addEventListener("change", () => {
+  currentFloor = parseInt(floorSelect.value);
+  draw();
+});
+</script>
+</body>
+</html>
