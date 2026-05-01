@@ -1,4 +1,4 @@
-﻿  // ==== Basic Setup ====
+  // ==== Basic Setup ====
   const cvs = document.getElementById("simCanvas");
   const ctx = cvs.getContext("2d");
 
