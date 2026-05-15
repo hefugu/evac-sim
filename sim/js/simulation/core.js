@@ -4,6 +4,7 @@ import { createRenderer } from "../renderer.js";
 import { computePotentialFieldFromSeedsModule } from "./potential.js";
 import { clamp, parseNum} from "../utils/helpers.js";
 import { downloadCsvReport } from "../export/csv.js";
+import { loadImageFromFile } from "../mapLoader.js";
 let runtimeControls = {
   start: null,
   stop: null,
@@ -809,19 +810,6 @@ export function initSimulation() {
   }
 
   // ==== Map Loading and Grid Build ====
-  function loadImageFromFile(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = () => reject(new Error("failed_to_read_file"));
-      reader.onload = () => {
-        const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error("failed_to_decode_image"));
-        img.src = String(reader.result || "");
-      };
-      reader.readAsDataURL(file);
-    });
-  }
 
   mapFileInput.addEventListener("change", async e => {
     const file = e.target.files?.[0];
