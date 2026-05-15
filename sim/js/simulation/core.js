@@ -3,6 +3,7 @@ import { state, syncLegacyState } from "../state.js";
 import { createRenderer } from "../renderer.js";
 import { computePotentialFieldFromSeedsModule } from "./potential.js";
 import { clamp, parseNum} from "../utils/helpers.js";
+import { csvEscape } from "../export/csv.js";
 let runtimeControls = {
   start: null,
   stop: null,
@@ -791,11 +792,6 @@ export function initSimulation() {
         `開始ルール=${h.startRule}, プリセット=${h.agentPreset}, 逆最適化=${h.optimizeReverse ? "ON" : "OFF"}`
       );
     });
-  }
-
-  function csvEscape(v) {
-    const s = (v ?? "").toString();
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   }
 
   function downloadCsv() {
