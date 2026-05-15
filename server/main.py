@@ -5,7 +5,7 @@ import os
 import numpy as np
 import uvicorn
 from fastapi import FastAPI, File, Form, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
@@ -22,6 +22,8 @@ ADMIN_DIR = os.path.join(BASE, "../admin")
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+app.mount("/sim/styles", StaticFiles(directory=os.path.join(SIM_DIR, "styles")), name="sim_styles")
+app.mount("/sim/js", StaticFiles(directory=os.path.join(SIM_DIR, "js")), name="sim_js")
 
 
 # -----------------------
@@ -289,7 +291,7 @@ def admin():
 
 @app.get("/sim")
 def sim():
-    return FileResponse(os.path.join(SIM_DIR, "index.html"))
+    return RedirectResponse(url="/sim/", status_code=307)
 
 
 @app.get("/sim/")
@@ -307,6 +309,11 @@ def sim_script():
     return FileResponse(
         os.path.join(SIM_DIR, "simulation.js"), media_type="application/javascript"
     )
+
+
+@app.get("/favicon.ico")
+def favicon():
+    return Response(status_code=204)
 
 
 # -----------------------
