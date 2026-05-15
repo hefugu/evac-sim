@@ -1,0 +1,70 @@
+.modeButtons,
+.simButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+button {
+  cursor: pointer;
+  border-radius: 3px;
+  border: 1px solid #550011;
+  background: #190008;
+  color: var(--text-main);
+  padding: 4px 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  transition: all 0.12s ease-out;
+  position: relative;
+  overflow: hidden;
+}
+
+button::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, transparent, #ff003022, transparent);
+  transform: translateX(-120%);
+  transition: transform 0.25s linear;
+}
+
+button:hover::before {
+  transform: translateX(120%);
+}
+
+button:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 12px #ff002044;
+  background: #26000c;
+}
+
+button.modeActive {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  box-shadow: 0 0 10px #ff003055;
+}
+
+button.danger {
+  border-color: var(--accent-warn);
+  color: var(--accent-warn);
+}
+
+button.danger.modeActive {
+  background: #661a00;
+  color: #ffe0c0;
+}
+
+@keyframes pulseWarn {
+  0%, 100% {
+    box-shadow: 0 0 6px #ff660033;
+  }
+  50% {
+    box-shadow: 0 0 16px #ff6600aa;
+  }
+}
+
+.pulse {
+  animation: pulseWarn 1.2s infinite;
+}

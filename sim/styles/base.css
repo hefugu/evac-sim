@@ -1,0 +1,33 @@
+:root {
+  --bg: #050104;
+  --panel: #220007dd;
+  --accent: #e0002a;
+  --accent-soft: #aa0022;
+  --accent-warn: #ff6600;
+  --text-main: #f4f0f0;
+  --text-dim: #b08080;
+  --grid-line: #440011;
+}
+
+* {
+  box-sizing: border-box;
+  user-select: none;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(circle at top left, #330000, #050104 60%);
+  color: var(--text-main);
+  font-family: "Consolas", "Menlo", monospace;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+}
+
+h1 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent-warn);
+}

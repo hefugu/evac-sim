@@ -1,5 +1,32 @@
-﻿  // ==== Basic Setup ====
-  const cvs = document.getElementById("simCanvas");
+﻿import { bindCoreControls, getUIRefs } from "../ui.js";
+import { state, syncLegacyState } from "../state.js";
+import { createRenderer } from "../renderer.js";
+import { computePotentialFieldFromSeedsModule } from "./potential.js";
+
+let runtimeControls = {
+  start: null,
+  stop: null,
+  reset: null
+};
+
+export function startSimulation() {
+  return runtimeControls.start ? runtimeControls.start() : false;
+}
+
+export function stopSimulation() {
+  return runtimeControls.stop ? runtimeControls.stop() : false;
+}
+
+export function resetSimulation() {
+  return runtimeControls.reset ? runtimeControls.reset() : false;
+}
+
+export function initSimulation() {
+  const ui = getUIRefs();
+  state.ui.refs = ui;
+
+  // ==== Basic Setup ====
+  const cvs = ui.simCanvas;
   const ctx = cvs.getContext("2d");
 
   function resizeCanvas() {
@@ -12,66 +39,67 @@
       cvs.height = h * dpr;
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    syncPublicState();
     drawScene();
   }
   window.addEventListener("resize", resizeCanvas);
 
   // ==== UI References ====
-  const mapFileInput = document.getElementById("mapFile");
-  const thrRange = document.getElementById("thrRange");
-  const numAgentsInput = document.getElementById("numAgents");
-  const speedInput = document.getElementById("speed");
-  const speedVarInput = document.getElementById("speedVar");
-  const cellSizeMetersInput = document.getElementById("cellSizeMeters");
-  const startRuleInput = document.getElementById("startRule");
-  const floorCountInput = document.getElementById("floorCount");
-  const currentFloorSelect = document.getElementById("currentFloor");
-  const btnApplyFloors = document.getElementById("btnApplyFloors");
-  const osmCenterInput = document.getElementById("osmCenter");
-  const osmZoomInput = document.getElementById("osmZoom");
-  const btnLoadOSM = document.getElementById("btnLoadOSM");
+  const mapFileInput = ui.mapFileInput;
+  const thrRange = ui.thrRange;
+  const numAgentsInput = ui.numAgentsInput;
+  const speedInput = ui.speedInput;
+  const speedVarInput = ui.speedVarInput;
+  const cellSizeMetersInput = ui.cellSizeMetersInput;
+  const startRuleInput = ui.startRuleInput;
+  const floorCountInput = ui.floorCountInput;
+  const currentFloorSelect = ui.currentFloorSelect;
+  const btnApplyFloors = ui.btnApplyFloors;
+  const osmCenterInput = ui.osmCenterInput;
+  const osmZoomInput = ui.osmZoomInput;
+  const btnLoadOSM = ui.btnLoadOSM;
 
-  const btnStart = document.getElementById("btnStart");
-  const btnStop = document.getElementById("btnStop");
-  const btnReset = document.getElementById("btnReset");
-  const btnClearMap = document.getElementById("btnClearMap");
-  const btnMonte = document.getElementById("btnMonte");
-  const btnAnalyze = document.getElementById("btnAnalyze");
-  const btnOptimizeExit = document.getElementById("btnOptimizeExit");
-  const btnAutoImprove = document.getElementById("btnAutoImprove");
-  const btnSavePreset = document.getElementById("btnSavePreset");
-  const btnLoadPreset = document.getElementById("btnLoadPreset");
-  const btnExportCsv = document.getElementById("btnExportCsv");
-  const btnParamHistory = document.getElementById("btnParamHistory");
-  const optimizeReverseInput = document.getElementById("optimizeReverse");
+  const btnStart = ui.btnStart;
+  const btnStop = ui.btnStop;
+  const btnReset = ui.btnReset;
+  const btnClearMap = ui.btnClearMap;
+  const btnMonte = ui.btnMonte;
+  const btnAnalyze = ui.btnAnalyze;
+  const btnOptimizeExit = ui.btnOptimizeExit;
+  const btnAutoImprove = ui.btnAutoImprove;
+  const btnSavePreset = ui.btnSavePreset;
+  const btnLoadPreset = ui.btnLoadPreset;
+  const btnExportCsv = ui.btnExportCsv;
+  const btnParamHistory = ui.btnParamHistory;
+  const optimizeReverseInput = ui.optimizeReverseInput;
 
-  const logEl = document.getElementById("log");
-  const statusBar = document.getElementById("statusBar");
-  const floorLabel = document.getElementById("floorLabel");
-  const presetNameInput = document.getElementById("presetName");
-  const presetSelect = document.getElementById("presetSelect");
+  const logEl = ui.logEl;
+  const statusBar = ui.statusBar;
+  const floorLabel = ui.floorLabel;
+  const presetNameInput = ui.presetNameInput;
+  const presetSelect = ui.presetSelect;
 
-  const vizTrailsInput = document.getElementById("vizTrails");
-  const vizFlowInput = document.getElementById("vizFlow");
-  const vizPotentialInput = document.getElementById("vizPotential");
-  const potentialViewModeInput = document.getElementById("potentialViewMode");
-  const potentialExitIndexInput = document.getElementById("potentialExitIndex");
+  const vizTrailsInput = ui.vizTrailsInput;
+  const vizFlowInput = ui.vizFlowInput;
+  const vizPotentialInput = ui.vizPotentialInput;
+  const potentialViewModeInput = ui.potentialViewModeInput;
+  const potentialExitIndexInput = ui.potentialExitIndexInput;
 
-  const agentPresetInput = document.getElementById("agentPreset");
-  const ratioChildInput = document.getElementById("ratioChild");
-  const ratioElderlyInput = document.getElementById("ratioElderly");
-  const ratioPanicInput = document.getElementById("ratioPanic");
-  const ratioLeaderInput = document.getElementById("ratioLeader");
-  const ratioTeacherInput = document.getElementById("ratioTeacher");
-  const ratioStudentInput = document.getElementById("ratioStudent");
+  const agentPresetInput = ui.agentPresetInput;
+  const ratioChildInput = ui.ratioChildInput;
+  const ratioElderlyInput = ui.ratioElderlyInput;
+  const ratioPanicInput = ui.ratioPanicInput;
+  const ratioLeaderInput = ui.ratioLeaderInput;
+  const ratioTeacherInput = ui.ratioTeacherInput;
+  const ratioStudentInput = ui.ratioStudentInput;
 
   const modeButtons = {
-    spawn: document.getElementById("modeSpawn"),
-    exit: document.getElementById("modeExit"),
-    stair: document.getElementById("modeStair"),
-    stairLink: document.getElementById("modeStairLink"),
-    fire: document.getElementById("modeFire"),
-    erase: document.getElementById("modeErase")
+    spawn: ui.modeButtons.spawn,
+    exit: ui.modeButtons.exit,
+    stair: ui.modeButtons.stair,
+    stairLink: ui.modeButtons.stairLink,
+    fire: ui.modeButtons.fire,
+    erase: ui.modeButtons.erase
   };
   const modeLabelMap = {
     spawn: "開始位置",
@@ -82,10 +110,10 @@
     erase: "消去"
   };
 
-  const hudTime = document.getElementById("hudTime");
-  const hudEvac = document.getElementById("hudEvac");
-  const hudAvg = document.getElementById("hudAvg");
-  const hudMax = document.getElementById("hudMax");
+  const hudTime = ui.hudTime;
+  const hudEvac = ui.hudEvac;
+  const hudAvg = ui.hudAvg;
+  const hudMax = ui.hudMax;
 
   // ==== Map / Grid ====
   let baseImage = null;
@@ -105,14 +133,14 @@
   let multiPotentialByExit = []; // [exit][floor][y][x]
   let multiCombinedPotential = null; // [floor][y][x]
 
-  let exits = [];         // {cx,cy}
-  let spawns = [];        // {cx,cy,r}
+  let exits = state.exits = [];         // {cx,cy}
+  let spawns = state.spawns = [];        // {cx,cy,r}
   let mode = "spawn";
 
   // ==== Simulation State ====
-  let agents = [];        // {x,y,cx,cy,v,finished,startTime,finishTime}
-  let simRunning = false;
-  let simTime = 0;
+  let agents = state.agents = [];        // {x,y,cx,cy,v,finished,startTime,finishTime}
+  let simRunning = state.simRunning = false;
+  let simTime = state.simTime = 0;
   let lastFrameTime = 0;
   let heatmap = null;     // Cell pass count
 
@@ -171,14 +199,69 @@
   let mcTargetRuns = 100;
   let mcResults = [];
   const TYPE_META = {
-    adult:   { label: "大人",   speed: 1.00, fallRisk: 1.00, panic: 0.00, color: "#ff3366" },
-    child:   { label: "子供",   speed: 0.74, fallRisk: 1.10, panic: 0.05, color: "#8ad8ff" },
-    elderly: { label: "高齢者", speed: 0.62, fallRisk: 1.85, panic: 0.03, color: "#ffd26b" },
-    panic:   { label: "パニック", speed: 1.10, fallRisk: 1.35, panic: 0.30, color: "#ff66aa" },
-    leader:  { label: "リーダー", speed: 1.02, fallRisk: 0.90, panic: 0.02, color: "#66ffcc" },
-    teacher: { label: "教師", speed: 0.96, fallRisk: 0.92, panic: 0.01, color: "#66ccff" },
-    student: { label: "生徒", speed: 0.72, fallRisk: 1.20, panic: 0.04, color: "#7bb8ff" }
+    adult: { label: "Adult", speed: 1.0, fallRisk: 1.0, panic: 0.0, color: "#ff3366" },
+    child: { label: "Child", speed: 0.74, fallRisk: 1.1, panic: 0.05, color: "#8ad8ff" },
+    elderly: { label: "Elderly", speed: 0.62, fallRisk: 1.85, panic: 0.03, color: "#ffd26b" },
+    panic: { label: "Panic", speed: 1.1, fallRisk: 1.35, panic: 0.3, color: "#ff66aa" },
+    leader: { label: "Leader", speed: 1.02, fallRisk: 0.9, panic: 0.02, color: "#66ffcc" },
+    teacher: { label: "Teacher", speed: 0.96, fallRisk: 0.92, panic: 0.01, color: "#66ccff" },
+    student: { label: "Student", speed: 0.72, fallRisk: 1.2, panic: 0.04, color: "#7bb8ff" }
   };
+
+  function syncPublicState() {
+    state.agents = agents;
+    state.simRunning = simRunning;
+    state.simTime = simTime;
+    state.exits = exits;
+    state.spawns = spawns;
+    state.currentFloor = currentFloor;
+    state.floors = floorStates;
+
+    state.map.baseImage = baseImage;
+    state.map.grid = grid;
+    state.map.gridW = gridW;
+    state.map.gridH = gridH;
+    state.map.baseWalkableTemplate = baseWalkableTemplate;
+    state.map.floorStates = floorStates;
+    state.map.floorCount = floorCount;
+    state.map.currentFloor = currentFloor;
+    state.map.stairLinks = stairLinks;
+    state.map.pendingStairLink = pendingStairLink;
+    state.map.allExitPoints = allExitPoints;
+    state.map.allSpawnPoints = allSpawnPoints;
+
+    state.sim.running = simRunning;
+    state.sim.time = simTime;
+    state.sim.lastFrameTime = lastFrameTime;
+    state.sim.heatmap = heatmap;
+    state.sim.smokeMap = smokeMap;
+    state.sim.smokeCeil = smokeCeil;
+    state.sim.flowField = flowField;
+    state.sim.potentialByExit = potentialByExit;
+    state.sim.combinedPotential = combinedPotential;
+    state.sim.potentialLegendMax = potentialLegendMax;
+    state.sim.maxHeatCell = maxHeatCell;
+    state.sim.maxHeatValue = maxHeatValue;
+    state.sim.congestionHistory = congestionHistory;
+    state.sim.bottleneckReport = bottleneckReport;
+    state.sim.paramHistory = paramHistory;
+    state.sim.lastSummary = lastSummary;
+    state.sim.nextRouteReplanAt = nextRouteReplanAt;
+    state.sim.nextCongestionSampleAt = nextCongestionSampleAt;
+
+    state.mc.running = mcRunning;
+    state.mc.runs = mcRuns;
+    state.mc.targetRuns = mcTargetRuns;
+    state.mc.results = mcResults;
+
+    state.viz.trails = !!vizTrailsInput.checked;
+    state.viz.flow = !!vizFlowInput.checked;
+    state.viz.potential = !!vizPotentialInput.checked;
+    state.viz.potentialViewMode = potentialViewModeInput.value;
+    state.viz.potentialExitIndex = Math.max(1, Math.floor(parseNum(potentialExitIndexInput, 1)));
+
+    syncLegacyState();
+  }
 
   function log(line) {
     const ts = new Date().toISOString().slice(11,19);
@@ -192,7 +275,7 @@
   function setMode(m) {
     if (mode === "stairLink" && m !== "stairLink" && pendingStairLink) {
       pendingStairLink = null;
-      setStatus("階段リンク選択をキャンセルしました。");
+      setStatus("Stair link selection cancelled.");
     }
     mode = m;
     Object.entries(modeButtons).forEach(([k,btn]) => {
@@ -323,21 +406,21 @@
     const aa = { floor: Math.floor(a.floor), cx: Math.floor(a.cx), cy: Math.floor(a.cy) };
     const bb = { floor: Math.floor(b.floor), cx: Math.floor(b.cx), cy: Math.floor(b.cy) };
     if (aa.floor === bb.floor && aa.cx === bb.cx && aa.cy === bb.cy) {
-      setStatus("同じ地点同士はリンクできません。");
+      setStatus("同じセル同士はリンクできません。");
       return false;
     }
     if (aa.floor === bb.floor) {
-      setStatus("階段リンクは別フロア同士を接続してください。");
+      setStatus("階段リンクは別フロア間で設定してください。");
       return false;
     }
     if (!isStairEndpointUsable(aa) || !isStairEndpointUsable(bb)) {
-      setStatus("リンク先は階段セル（通行可能・非火元）にしてください。");
+      setStatus("有効な階段セルを選択してください。");
       return false;
     }
     const h = stairLinkHash(aa, bb);
     const dup = stairLinks.some(link => stairLinkHash(link.a, link.b) === h);
     if (dup) {
-      setStatus("その階段リンクは既に設定済みです。");
+      setStatus("同じ階段リンクは既に存在します。");
       return false;
     }
     const [na, nb] = normalizeStairLinkEndpoints(aa, bb);
@@ -423,7 +506,10 @@
     potentialLegendMax = fs.potentialLegendMax || 1;
     syncPotentialExitIndexControl();
     updateFloorLabel();
-    if (redraw) drawScene();
+    if (redraw) {
+      syncPublicState();
+      drawScene();
+    }
   }
 
   function refreshFloorSelector() {
@@ -439,7 +525,7 @@
 
   function updateFloorLabel() {
     const floorText = `${currentFloor + 1}F / ${floorCount}F`;
-    floorLabel.textContent = `表示フロア: ${floorText}${baseImage ? "" : "（マップ未設定）"}`;
+    floorLabel.textContent = `表示フロア: ${floorText}${baseImage ? "" : " (マップ未設定)"}`;
   }
 
   function collectAllExits() {
@@ -495,6 +581,7 @@
     allExitPoints = collectAllExits();
     allSpawnPoints = collectAllSpawns();
     if (allExitPoints.length) rebuildPotentialCache();
+    syncPublicState();
     drawScene();
   }
 
@@ -645,7 +732,7 @@
     if (names.length === 0) {
       const op = document.createElement("option");
       op.value = "";
-      op.textContent = "保存済みなし";
+      op.textContent = "保存済みプリセットなし";
       presetSelect.appendChild(op);
       return;
     }
@@ -686,7 +773,7 @@
         initializeAllFloors: false,
         clearMarkers: true
       });
-      if (ok) resetSim(true);
+      if (ok) resetSimulationCore(true);
     }
     log(`プリセット読込: ${name}`);
   }
@@ -702,14 +789,15 @@
 
   function showParamHistory() {
     if (!paramHistory.length) {
-      log("パラメータ履歴: まだ記録がありません。");
+      log("パラメータ履歴はまだありません。");
       return;
     }
-    log("パラメータ履歴（新しい順）");
+    log(`パラメータ履歴: 最新${Math.min(8, paramHistory.length)}件`);
     paramHistory.slice(0, 8).forEach((h, i) => {
       log(
         `${i + 1}. ${h.at.slice(0, 19).replace("T", " ")} / ` +
-        `階数=${h.floorCount ?? floorCount}, 人数=${h.numAgents}, 速度=${h.speed}, ばらつき=${h.speedVar}%, ルール=${h.startRule}, 構成=${h.agentPreset}, 逆最適化=${h.optimizeReverse ? "ON" : "OFF"}`
+        `階数=${h.floorCount ?? floorCount}, 人数=${h.numAgents}, 速度=${h.speed}, 速度ばらつき=${h.speedVar}%, ` +
+        `開始ルール=${h.startRule}, プリセット=${h.agentPreset}, 逆最適化=${h.optimizeReverse ? "ON" : "OFF"}`
       );
     });
   }
@@ -721,7 +809,7 @@
 
   function downloadCsv() {
     if (!lastSummary) {
-      alert("先にシミュレーションを実行してください。");
+      alert("CSV出力できる集計結果がありません。先にシミュレーションを完了してください。");
       return;
     }
     const lines = [];
@@ -749,7 +837,7 @@
         [
           "agent",
           a.id,
-          csvEscape(TYPE_META[a.type]?.label || a.type || "大人"),
+          csvEscape(TYPE_META[a.type]?.label || a.type || "Unknown"),
           (a.floor ?? 0) + 1,
           a.targetExitIndex ?? "",
           exit ? (exit.floor + 1) : "",
@@ -788,7 +876,7 @@
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-    log("CSVを出力しました。");
+    log(`CSV出力完了: ${a.download}`);
   }
 
   // ==== Map Loading and Grid Build ====
@@ -815,15 +903,16 @@
       const img = await loadImageFromFile(file);
       // Show immediate preview even before grid extraction succeeds.
       baseImage = img;
+      syncPublicState();
       drawScene();
       const ok = applyImageToFloorMap(img, targetFloor, {
         initializeAllFloors: false,
         clearMarkers: true
       });
       if (!ok) return;
-      resetSim(true);
-      log(`マップ割当: ${targetFloor + 1}F <- ${file.name} (${img.width}x${img.height}px)`);
-      setStatus(`${targetFloor + 1}F にマップを割り当てました。`);
+      resetSimulationCore(true);
+      log(`マップ読込: ${targetFloor + 1}F <- ${file.name} (${img.width}x${img.height}px)`);
+      setStatus(`マップを読み込みました: ${targetFloor + 1}F`);
     } catch (err) {
       const reason = err instanceof Error ? err.message : "unknown";
       alert(`画像の読み込みに失敗しました: ${file.name}\n理由: ${reason}`);
@@ -842,14 +931,14 @@
           clearMarkers: true
         });
         if (!ok) return;
-        resetSim(true);
-        log(`${title}読込: ${currentFloor + 1}F (${img.width}x${img.height}px)`);
+        resetSimulationCore(true);
+        log(`${title} 読込: ${currentFloor + 1}F (${img.width}x${img.height}px)`);
       } catch (err) {
-        alert("画像のピクセル取得に失敗しました。CORS制限の可能性があります。");
+        alert(`${title} の読み込みに失敗しました。`);
       }
     };
     img.onerror = () => {
-      alert("画像の読み込みに失敗しました。");
+      alert(`${title} の画像取得に失敗しました。`);
     };
     img.src = url;
   }
@@ -859,12 +948,12 @@
     const zoom = clamp(Math.round(parseNum(osmZoomInput, 17)), 10, 19);
     osmZoomInput.value = zoom;
     if (!/^[-+]?[\d.]+\s*,\s*[-+]?[\d.]+$/.test(center)) {
-      alert("OSM中心点は「緯度,経度」で入力してください。例: 35.681236,139.767125");
+      alert("OSM中心は「緯度,経度」で入力してください。例: 35.681236,139.767125");
       return;
     }
     const [lat, lon] = center.split(",").map(v => Number(v.trim()));
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-      alert("緯度経度の形式が正しくありません。");
+      alert("緯度・経度の形式が正しくありません。");
       return;
     }
     const url =
@@ -882,7 +971,7 @@
       clearMarkers: true
     });
     if (!ok) return;
-    resetSim(true);
+    resetSimulationCore(true);
   });
 
   function extractWalkableTemplateFromImage(image) {
@@ -897,7 +986,7 @@
     try {
       imgData = tctx.getImageData(0, 0, image.width, image.height).data;
     } catch (err) {
-      alert("画像のピクセル解析に失敗しました（外部画像のCORS制限）。");
+      alert("画像データを読み取れませんでした。別画像を試してください。");
       return null;
     }
 
@@ -945,7 +1034,7 @@
     const { template, w, h } = parsed;
 
     if (!SINGLE_FLOOR_MODE && gridW > 0 && gridH > 0 && (w !== gridW || h !== gridH)) {
-      alert(`マップサイズが一致しません。現在は ${gridW}x${gridH} セルです。`);
+      alert("フロアごとの画像サイズが一致していません。");
       return false;
     }
     gridW = w;
@@ -978,8 +1067,9 @@
     congestionHistory = [];
     bottleneckReport = [];
     lastSummary = null;
+    syncPublicState();
     drawScene();
-    setStatus("グリッド準備完了。開始位置 / 出口 / 火元を設定してください。");
+    setStatus("マップ解析が完了しました。");
     return true;
   }
 
@@ -1020,37 +1110,37 @@
 
     if (mode === "spawn") {
       if (!cellObj.walkable || cellObj.fire) {
-        setStatus("開始位置は通行可能かつ非火元セルに配置してください。");
+        setStatus("開始位置は通行可能セルに配置してください。");
         return;
       }
       spawns.push({ cx, cy, r: 0 }); // r reserved for future use
       log(`開始位置を追加: ${currentFloor + 1}F (${cx},${cy})`);
     } else if (mode === "exit") {
       if (!cellObj.walkable || cellObj.fire) {
-        setStatus("出口は通行可能かつ非火元セルに配置してください。");
+        setStatus("出口は通行可能セルに配置してください。");
         return;
       }
       exits.push({ cx, cy });
       log(`出口を追加: ${currentFloor + 1}F (${cx},${cy})`);
     } else if (mode === "stair") {
       if (cellObj.fire) {
-        setStatus("火元セルには階段を設定できません。");
+        setStatus("火元セルは階段にできません。");
         return;
       }
       const toggled = !cellObj.stair;
       cellObj.stair = toggled;
       cellObj.walkable = true;
       if (!toggled) removeStairLinksByCell(currentFloor, cx, cy);
-      log(`${toggled ? "階段を設定" : "階段を解除"}: ${currentFloor + 1}F (${cx},${cy})`);
+      log(`${toggled ? "階段を追加" : "階段を解除"}: ${currentFloor + 1}F (${cx},${cy})`);
     } else if (mode === "stairLink") {
       if (!cellObj.stair || !cellObj.walkable || cellObj.fire) {
-        setStatus("階段リンクは階段セル（通行可能・非火元）を選択してください。");
+        setStatus("階段リンクは有効な階段セルを選択してください。");
         return;
       }
       const endpoint = { floor: currentFloor, cx, cy };
       if (!pendingStairLink) {
         pendingStairLink = endpoint;
-        setStatus(`階段リンクの1点目を選択: ${currentFloor + 1}F (${cx},${cy})。接続先をクリックしてください。`);
+        setStatus(`階段リンク開始点を選択: ${currentFloor + 1}F (${cx},${cy})`);
       } else {
         const same =
           pendingStairLink.floor === endpoint.floor &&
@@ -1058,7 +1148,7 @@
           pendingStairLink.cy === endpoint.cy;
         if (same) {
           pendingStairLink = null;
-          setStatus("階段リンク選択をキャンセルしました。");
+          setStatus("階段リンク選択を解除しました。");
         } else {
           const from = pendingStairLink;
           pendingStairLink = null;
@@ -1067,7 +1157,9 @@
               `階段リンクを設定: ${from.floor + 1}F(${from.cx},${from.cy}) <-> ` +
               `${endpoint.floor + 1}F(${endpoint.cx},${endpoint.cy})`
             );
-            setStatus("階段リンクを追加しました。");
+            setStatus("階段リンクを設定しました。");
+          } else {
+            setStatus("階段リンクを設定できませんでした。");
           }
         }
       }
@@ -1076,7 +1168,7 @@
       cellObj.stair = false;
       cellObj.walkable = false;
       removeStairLinksByCell(currentFloor, cx, cy);
-      log(`火元を設定: ${currentFloor + 1}F (${cx},${cy})`);
+      log(`火元を追加: ${currentFloor + 1}F (${cx},${cy})`);
     } else if (mode === "erase") {
       // Remove spawn/exit/fire markers at this cell
       spawns = spawns.filter(p => !(p.cx === cx && p.cy === cy));
@@ -1087,7 +1179,7 @@
       // Keep as walkable until map is rebuilt
       cellObj.walkable = !!baseWalkableTemplate?.[cy]?.[cx];
       if (smokeMap) smokeMap[cy][cx] = 0;
-      log(`マーカーを削除: ${currentFloor + 1}F (${cx},${cy})`);
+      log(`セルを消去: ${currentFloor + 1}F (${cx},${cy})`);
     }
 
     sanitizeStairLinks();
@@ -1096,78 +1188,11 @@
     allSpawnPoints = collectAllSpawns();
     syncPotentialExitIndexControl();
     if (allExitPoints.length > 0) rebuildPotentialCache();
+    syncPublicState();
     drawScene();
   });
 
   // ==== Potential Field Calculation ====
-  function computePotentialFieldFromSeeds(seeds) {
-    if (!grid || !seeds || seeds.length === 0 || !floorStates.length) return null;
-    const potential = new Array(floorCount).fill(null).map(() =>
-      new Array(gridH).fill(null).map(() => new Array(gridW).fill(Infinity))
-    );
-    const q = [];
-    seeds.forEach(({ floor, cx, cy }) => {
-      const f = Number.isFinite(floor) ? floor : currentFloor;
-      if (f < 0 || f >= floorCount) return;
-      if (!isAgentTraversableCell(f, cx, cy)) return;
-      potential[f][cy][cx] = 0;
-      q.push({ floor: f, cx, cy });
-    });
-    if (q.length === 0) return potential;
-
-    const dirs = [
-      { dx: 1, dy: 0, c: 1 }, { dx: -1, dy: 0, c: 1 },
-      { dx: 0, dy: 1, c: 1 }, { dx: 0, dy: -1, c: 1 },
-      { dx: 1, dy: 1, c: 1.414 }, { dx: -1, dy: 1, c: 1.414 },
-      { dx: 1, dy: -1, c: 1.414 }, { dx: -1, dy: -1, c: 1.414 }
-    ];
-
-    let qi = 0;
-    while (qi < q.length) {
-      const { floor, cx, cy } = q[qi++];
-      const floorGrid = floorStates[floor]?.grid;
-      if (!floorGrid) continue;
-      const base = potential[floor][cy][cx];
-      for (const d of dirs) {
-        const nx = cx + d.dx;
-        const ny = cy + d.dy;
-        if (!isAgentTraversableCell(floor, nx, ny)) continue;
-        const newPot = base + d.c;
-        if (newPot < potential[floor][ny][nx]) {
-          potential[floor][ny][nx] = newPot;
-          q.push({ floor, cx: nx, cy: ny });
-        }
-      }
-      if (floorGrid[cy][cx].stair) {
-        const stairsTo = [floor - 1, floor + 1];
-        for (let i = 0; i < stairsTo.length; i++) {
-          const nf = stairsTo[i];
-          if (nf < 0 || nf >= floorCount) continue;
-          const nc = floorStates[nf]?.grid?.[cy]?.[cx];
-          if (!isAgentTraversableCell(nf, cx, cy)) continue;
-          if (!nc?.stair) continue;
-          const newPot = base + 1.0;
-          if (newPot < potential[nf][cy][cx]) {
-            potential[nf][cy][cx] = newPot;
-            q.push({ floor: nf, cx, cy });
-          }
-        }
-        const linked = getLinkedStairDestinations(floor, cx, cy);
-        for (let i = 0; i < linked.length; i++) {
-          const dst = linked[i];
-          if (!isAgentTraversableCell(dst.floor, dst.cx, dst.cy)) continue;
-          const nd = floorStates[dst.floor]?.grid?.[dst.cy]?.[dst.cx];
-          if (!nd?.stair) continue;
-          const newPot = base + 1.0;
-          if (newPot < potential[dst.floor][dst.cy][dst.cx]) {
-            potential[dst.floor][dst.cy][dst.cx] = newPot;
-            q.push({ floor: dst.floor, cx: dst.cx, cy: dst.cy });
-          }
-        }
-      }
-    }
-    return potential;
-  }
 
   function rebuildPotentialCache() {
     allExitPoints = collectAllExits();
@@ -1179,7 +1204,10 @@
       return false;
     }
     multiPotentialByExit = allExitPoints.map(ex =>
-      computePotentialFieldFromSeeds([{ floor: ex.floor, cx: ex.cx, cy: ex.cy }])
+      computePotentialFieldFromSeedsModule(
+        [{ floor: ex.floor, cx: ex.cx, cy: ex.cy }],
+        { grid, floorStates, floorCount, gridW, gridH, currentFloor, isAgentTraversableCell, getLinkedStairDestinations }
+      )
     );
     multiCombinedPotential = new Array(floorCount).fill(null).map(() =>
       new Array(gridH).fill(null).map(() => new Array(gridW).fill(Infinity))
@@ -1210,7 +1238,7 @@
     if (!field) return Infinity;
     const dist = field[floor]?.[cy]?.[cx];
     if (!isFinite(dist)) return Infinity;
-    // 要件: 基本は最短出口を選ぶ（混雑・煙は出口選択に使わない）
+    // TODO: combine static distance with dynamic congestion/load penalties.
     return dist;
   }
 
@@ -1236,14 +1264,14 @@
   function spawnAgents() {
     agents = [];
     if (!grid || !floorStates.length) {
-      alert("先にマップを読み込んでください。");
+      alert("マップが読み込まれていません。");
       return false;
     }
     syncActiveFloorState();
     allSpawnPoints = collectAllSpawns();
     allExitPoints = collectAllExits();
     if (allSpawnPoints.length === 0 || allExitPoints.length === 0) {
-      alert("開始位置と出口（全フロア合計）が必要です。");
+      alert("開始位置と出口を少なくとも1つずつ配置してください。");
       return false;
     }
     const n = Math.max(1, Math.floor(parseInt(numAgentsInput.value, 10) || 1));
@@ -1252,7 +1280,7 @@
     const cellMeters = parseFloat(cellSizeMetersInput.value) || 0.5;
     const typeRatios = getTypeRatios();
     if (!rebuildPotentialCache()) {
-      alert("出口まで到達可能な経路がありません。");
+      alert("経路ポテンシャルを計算できませんでした。");
       return false;
     }
 
@@ -1265,7 +1293,7 @@
       }
     }
     if (walkableCells.length === 0) {
-      alert("通行可能セルが見つかりません。");
+      alert("通行可能セルがありません。しきい値やマップを確認してください。");
       return false;
     }
 
@@ -1339,7 +1367,7 @@
       });
     }
     if (!agents.length) {
-      alert("エージェントを有効な場所に配置できませんでした。");
+      alert("エージェント生成に失敗しました。配置条件を確認してください。");
       return false;
     }
 
@@ -1389,7 +1417,7 @@
     lastSummary = null;
     nextRouteReplanAt = 0;
     nextCongestionSampleAt = 0;
-    const startRuleLabel = startRule === "far_first" ? "遠方優先" : "一斉開始";
+    const startRuleLabel = (startRuleInput?.value === "far_first") ? "far_first" : "simultaneous";
     const typeCounts = agents.reduce((acc, a) => {
       acc[a.type] = (acc[a.type] || 0) + 1;
       return acc;
@@ -1405,16 +1433,17 @@
       .map(([f, v]) => `${Number(f) + 1}F:${v}`)
       .join(", ");
     log(
-      `エージェント生成: ${agents.length}人, 基準速度=${baseSpeed}m/s, ` +
-      `速度ばらつき=${varPct}%, 開始ルール=${startRuleLabel}, 種別=[${typeSummary}], フロア構成=[${floorSummary}]`
+      `Spawned ${agents.length} agents, speed=${baseSpeed}m/s, variance=${varPct}%, ` +
+      `start_rule=${startRuleLabel}, types=[${typeSummary}], floors=[${floorSummary}]`
     );
     return true;
   }
 
   // ==== Simulation Control ====
-  function resetSim() {
+  function resetSimulationCore() {
     //simstop
     simRunning = false;
+    syncPublicState();
     syncActiveFloorState();
 
     //timereset
@@ -1431,7 +1460,7 @@
 
     //HUDreset
     hudTime.textContent = "0.0 s";
-    hudEvac.textContent = "0 避難 / 0 死亡 / 0";
+    hudEvac.textContent = "0 Evacuated / 0 Dead / 0";
     hudAvg.textContent = "--";
     hudMax.textContent = "--";
 
@@ -1453,14 +1482,10 @@
     btnStart.disabled = null;
     btnStart.classList.add("pulse");
 
+    syncPublicState();
     drawScene();
+    return true;
   }
-
-  btnReset.addEventListener("click", () => {
-    resetSim(false);
-    log("シミュレーションをリセットしました。");
-    setStatus("リセット完了。");
-  });
 
   btnClearMap.addEventListener("click", () => {
     spawns = [];
@@ -1479,14 +1504,15 @@
     allSpawnPoints = collectAllSpawns();
     syncPotentialExitIndexControl();
     rebuildPotentialCache();
-    log(`開始位置 / 出口 / 階段 / 火元マーカーをクリアしました: ${currentFloor + 1}F`);
+    log(`Cleared markers on floor ${currentFloor + 1}F`);
+    syncPublicState();
     drawScene();
   });
 
   btnMonte.addEventListener("click", () => {
 
   if (!gridW || !gridH || !floorStates.length || !floorStates.some(fs => !!fs?.baseImage)) {
-    alert("先にマップを読み込んでください。");
+    alert("Monte Carlo 実行前にマップを読み込んでください。");
     return;
   }
 
@@ -1494,21 +1520,21 @@
   mcRuns = 0;
   mcResults = [];
 
-  log("MC開始: " + mcTargetRuns + " 回");
+  log(`Monte Carlo開始: ${mcTargetRuns}回`);
 
-  startSimulation();
+  startSimulationCore();
 
 });
 
   btnApplyFloors.addEventListener("click", () => {
     if (!gridW || !gridH || !floorStates.length || !floorStates.some(fs => !!fs?.baseImage)) {
-      alert("先にマップを読み込んでください。");
+      alert("フロア設定を適用する前にマップを読み込んでください。");
       return;
     }
     syncActiveFloorState();
     applyFloorSetup(true);
-    log(`フロア設定反映: ${floorCount}フロア`);
-    setStatus(`フロア数を ${floorCount} に設定しました。`);
+    log(`Applied floor setup: ${floorCount} floor(s)`);
+    setStatus("フロア設定を反映しました。");
   });
   currentFloorSelect.addEventListener("change", () => {
     const target = SINGLE_FLOOR_MODE ? 0 : clamp(Math.floor(parseNum(currentFloorSelect, currentFloor)), 0, floorCount - 1);
@@ -1516,17 +1542,15 @@
     if (!floorStates[target]) {
       currentFloor = target;
       updateFloorLabel();
-      drawScene();
+      syncPublicState();
+    drawScene();
     } else {
       loadFloorState(target);
     }
     if (mode === "stairLink" && pendingStairLink) {
-      setStatus(
-        `表示フロアを ${target + 1}F に切り替えました。` +
-        `接続先として階段セルをクリックしてください。`
-      );
+      setStatus(`Moved to floor ${target + 1}F. Stair link selection remains active.`);
     } else {
-      setStatus(`表示フロアを ${target + 1}F に切り替えました。`);
+      setStatus(`フロアを ${target + 1}F に切り替えました。`);
     }
   });
   floorCountInput.addEventListener("change", () => {
@@ -1547,14 +1571,10 @@
   btnOptimizeExit.addEventListener("click", optimizeExitPlacement);
   btnAutoImprove.addEventListener("click", autoImproveSpawnPlacement);
 
- btnStart.addEventListener("click", () => {
-  startSimulation();
-  });
-
-  function startSimulation() {
+  function startSimulationCore() {
     
     if (!gridW || !gridH || !floorStates.length || !floorStates.some(fs => !!fs?.baseImage)) {
-      alert("先にマップを読み込んでください。");
+      alert("シミュレーション開始前にマップを読み込んでください。");
       return false;
     }
     if (!mcRunning || mcRuns === 0) {
@@ -1562,29 +1582,27 @@
     }
     if (!spawnAgents()) return false;
     simRunning = true;
+    syncPublicState();
     simTime = 0;
     lastFrameTime = performance.now();
     btnStart.disabled = true;
     btnStart.classList.remove("pulse");
-    const startRuleLabel = (startRuleInput?.value === "far_first") ? "遠方優先" : "一斉開始";
-    setStatus(`シミュレーション実行中。開始ルール: ${startRuleLabel}`);
+    const startRuleLabel = (startRuleInput?.value === "far_first") ? "far_first" : "simultaneous";
+    setStatus(`Simulation running. start_rule=${startRuleLabel}`);
     requestAnimationFrame(loop);
 
     return true;
   };
 
-  btnStop.addEventListener("click", () => {
-
-  if (!simRunning) return;
-
-  simRunning = false;
-
-  summarize();
-
-  setStatus("シミュレーションを停止しました。");
-  log("シミュレーションを手動停止しました。");
-
-});
+  function stopSimulationCore() {
+    if (!simRunning) return false;
+    simRunning = false;
+    syncPublicState();
+    summarize();
+    setStatus("Simulation stopped.");
+    log("Simulation stopped.");
+    return true;
+  }
   // ==== Main Loop ====
   function loop(now) {
     if (!simRunning) return;
@@ -1592,8 +1610,10 @@
     const dt = (now - lastFrameTime) / 1000; // sec
     lastFrameTime = now;
     simTime += dt;
+    syncPublicState();
 
     stepSimulation(dt);
+    syncPublicState();
     drawScene();
     requestAnimationFrame(loop);
   }
@@ -2241,15 +2261,17 @@
     const resolvedCount = evacCount + deadCount;
     if (resolvedCount === agents.length) {
       simRunning = false;
+    syncPublicState();
       summarize();
       if (deadCount > 0) {
-        setStatus(`終了: 避難=${evacCount}、死亡=${deadCount}。`);
-        log(`シミュレーション終了: 避難=${evacCount}、死亡=${deadCount}。`);
+        setStatus("シミュレーション終了（死者あり）。");
+        log("シミュレーション終了: 死者が発生しました。");
       } else {
-        setStatus("全員が避難完了しました。");
-        log("全員が避難完了しました。");
+        setStatus("シミュレーション終了（全員避難）。");
+        log("シミュレーション終了: 全員が避難しました。");
       }
-      drawScene();
+      syncPublicState();
+    drawScene();
     }
 
     loadFloorState(currentFloor, false);
@@ -2270,7 +2292,7 @@
 
   function analyzeBottlenecks(writeLog = false) {
     if (!heatmap || !grid) {
-      if (writeLog) log("分析対象がありません。");
+      log("ボトルネック分析: ヒートマップがありません。");
       bottleneckReport = [];
       return [];
     }
@@ -2299,13 +2321,13 @@
 
     if (writeLog) {
       if (!bottleneckReport.length) {
-        log("ボトルネック分析: 通過データがありません。");
+        log(`ボトルネック分析: 該当なし / ${currentFloor + 1}F`);
       } else {
-        log(`ボトルネック分析: 上位 / ${currentFloor + 1}F`);
+        log(`ボトルネック分析: 上位候補 / ${currentFloor + 1}F`);
         bottleneckReport.slice(0, 5).forEach((b, i) => {
           log(
-            `${i + 1}. (${b.cx},${b.cy}) 騾夐℃=${b.passCount}, ` +
-            `拡幅時短縮推定=${b.estimatedSavedSec.toFixed(2)}s`
+            `${i + 1}. (${b.cx},${b.cy}) 通過数=${b.passCount}, ` +
+            `改善見込み=${b.estimatedSavedSec.toFixed(2)}s`
           );
         });
       }
@@ -2313,8 +2335,8 @@
         const maxOcc = Math.max(...congestionHistory.map(c => c.maxOcc));
         const peak = congestionHistory.reduce((a, b) => (a.maxOcc >= b.maxOcc ? a : b));
         log(
-          `混雑推移: サンプル=${congestionHistory.length}, ` +
-          `ピーク時刻=${peak.time.toFixed(1)}s, 最大同一セル人数=${maxOcc}`
+          `混雑統計: サンプル=${congestionHistory.length}, ` +
+          `ピーク時刻=${peak.time.toFixed(1)}s, 最大セル人数=${maxOcc}`
         );
       }
     }
@@ -2324,11 +2346,11 @@
   function optimizeExitPlacement() {
     syncActiveFloorState();
     if (!grid || !spawns.length) {
-      alert("先にマップと開始位置を設定してください。");
+      alert("出口最適化には、マップと開始位置が必要です。");
       return;
     }
     if (!rebuildPotentialCache() || !combinedPotential) {
-      alert("出口が未設定、または到達不可です。");
+      alert("ポテンシャル場を計算できませんでした。");
       return;
     }
     const spawnCells = spawns.filter(p => p.cx >= 0 && p.cy >= 0 && p.cx < gridW && p.cy < gridH);
@@ -2360,7 +2382,10 @@
     let best = null;
     let bestScore = reverse ? -Infinity : Infinity;
     candidates.forEach(c => {
-      const field = computePotentialFieldFromSeeds(exits.concat([c]));
+      const field = computePotentialFieldFromSeedsModule(
+        exits.concat([c]),
+        { grid, floorStates, floorCount, gridW, gridH, currentFloor, isAgentTraversableCell, getLinkedStairDestinations }
+      );
       if (!field) return;
       let score = 0;
       for (let i = 0; i < spawnCells.length; i++) {
@@ -2379,7 +2404,7 @@
       }
     });
     if (!best) {
-      log("出口最適化: 有効な候補がありません。");
+      log("出口最適化: 改善候補を決定できませんでした。");
       return;
     }
 
@@ -2391,19 +2416,20 @@
     const baseSpeed = parseFloat(speedInput.value) || 1.2;
     const cellM = parseFloat(cellSizeMetersInput.value) || 0.5;
     const estimatedDeltaSec = (baseline - bestScore) * (cellM / Math.max(baseSpeed, 0.2));
-    const deltaLabel = reverse ? "推定悪化" : "推定短縮";
+    const deltaLabel = reverse ? "悪化見込み" : "改善見込み";
     log(
-      `出口最適化: ${currentFloor + 1}F に出口 (${best.cx},${best.cy}) を追加。` +
+      `出口最適化: ${currentFloor + 1}F に出口を追加 (${best.cx},${best.cy}), ` +
       `${deltaLabel}=${estimatedDeltaSec.toFixed(2)}s`
     );
-    setStatus(reverse ? "逆最適化を適用しました。" : "出口最適化を適用しました。");
+    setStatus("出口最適化を反映しました。");
+    syncPublicState();
     drawScene();
   }
 
   function autoImproveSpawnPlacement() {
     syncActiveFloorState();
     if (!grid || !exits.length) {
-      alert("先にマップと出口を設定してください。");
+      alert("開始位置の自動改善には、マップと出口が必要です。");
       return;
     }
     rebuildPotentialCache();
@@ -2428,7 +2454,7 @@
       if (!near) chosen.push({ cx: c.cx, cy: c.cy, r: 0 });
     }
     if (!chosen.length) {
-      log("配置自動改善: 候補が見つかりません。");
+      log("開始位置自動改善: 候補が見つかりませんでした。");
       return;
     }
     spawns = chosen;
@@ -2436,139 +2462,30 @@
     allSpawnPoints = collectAllSpawns();
     log(
       reverse
-        ? `配置自動改善(逆): ${currentFloor + 1}F の開始位置を${chosen.length} 点に更新しました。`
-        : `配置自動改善: ${currentFloor + 1}F の開始位置を${chosen.length} 点に更新しました。`
+        ? `開始位置自動改善(逆): ${currentFloor + 1}F の開始位置を ${chosen.length} 点に更新しました。`
+        : `開始位置自動改善: ${currentFloor + 1}F の開始位置を ${chosen.length} 点に更新しました。`
     );
-    setStatus(reverse ? "開始位置の逆改善を適用しました。" : "開始位置の自動改善を適用しました。");
+    setStatus("開始位置の自動改善を反映しました。");
+    syncPublicState();
     drawScene();
   }
 
   // ==== Summary Generation ====
   function summarize() {
-    if (!agents || agents.length === 0) return;
-    const evacuated = agents.filter(a => a.finished && !a.dead && a.finishTime != null);
-    const dead = agents.filter(a => a.dead);
-    const resolved = evacuated.length + dead.length;
-    if (resolved === 0) return;
-
+    const evacuated = agents.filter((a) => a.finished && !a.dead);
+    const dead = agents.filter((a) => a.dead);
     const times = evacuated
-      .map(a => a.finishTime - a.startTime)
-      .filter(t => Number.isFinite(t) && t >= 0);
-    const minT = times.length ? Math.min(...times) : 0;
+      .map((a) => a.finishTime - a.startTime)
+      .filter((t) => Number.isFinite(t) && t >= 0);
+
+    const avgT = times.length ? (times.reduce((x, y) => x + y, 0) / times.length) : 0;
     const maxT = times.length ? Math.max(...times) : 0;
-    const avgT = times.length ? (times.reduce((a,b)=>a+b,0) / times.length) : 0;
 
-    // Heatmap maximum
-    let maxHeat = 0, maxHeatCell = null;
-    if (heatmap) {
-      for (let y=0;y<gridH;y++)for(let x=0;x<gridW;x++){
-        if (heatmap[y][x] > maxHeat) {
-          maxHeat = heatmap[y][x];
-          maxHeatCell = {x,y};
-        }
-      }
-    }
-    const bottlenecks = analyzeBottlenecks(false);
+    hudAvg.textContent = times.length ? `${avgT.toFixed(1)} s` : "--";
+    hudMax.textContent = times.length ? `${maxT.toFixed(1)} s` : "--";
 
-    hudAvg.textContent = times.length ? (avgT.toFixed(1) + " s") : "--";
-    hudMax.textContent = times.length ? (maxT.toFixed(1) + " s") : "--";
+    log(`Summary: agents=${agents.length}, evacuated=${evacuated.length}, dead=${dead.length}, avg=${avgT.toFixed(2)}s, max=${maxT.toFixed(2)}s`);
 
-    const reportLines = [];
-    reportLines.push(`シミュレーション結果`);
-    reportLines.push(`  - エージェント数: ${agents.length}`);
-    reportLines.push(`  - 避難完了: ${evacuated.length} (${(evacuated.length / agents.length * 100).toFixed(1)}%)`);
-    reportLines.push(`  - 死亡: ${dead.length} (${(dead.length / agents.length * 100).toFixed(1)}%)`);
-    const typeCount = agents.reduce((acc, a) => {
-      acc[a.type] = (acc[a.type] || 0) + 1;
-      return acc;
-    }, {});
-    const typeText = Object.entries(typeCount)
-      .map(([k, v]) => `${TYPE_META[k]?.label || k}:${v}`)
-      .join(" / ");
-    if (typeText) reportLines.push(`  - 種別内訳: ${typeText}`);
-    const floorCountMap = agents.reduce((acc, a) => {
-      acc[a.floor] = (acc[a.floor] || 0) + 1;
-      return acc;
-    }, {});
-    const floorText = Object.entries(floorCountMap)
-      .map(([f, v]) => `${Number(f) + 1}F:${v}`)
-      .join(" / ");
-    if (floorText) reportLines.push(`  - フロア内訳: ${floorText}`);
-    if (times.length) {
-      reportLines.push(`  - 最速避難: ${minT.toFixed(1)} s`);
-      reportLines.push(`  - 最終避難: ${maxT.toFixed(1)} s`);
-      reportLines.push(`  - 平均避難時間: ${avgT.toFixed(1)} s`);
-    } else {
-      reportLines.push(`  - 避難時間: 該当なし（避難成功なし）`);
-    }
-    reportLines.push(``);
-
-    if (dead.length) {
-      const cause = { smoke: 0, heat: 0, fire: 0, out_of_bounds: 0, other: 0 };
-      dead.forEach(a => {
-        if (a.deathCause in cause) cause[a.deathCause]++;
-        else cause.other++;
-      });
-      reportLines.push(`死亡要因内訳`);
-      reportLines.push(`  - 辣・ ${cause.smoke}`);
-      reportLines.push(`  - 熱: ${cause.heat}`);
-      reportLines.push(`  - 火炎接触: ${cause.fire}`);
-      reportLines.push(`  - 遽・峇螟・ ${cause.out_of_bounds}`);
-      if (cause.other) reportLines.push(`  - 縺昴・莉・ ${cause.other}`);
-      reportLines.push(``);
-    }
-
-    if (congestionHistory.length) {
-      const peak = congestionHistory.reduce((a, b) => (a.maxOcc >= b.maxOcc ? a : b));
-      const avgDensity = congestionHistory.reduce((s, c) => s + c.avgDensity, 0) / congestionHistory.length;
-      reportLines.push(`時間ごとの混雑推移`);
-      reportLines.push(`  - サンプル数: ${congestionHistory.length}`);
-      reportLines.push(`  - 平均密度: ${avgDensity.toFixed(3)}`);
-      reportLines.push(`  - ピーク時刻: ${peak.time.toFixed(1)} s`);
-      reportLines.push(`  - ピーク同一セル人数: ${peak.maxOcc}`);
-      reportLines.push(``);
-    }
-
-    if (maxHeatCell) {
-      const mx = maxHeatCell.x, my = maxHeatCell.y;
-      const crowdLevel =
-        maxHeat > 200 ? "極めて高密度" :
-        maxHeat > 80  ? "高密度" :
-        maxHeat > 30  ? "中程度の混雑" :
-        maxHeat > 10  ? "軽度の混雑" :
-                        "低混雑";
-      reportLines.push(`混雑ボトルネック`);
-      reportLines.push(`  - 対象フロア: ${currentFloor + 1}F`);
-      reportLines.push(`  - セル: (${mx},${my})`);
-      reportLines.push(`  - 通過回数: ${maxHeat}`);
-      reportLines.push(`  - 混雑レベル: ${crowdLevel}`);
-      reportLines.push(``);
-    }
-    if (bottlenecks.length) {
-      reportLines.push(`ボトルネックランキング（拡幅短縮試算）`);
-      bottlenecks.slice(0, 5).forEach((b, i) => {
-        reportLines.push(
-          `  ${i + 1}. (${b.cx},${b.cy}) 通過=${b.passCount}, 試算短縮=${b.estimatedSavedSec.toFixed(2)} s`
-        );
-      });
-      reportLines.push(``);
-    }
-    reportLines.push(`総括`);
-    if (times.length && dead.length === 0) {
-      reportLines.push(
-        `  全員が避難完了しました。平均避難時間は ${avgT.toFixed(1)} s、最悪ケースは ${maxT.toFixed(1)} s です。`
-      );
-    } else if (times.length) {
-      reportLines.push(
-        `  ${evacuated.length}人が避難完了（平均 ${avgT.toFixed(1)} s）、${dead.length}人が煙・熱・火炎の影響で死亡しました。`
-      );
-    } else {
-      reportLines.push(
-        `  避難成功はなく、解決済みエージェントは全員死亡でした。`
-      );
-    }
-
-    logEl.value = reportLines.join("\n") + "\n\n" + logEl.value;
     lastSummary = {
       agents: agents.length,
       evacuated: evacuated.length,
@@ -2578,393 +2495,84 @@
       at: new Date().toISOString()
     };
 
-    // MonteCarlo post-processing
-if (mcRunning) {
-  const mcAvg = times.length ? avgT : simTime;
-  const mcMax = times.length ? maxT : simTime;
+    if (mcRunning) {
+      const mcAvg = times.length ? avgT : simTime;
+      const mcMax = times.length ? maxT : simTime;
 
-  mcResults.push({
-    avg: mcAvg,
-    max: mcMax
-  });
+      mcResults.push({ avg: mcAvg, max: mcMax });
+      mcRuns++;
 
-  mcRuns++;
-
-  if (mcRuns < mcTargetRuns) {
-
-    resetSim();
-    startSimulation();
-
-  } else {
-
-    mcRunning = false;
-
-    const avgAll =
-      mcResults.reduce((s,r)=>s+r.avg,0) / mcResults.length;
-
-    const maxAll =
-      Math.max(...mcResults.map(r=>r.max));
-
-    log("MC邨先棡");
-    log("平均避難時間: " + avgAll.toFixed(2) + " s");
-    log("最悪ケース: " + maxAll.toFixed(2) + " s");
-
-    setStatus("MC完了。");
-  }
-}
+      if (mcRuns < mcTargetRuns) {
+        resetSimulationCore();
+        startSimulationCore();
+      } else {
+        mcRunning = false;
+        const avgAll = mcResults.reduce((s, r) => s + r.avg, 0) / mcResults.length;
+        const maxAll = Math.max(...mcResults.map((r) => r.max));
+        log(`MC complete: avg=${avgAll.toFixed(2)}s, worst=${maxAll.toFixed(2)}s`);
+        setStatus("Monte Carlo complete.");
+      }
+    }
   }
 
   // ==== Rendering ====
+  const renderer = createRenderer({
+    ctx,
+    cvs,
+    cellSizePx: CELL_SIZE_PX,
+    typeMeta: TYPE_META,
+    clamp
+  });
+
   function drawScene() {
-    const rect = cvs.getBoundingClientRect();
-    ctx.clearRect(0, 0, rect.width, rect.height);
-
     const layout = worldLayout();
-    const { scale, ox, oy } = layout;
-
-    function drawArrow(px, py, vx, vy, color, width = 0.35) {
-      const len = Math.hypot(vx, vy);
-      if (len < 0.001) return;
-      const ux = vx / len;
-      const uy = vy / len;
-      const head = 0.8;
-      const tipX = px + vx;
-      const tipY = py + vy;
-      ctx.strokeStyle = color;
-      ctx.fillStyle = color;
-      ctx.lineWidth = width;
-      ctx.beginPath();
-      ctx.moveTo(px, py);
-      ctx.lineTo(tipX, tipY);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(tipX, tipY);
-      ctx.lineTo(tipX - ux * head - uy * 0.4, tipY - uy * head + ux * 0.4);
-      ctx.lineTo(tipX - ux * head + uy * 0.4, tipY - uy * head - ux * 0.4);
-      ctx.closePath();
-      ctx.fill();
-    }
-
-    // Base image
-    if (baseImage) {
-      ctx.drawImage(baseImage, ox, oy, baseImage.width*scale, baseImage.height*scale);
-    } else {
-      ctx.strokeStyle = "#330011";
-      ctx.strokeRect(20, 20, rect.width-40, rect.height-40);
-      ctx.fillStyle = "#501020";
-      ctx.fillText("先にマップ画像を読み込んでください", 40, 50);
-      return;
-    }
-
-    // Grid overlay (subtle)
-    if (grid) {
-      ctx.save();
-      ctx.translate(ox, oy);
-      ctx.scale(scale, scale);
-
-      ctx.strokeStyle = "rgba(80,0,40,0.25)";
-      ctx.lineWidth = 0.2;
-      for (let y=0; y<=gridH; y++) {
-        ctx.beginPath();
-        ctx.moveTo(0, y*CELL_SIZE_PX);
-        ctx.lineTo(gridW*CELL_SIZE_PX, y*CELL_SIZE_PX);
-        ctx.stroke();
-      }
-      for (let x=0; x<=gridW; x++) {
-        ctx.beginPath();
-        ctx.moveTo(x*CELL_SIZE_PX, 0);
-        ctx.lineTo(x*CELL_SIZE_PX, gridH*CELL_SIZE_PX);
-        ctx.stroke();
-      }
-
-      // Stairs cells
-      ctx.fillStyle = "rgba(80,220,255,0.42)";
-      for (let y=0; y<gridH; y++) for (let x=0; x<gridW; x++) {
-        if (grid[y][x].stair) {
-          ctx.fillRect(x*CELL_SIZE_PX, y*CELL_SIZE_PX, CELL_SIZE_PX, CELL_SIZE_PX);
-        }
-      }
-      // Stair links (current-floor endpoints)
-      if (stairLinks.length) {
-        ctx.strokeStyle = "rgba(120,255,220,0.95)";
-        ctx.fillStyle = "rgba(200,255,245,0.95)";
-        ctx.lineWidth = 0.45;
-        ctx.font = `${Math.max(6, CELL_SIZE_PX * 0.7)}px Consolas`;
-        ctx.textAlign = "left";
-        ctx.textBaseline = "middle";
-        stairLinks.forEach(link => {
-          if (!link?.a || !link?.b) return;
-          const here = link.a.floor === currentFloor ? link.a : (link.b.floor === currentFloor ? link.b : null);
-          if (!here) return;
-          const other = (here === link.a) ? link.b : link.a;
-          const px = (here.cx + 0.5) * CELL_SIZE_PX;
-          const py = (here.cy + 0.5) * CELL_SIZE_PX;
-          ctx.beginPath();
-          ctx.arc(px, py, CELL_SIZE_PX * 0.9, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.fillText(`->${other.floor + 1}F`, px + CELL_SIZE_PX * 0.65, py);
-        });
-      }
-      if (pendingStairLink && pendingStairLink.floor === currentFloor) {
-        const px = (pendingStairLink.cx + 0.5) * CELL_SIZE_PX;
-        const py = (pendingStairLink.cy + 0.5) * CELL_SIZE_PX;
-        ctx.strokeStyle = "rgba(255,255,255,0.95)";
-        ctx.lineWidth = 0.7;
-        ctx.beginPath();
-        ctx.arc(px, py, CELL_SIZE_PX * 1.15, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-
-      if (vizPotentialInput.checked && (combinedPotential || potentialByExit.length)) {
-        const showPerExit = potentialViewModeInput.value === "per_exit";
-        const targetIdx = Math.max(0, Math.floor(parseNum(potentialExitIndexInput, 1)) - 1);
-        const pMap = showPerExit ? potentialByExit[targetIdx] : combinedPotential;
-        if (pMap) {
-          const maxPot = Math.max(1, potentialLegendMax);
-          for (let y = 0; y < gridH; y++) {
-            for (let x = 0; x < gridW; x++) {
-              if (!grid[y][x].walkable) continue;
-              const p = pMap[y]?.[x];
-              if (!isFinite(p)) continue;
-              const t = clamp(1 - (p / maxPot), 0, 1);
-              const r = Math.floor(30 + 210 * t);
-              const g = Math.floor(70 + 120 * (1 - Math.abs(t - 0.5) * 2));
-              const b = Math.floor(255 - 180 * t);
-              ctx.fillStyle = `rgba(${r},${g},${b},0.22)`;
-              ctx.fillRect(x * CELL_SIZE_PX, y * CELL_SIZE_PX, CELL_SIZE_PX, CELL_SIZE_PX);
-            }
-          }
-          // Potential gradient arrows
-          const stride = 5;
-          for (let y = 2; y < gridH - 2; y += stride) {
-            for (let x = 2; x < gridW - 2; x += stride) {
-              if (!grid[y][x].walkable) continue;
-              const cur = pMap[y]?.[x];
-              if (!isFinite(cur)) continue;
-              let best = { dx: 0, dy: 0, gain: 0 };
-              const dirs = [
-                {dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1},
-                {dx:1,dy:1},{dx:-1,dy:1},{dx:1,dy:-1},{dx:-1,dy:-1}
-              ];
-              for (let i = 0; i < dirs.length; i++) {
-                const d = dirs[i];
-                const nx = x + d.dx;
-                const ny = y + d.dy;
-                if (nx < 0 || ny < 0 || nx >= gridW || ny >= gridH) continue;
-                if (!grid[ny][nx].walkable) continue;
-                const np = pMap[ny]?.[nx];
-                if (!isFinite(np)) continue;
-                const gain = cur - np;
-                if (gain > best.gain) best = { dx: d.dx, dy: d.dy, gain };
-              }
-              if (best.gain > 0.01) {
-                const px = (x + 0.5) * CELL_SIZE_PX;
-                const py = (y + 0.5) * CELL_SIZE_PX;
-                drawArrow(px, py, best.dx * 1.2, best.dy * 1.2, "rgba(180,255,255,0.7)", 0.3);
-              }
-            }
-          }
-        }
-      }
-
-      // Fire cells
-      ctx.fillStyle = "rgba(255,40,40,0.5)";
-      for (let y=0;y<gridH;y++)for(let x=0;x<gridW;x++){
-        if (grid[y][x].fire) {
-          ctx.fillRect(x*CELL_SIZE_PX, y*CELL_SIZE_PX, CELL_SIZE_PX, CELL_SIZE_PX);
-        }
-      }
-      // Smoke cells
-      // Smoke rendering
-      // Smoke rendering (grayscale with stepped emphasis)
-if (smokeMap) {
-  for (let y = 0; y < gridH; y++) {
-    for (let x = 0; x < gridW; x++) {
-      const s = smokeMap[y][x];
-      if (s <= 0.02) continue;
-
-      // ===== Visual scaling =====
-      const v = Math.min(s / 2.0, 1.0); // Clamp to 0..1
-
-      let gray, alpha;
-
-      if (v < 0.33) {
-        // Light smoke
-        gray  = 180;
-        alpha = 0.35;
-      } else if (v < 0.66) {
-        // Medium smoke
-        gray  = 110;
-        alpha = 0.65;
-      } else {
-        // Dense smoke
-        gray  = 40;
-        alpha = 0.9;
-      }
-
-      ctx.fillStyle = `rgba(${gray},${gray},${gray},${alpha})`;
-      ctx.fillRect(
-        x * CELL_SIZE_PX,
-        y * CELL_SIZE_PX,
-        CELL_SIZE_PX,
-        CELL_SIZE_PX
-      );
-
-      // Extra dark overlay for dense smoke
-      if (v > 0.66) {
-        ctx.fillStyle = "rgba(0,0,0,0.25)";
-        ctx.fillRect(
-          x * CELL_SIZE_PX,
-          y * CELL_SIZE_PX,
-          CELL_SIZE_PX,
-          CELL_SIZE_PX
-        );
-      }
-    }
-  }
-}
-
-
-
-      // Exit
-      ctx.fillStyle = "#ffdd33";
-      exits.forEach((p, idx) => {
-        const px = (p.cx+0.5)*CELL_SIZE_PX;
-        const py = (p.cy+0.5)*CELL_SIZE_PX;
-        ctx.beginPath();
-        ctx.arc(px, py, CELL_SIZE_PX*0.6, 0, Math.PI*2);
-        ctx.fill();
-        ctx.fillStyle = "#3b2200";
-        ctx.font = `${Math.max(6, CELL_SIZE_PX * 0.8)}px Consolas`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        const globalIndex = allExitPoints.findIndex(e =>
-          e.floor === currentFloor && e.cx === p.cx && e.cy === p.cy
-        );
-        ctx.fillText(String((globalIndex >= 0 ? globalIndex : idx) + 1), px, py);
-        ctx.fillStyle = "#ffdd33";
-      });
-
-      // Spawn
-      ctx.fillStyle = "#33ffaa";
-      spawns.forEach(p => {
-        const px = (p.cx+0.5)*CELL_SIZE_PX;
-        const py = (p.cy+0.5)*CELL_SIZE_PX;
-        ctx.beginPath();
-        ctx.arc(px, py, CELL_SIZE_PX*0.6, 0, Math.PI*2);
-        ctx.fill();
-      });
-
-      if (vizTrailsInput.checked && agents && agents.length > 0) {
-        agents.forEach(a => {
-          if (!a.trail || a.trail.length < 2) return;
-          if (a.dead) return;
-          const baseColor = TYPE_META[a.type]?.color || "#ff3366";
-          ctx.strokeStyle = baseColor;
-          ctx.globalAlpha = 0.22;
-          ctx.lineWidth = 0.45;
-          let drawing = false;
-          for (let i = 0; i < a.trail.length; i++) {
-            const t = a.trail[i];
-            if ((t.floor ?? a.floor) !== currentFloor) {
-              drawing = false;
-              continue;
-            }
-            const tx = (t.x + 0.5) * CELL_SIZE_PX;
-            const ty = (t.y + 0.5) * CELL_SIZE_PX;
-            if (!drawing) {
-              ctx.beginPath();
-              ctx.moveTo(tx, ty);
-              drawing = true;
-            } else {
-              ctx.lineTo(tx, ty);
-              ctx.stroke();
-            }
-          }
-          ctx.globalAlpha = 1;
-        });
-      }
-
-      if (vizFlowInput.checked && flowField) {
-        const stride = 4;
-        for (let y = 1; y < gridH - 1; y += stride) {
-          for (let x = 1; x < gridW - 1; x += stride) {
-            const f = flowField[y][x];
-            if (!f || f.n < 1) continue;
-            const vx = (f.vx / f.n) * 2.1;
-            const vy = (f.vy / f.n) * 2.1;
-            const m = Math.hypot(vx, vy);
-            if (m < 0.03) continue;
-            const px = (x + 0.5) * CELL_SIZE_PX;
-            const py = (y + 0.5) * CELL_SIZE_PX;
-            const alpha = clamp(0.25 + m * 0.45, 0.25, 0.85);
-            drawArrow(px, py, vx, vy, `rgba(120,230,255,${alpha})`, 0.28);
-          }
-        }
-      }
-
-      // Agents
-      if (agents && agents.length > 0) {
-        agents.forEach(a => {
-          if (a.floor !== currentFloor) return;
-          const px = (a.x+0.5)*CELL_SIZE_PX;
-          const py = (a.y+0.5)*CELL_SIZE_PX;
-          if (a.dead) ctx.fillStyle = "#1a1a1a";
-          else if (a.fallen) ctx.fillStyle = "#ff9900";
-          else if (a.helpingId != null) ctx.fillStyle = "#33ccff";
-          else if (a.finished) ctx.fillStyle = "#8888ff";
-          else ctx.fillStyle = TYPE_META[a.type]?.color || "#ff3366";
-          ctx.globalAlpha = a.dead ? 0.95 : Math.max(0.25, a.visibility ?? 1);
-          ctx.beginPath();
-          ctx.arc(px, py, CELL_SIZE_PX*0.4, 0, Math.PI*2);
-          ctx.fill();
-          if (!a.dead && (a.type === "teacher" || a.type === "leader")) {
-            ctx.strokeStyle = "#d2fff2";
-            ctx.lineWidth = 0.7;
-            ctx.beginPath();
-            ctx.arc(px, py, CELL_SIZE_PX * 0.62, 0, Math.PI * 2);
-            ctx.stroke();
-          }
-          if (a.dead) {
-            ctx.strokeStyle = "#660000";
-            ctx.lineWidth = 0.9;
-            ctx.beginPath();
-            ctx.moveTo(px - CELL_SIZE_PX * 0.35, py - CELL_SIZE_PX * 0.35);
-            ctx.lineTo(px + CELL_SIZE_PX * 0.35, py + CELL_SIZE_PX * 0.35);
-            ctx.moveTo(px + CELL_SIZE_PX * 0.35, py - CELL_SIZE_PX * 0.35);
-            ctx.lineTo(px - CELL_SIZE_PX * 0.35, py + CELL_SIZE_PX * 0.35);
-            ctx.stroke();
-          }
-          ctx.globalAlpha = 1;
-        });
-      }
-            // === Highlight most congested cell ===
-      if (!simRunning && maxHeatCell && maxHeatValue > 5) {
-        const px = (maxHeatCell.x + 0.5) * CELL_SIZE_PX;
-        const py = (maxHeatCell.y + 0.5) * CELL_SIZE_PX;
-        const pulse = 0.5 + 0.5 * Math.sin(simTime * 4);
-        ctx.strokeStyle = `rgba(255,120,0,${pulse})`;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(px, py, CELL_SIZE_PX * (1.2 + pulse), 0, Math.PI * 2);
-        ctx.stroke();
-      }
-
-      ctx.fillStyle = "rgba(255,220,150,0.9)";
-      ctx.font = "10px Consolas";
-      ctx.textAlign = "left";
-      ctx.textBaseline = "top";
-      ctx.fillText(`フロア ${currentFloor + 1}/${floorCount}`, 4, 4);
-
-      ctx.restore();
-      
-    }
+    const scene = {
+      layout,
+      baseImage,
+      grid,
+      gridW,
+      gridH,
+      floorCount,
+      currentFloor,
+      stairLinks,
+      pendingStairLink,
+      potentialByExit,
+      combinedPotential,
+      potentialLegendMax,
+      allExitPoints,
+      exits,
+      spawns,
+      smokeMap,
+      agents,
+      flowField,
+      simRunning,
+      simTime,
+      maxHeatCell,
+      maxHeatValue,
+      vizTrails: !!vizTrailsInput.checked,
+      vizFlow: !!vizFlowInput.checked,
+      vizPotential: !!vizPotentialInput.checked,
+      potentialViewMode: potentialViewModeInput.value,
+      potentialExitIndex: Math.max(1, Math.floor(parseNum(potentialExitIndexInput, 1)))
+    };
+    state.render.lastScene = scene;
+    renderer.render(scene);
   }
 
   // ==== Initialization ====
-  Object.values(modeButtons).forEach(btn => {
-    if (!btn) return;
-    btn.addEventListener("click", () => setMode(btn.dataset.mode));
+  runtimeControls.start = startSimulationCore;
+  runtimeControls.stop = stopSimulationCore;
+  runtimeControls.reset = resetSimulationCore;
+
+  bindCoreControls({
+    onStart: () => startSimulationCore(),
+    onStop: () => stopSimulationCore(),
+    onReset: () => {
+      resetSimulationCore();
+      log("Simulation reset.");
+      setStatus("Simulation reset.");
+    },
+    onModeChange: (nextMode) => setMode(nextMode)
   });
 
   applyAgentPreset(agentPresetInput.value);
@@ -2976,4 +2584,13 @@ if (smokeMap) {
   syncPotentialExitIndexControl();
   setMode("spawn");
   resizeCanvas();
-  setStatus("マップを読み込み、開始位置 / 出口 / 火元を設定してからシミュ開始を押してください。");
+  setStatus("Load a map, place spawn/exit/fire points, then start simulation.");
+}
+
+
+
+
+
+
+
+
