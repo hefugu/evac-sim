@@ -2,7 +2,7 @@
 import { state, syncLegacyState } from "../state.js";
 import { createRenderer } from "../renderer.js";
 import { computePotentialFieldFromSeedsModule } from "./potential.js";
-
+import { clamp, parseNum} from "../utils/helpers.js";
 let runtimeControls = {
   start: null,
   stop: null,
@@ -290,15 +290,6 @@ export function initSimulation() {
     potentialExitIndexInput.max = String(max);
     const cur = Math.max(1, Math.floor(parseNum(potentialExitIndexInput, 1)));
     potentialExitIndexInput.value = String(Math.min(cur, max));
-  }
-
-  function clamp(v, min, max) {
-    return Math.max(min, Math.min(max, v));
-  }
-
-  function parseNum(input, fallback = 0) {
-    const n = Number(input?.value);
-    return Number.isFinite(n) ? n : fallback;
   }
 
   function cloneWalkableTemplate(template) {

@@ -6,3 +6,7 @@
 export function ensureArray(value) {
   return Array.isArray(value) ? value : [];
 }
+
+export function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
