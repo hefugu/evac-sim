@@ -5,6 +5,7 @@ import { computePotentialFieldFromSeedsModule } from "./potential.js";
 import { clamp, parseNum} from "../utils/helpers.js";
 import { downloadCsvReport } from "../export/csv.js";
 import { loadImageFromFile } from "../mapLoader.js";
+import { loadPresetStore, savePresetStore } from "../storage/presets.js";
 let runtimeControls = {
   start: null,
   stop: null,
@@ -57,9 +58,6 @@ export function initSimulation() {
   const floorCountInput = ui.floorCountInput;
   const currentFloorSelect = ui.currentFloorSelect;
   const btnApplyFloors = ui.btnApplyFloors;
-  const osmCenterInput = ui.osmCenterInput;
-  const osmZoomInput = ui.osmZoomInput;
-  const btnLoadOSM = ui.btnLoadOSM;
 
   const btnStart = ui.btnStart;
   const btnStop = ui.btnStop;
@@ -836,59 +834,6 @@ export function initSimulation() {
     } finally {
       mapFileInput.value = "";
     }
-  });
-
-  function loadImageFromUrl(url, title = "外部マップ") {
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => {
-      try {
-        const ok = applyImageToFloorMap(img, currentFloor, {
-          initializeAllFloors: false,
-          clearMarkers: true
-        });
-        if (!ok) return;
-        resetSimulationCore(true);
-        log(`${title} 読込: ${currentFloor + 1}F (${img.width}x${img.height}px)`);
-      } catch (err) {
-        alert(`${title} の読み込みに失敗しました。`);
-      }
-    };
-    img.onerror = () => {
-      alert(`${title} の画像取得に失敗しました。`);
-    };
-    img.src = url;
-  }
-
-  function loadOSMMap() {
-    const center = (osmCenterInput.value || "").trim();
-    const zoom = clamp(Math.round(parseNum(osmZoomInput, 17)), 10, 19);
-    osmZoomInput.value = zoom;
-    if (!/^[-+]?[\d.]+\s*,\s*[-+]?[\d.]+$/.test(center)) {
-      alert("OSM中心は「緯度,経度」で入力してください。例: 35.681236,139.767125");
-      return;
-    }
-    const [lat, lon] = center.split(",").map(v => Number(v.trim()));
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-      alert("緯度・経度の形式が正しくありません。");
-      return;
-    }
-    const url =
-      "https://staticmap.openstreetmap.de/staticmap.php?" +
-      `center=${encodeURIComponent(lat + "," + lon)}&zoom=${zoom}&size=1024x1024&maptype=mapnik`;
-    loadImageFromUrl(url, "OSM");
-  }
-
-  btnLoadOSM.addEventListener("click", loadOSMMap);
-
-  thrRange.addEventListener("input", () => {
-    if (!baseImage) return;
-    const ok = applyImageToFloorMap(baseImage, currentFloor, {
-      initializeAllFloors: false,
-      clearMarkers: true
-    });
-    if (!ok) return;
-    resetSimulationCore(true);
   });
 
   function extractWalkableTemplateFromImage(image) {
