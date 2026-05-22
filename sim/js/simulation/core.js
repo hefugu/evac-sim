@@ -701,23 +701,9 @@ export function initSimulation() {
     optimizeReverseInput.checked = !!snap.optimizeReverse;
   }
 
-  function loadPresetStore() {
-    try {
-      const raw = localStorage.getItem(PRESET_STORAGE_KEY);
-      if (!raw) return {};
-      const parsed = JSON.parse(raw);
-      return (parsed && typeof parsed === "object") ? parsed : {};
-    } catch {
-      return {};
-    }
-  }
-
-  function savePresetStore(store) {
-    localStorage.setItem(PRESET_STORAGE_KEY, JSON.stringify(store));
-  }
 
   function refreshPresetOptions() {
-    const store = loadPresetStore();
+    const store = loadPresetStore(PRESET_STORAGE_KEY);
     const names = Object.keys(store).sort();
     presetSelect.innerHTML = "";
     if (names.length === 0) {
@@ -741,9 +727,9 @@ export function initSimulation() {
       alert("プリセット名を入力してください。");
       return;
     }
-    const store = loadPresetStore();
+    const store = loadPresetStore(PRESET_STORAGE_KEY);
     store[name] = currentSettingsSnapshot();
-    savePresetStore(store);
+    savePresetStore(PRESET_STORAGE_KEY, store);
     refreshPresetOptions();
     presetSelect.value = name;
     log(`プリセット保存: ${name}`);
@@ -752,7 +738,7 @@ export function initSimulation() {
   function loadSelectedPreset() {
     const name = presetSelect.value;
     if (!name) return;
-    const store = loadPresetStore();
+    const store = loadPresetStore(PRESET_STORAGE_KEY);
     const snap = store[name];
     if (!snap) {
       alert("選択したプリセットが見つかりません。");
