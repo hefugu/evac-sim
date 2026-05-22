@@ -1,0 +1,38 @@
+# Environment files
+.env
+.env.*
+
+# Python virtual environments
+venv/
+.venv/
+server/venv/
+
+# Python cache / build artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Node / frontend dependencies
+node_modules/
+.pnpm-store/
+.npm/
+
+# Generic cache / temp
+.cache/
+*.log
+*.tmp
+*.swp
+Thumbs.db
+.DS_Store
