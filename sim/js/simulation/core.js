@@ -6,6 +6,7 @@ import { clamp, parseNum} from "../utils/helpers.js";
 import { downloadCsvReport } from "../export/csv.js";
 import { loadImageFromFile } from "../mapLoader.js";
 import { loadPresetStore, savePresetStore } from "../storage/presets.js";
+import { pushParamHistoryEntry } from "../storage/history.js";
 let runtimeControls = {
   start: null,
   stop: null,
@@ -756,12 +757,7 @@ export function initSimulation() {
   }
 
   function pushParamHistory() {
-    const entry = {
-      at: new Date().toISOString(),
-      ...currentSettingsSnapshot()
-    };
-    paramHistory.unshift(entry);
-    if (paramHistory.length > 120) paramHistory.length = 120;
+    return pushParamHistoryEntry(paramHistory, currentSettingsSnapshot(), 120);
   }
 
   function showParamHistory() {
