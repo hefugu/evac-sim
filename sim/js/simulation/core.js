@@ -6,7 +6,7 @@ import { clamp, parseNum} from "../utils/helpers.js";
 import { downloadCsvReport } from "../export/csv.js";
 import { loadImageFromFile } from "../mapLoader.js";
 import { loadPresetStore, savePresetStore } from "../storage/presets.js";
-import { pushParamHistoryEntry } from "../storage/history.js";
+import { pushParamHistoryEntry, showParamHistoryLog } from "../storage/history.js";
 let runtimeControls = {
   start: null,
   stop: null,
@@ -761,17 +761,10 @@ export function initSimulation() {
   }
 
   function showParamHistory() {
-    if (!paramHistory.length) {
-      log("パラメータ履歴はまだありません。");
-      return;
-    }
-    log(`パラメータ履歴: 最新${Math.min(8, paramHistory.length)}件`);
-    paramHistory.slice(0, 8).forEach((h, i) => {
-      log(
-        `${i + 1}. ${h.at.slice(0, 19).replace("T", " ")} / ` +
-        `階数=${h.floorCount ?? floorCount}, 人数=${h.numAgents}, 速度=${h.speed}, 速度ばらつき=${h.speedVar}%, ` +
-        `開始ルール=${h.startRule}, プリセット=${h.agentPreset}, 逆最適化=${h.optimizeReverse ? "ON" : "OFF"}`
-      );
+    return showParamHistoryLog(paramHistory, {
+      floorCount,
+      log,
+      maxItems: 8
     });
   }
 
