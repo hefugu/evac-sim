@@ -1,0 +1,113 @@
+name: Apply fire smoke route fix
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/apply-fire-smoke-route-fix.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Apply fire/smoke route-risk patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("sim/js/simulation/core.js")
+          if not path.exists():
+              raise SystemExit("sim/js/simulation/core.js not found")
+
+          text = path.read_text(encoding="utf-8-sig")
+          original = text
+
+          def require(cond, msg):
+              if not cond:
+                  raise SystemExit(msg)
+
+          def replace_once(old, new, label):
+              global text
+              count = text.count(old)
+              require(count == 1, f"{label}: expected 1 match, got {count}")
+              text = text.replace(old, new, 1)
+
+          if "const LETHAL_FIRE_CELL_BLOCK" not in text:
+              replace_once(
+                  """  const SMOKE_AVOID_WEIGHT = 1.1;\n  const FIRE_AVOID_WEIGHT = 2.5;""",
+                  """  const SMOKE_AVOID_WEIGHT = 1.1;\n  const FIRE_AVOID_WEIGHT = 2.5;\n\n  // Fire/smoke avoidance is intentionally stronger than distance following.\n  // This is not CFD. It is a fire-engineering-inspired 2D risk field for evacuation route choice.\n  // Real CFD such as NIST FDS solves low-speed fire-driven flow numerically; this model only\n  // approximates smoke spread, ventilation, visibility loss, and route risk inside the browser.\n  const LETHAL_FIRE_CELL_BLOCK = true;\n  const FIRE_HARD_AVOID_HEAT = 0.85;\n  const FIRE_SOFT_AVOID_HEAT = 0.25;\n  const SMOKE_HARD_AVOID_LEVEL = 2.25;\n  const SMOKE_SOFT_AVOID_LEVEL = 0.75;\n  const FIRE_BLOCK_SCORE = 1e6;\n  const FIRE_NEAR_BLOCK_SCORE = 160;\n  const HIGH_SMOKE_BLOCK_SCORE = 85;\n  const SMOKE_ROUTE_WEIGHT = 7.5;\n  const SMOKE_ROUTE_QUADRATIC_WEIGHT = 5.0;\n  const FIRE_ROUTE_WEIGHT = 22.0;\n  const FIRE_LETHAL_ROUTE_WEIGHT = 120.0;""",
+                  "risk constants",
+              )
+
+          text = text.replace("    const MAX_SMOKE = 3.0;", "    const MAX_SMOKE = 4.0;", 1)
+          text = text.replace("    const FIRE_SOURCE_PER_SEC = 2.4;", "    const FIRE_SOURCE_PER_SEC = 3.4;", 1)
+          text = text.replace("    const DIFFUSE_PER_SEC = 1.7 / cellMeters;", "    const DIFFUSE_PER_SEC = 2.05 / cellMeters;", 1)
+          text = text.replace("    const BASE_DECAY_PER_SEC = 0.012;", "    const BASE_DECAY_PER_SEC = 0.008;", 1)
+
+          if "function routeRiskAt(" not in text:
+              marker = "    const occupancyByFloor = new Array(floorCount).fill(null).map(() => makeScalarGrid(0));"
+              require(marker in text, "routeRiskAt insertion marker not found")
+              route_func = """    function routeRiskAt(floor, cx, cy) {\n      const fGrid = floorStates[floor]?.grid;\n      if (!fGrid || !inBounds(cx, cy)) {\n        return {\n          blocked: true,\n          reason: \"out_of_bounds\",\n          smoke: 0,\n          heat: 0,\n          lethal: false,\n          penalty: FIRE_BLOCK_SCORE\n        };\n      }\n\n      const cell = fGrid[cy][cx];\n      const smoke = smokeAt(floor, cx, cy);\n      const fire = fireRiskAt(floor, cx, cy);\n\n      if (LETHAL_FIRE_CELL_BLOCK && cell.fire) {\n        return {\n          blocked: true,\n          reason: \"fire_cell\",\n          smoke,\n          heat: fire.heat,\n          lethal: true,\n          penalty: FIRE_BLOCK_SCORE\n        };\n      }\n\n      if (fire.lethal || fire.heat >= FIRE_HARD_AVOID_HEAT) {\n        return {\n          blocked: true,\n          reason: \"lethal_fire_zone\",\n          smoke,\n          heat: fire.heat,\n          lethal: fire.lethal,\n          penalty: FIRE_NEAR_BLOCK_SCORE + fire.heat * FIRE_LETHAL_ROUTE_WEIGHT\n        };\n      }\n\n      if (smoke >= SMOKE_HARD_AVOID_LEVEL) {\n        return {\n          blocked: false,\n          reason: \"high_smoke\",\n          smoke,\n          heat: fire.heat,\n          lethal: false,\n          penalty:\n            HIGH_SMOKE_BLOCK_SCORE +\n            smoke * SMOKE_ROUTE_WEIGHT +\n            smoke * smoke * SMOKE_ROUTE_QUADRATIC_WEIGHT +\n            fire.heat * FIRE_ROUTE_WEIGHT\n        };\n      }\n\n      const smokeExcess = Math.max(0, smoke - SMOKE_SOFT_AVOID_LEVEL);\n      const fireExcess = Math.max(0, fire.heat - FIRE_SOFT_AVOID_HEAT);\n      return {\n        blocked: false,\n        reason: \"risk\",\n        smoke,\n        heat: fire.heat,\n        lethal: false,\n        penalty:\n          smoke * SMOKE_ROUTE_WEIGHT +\n          smokeExcess * smokeExcess * SMOKE_ROUTE_QUADRATIC_WEIGHT +\n          fire.heat * FIRE_ROUTE_WEIGHT +\n          fireExcess * fireExcess * FIRE_LETHAL_ROUTE_WEIGHT\n      };\n    }\n\n"""
+              text = text.replace(marker, route_func + marker, 1)
+
+          if "const routeRisk = routeRiskAt(nf, nx, ny);" not in text:
+              pattern = re.compile(
+                  r"(        const nf = c\.nf \?\? floor;\r?\n"
+                  r"(?:        .+\r?\n){0,8}?"
+                  r"        if \(!isAgentTraversableCell\(nf, nx, ny\)\) continue;\r?\n)"
+                  r"(        const nextPot = potentialField\?\.\[nf\]\?\.\[ny\]\?\.\[nx\];)"
+              )
+              match = pattern.search(text)
+              require(match, "candidate risk insertion marker not found")
+              text = text[:match.start()] + match.group(1) + "        const routeRisk = routeRiskAt(nf, nx, ny);\n        if (routeRisk.blocked) continue;\n" + match.group(2) + text[match.end():]
+
+          if "routeRiskPenalty: routeRisk.penalty" not in text:
+              replace_once(
+                  """        evaluated.push({\n          c, nx, ny, nf, occ, densityTarget, smokeTarget, heatPenalty,\n          fireHeat: fireTarget.heat, potGain, uphill, isBacktrack\n        });""",
+                  """        evaluated.push({\n          c, nx, ny, nf, occ, densityTarget, smokeTarget, heatPenalty,\n          fireHeat: fireTarget.heat,\n          routeRiskPenalty: routeRisk.penalty,\n          routeRiskReason: routeRisk.reason,\n          potGain, uphill, isBacktrack\n        });""",
+                  "evaluated push",
+              )
+
+          if "routeRiskPenalty, potGain" not in text:
+              replace_once(
+                  """      for (const e of evalPool) {\n        const { c, nx, ny, nf, occ, densityTarget, smokeTarget, heatPenalty, fireHeat, potGain, uphill, isBacktrack } = e;\n        let score = potGain * POTENTIAL_GAIN_WEIGHT;""",
+                  """      for (const e of evalPool) {\n        const {\n          c, nx, ny, nf, occ, densityTarget, smokeTarget, heatPenalty,\n          fireHeat, routeRiskPenalty, potGain, uphill, isBacktrack\n        } = e;\n        let score = potGain * POTENTIAL_GAIN_WEIGHT;""",
+                  "score destructuring",
+              )
+
+          if "score -= routeRiskPenalty;" not in text:
+              replace_once(
+                  """        score -= smokeTarget * SMOKE_AVOID_WEIGHT;\n        score -= fireHeat * FIRE_AVOID_WEIGHT;\n        score -= heatPenalty;""",
+                  """        score -= smokeTarget * SMOKE_AVOID_WEIGHT;\n        score -= fireHeat * FIRE_AVOID_WEIGHT;\n        score -= routeRiskPenalty;\n        score -= heatPenalty;""",
+                  "route risk score",
+              )
+
+          if text == original:
+              print("No changes needed; patch already applied.")
+          else:
+              path.write_text(text, encoding="utf-8")
+              print("Patched sim/js/simulation/core.js")
+          PY
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add sim/js/simulation/core.js
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Strengthen fire smoke route avoidance"
+            git push
+          fi
