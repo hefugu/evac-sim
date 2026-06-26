@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="ja">
 <head>
   <meta charset="utf-8">
@@ -28,6 +28,24 @@
         <option value="0" selected>1F</option>
       </select>
       <button id="btnApplyFloors" type="button" hidden aria-hidden="true">フロア設定反映</button>
+    </div>
+
+    <div class="block">
+      <div class="sectionTitle">FDS / 火災工学データ <span class="badge">CSV</span></div>
+      <div class="row">
+        <label>FDS CSV</label>
+        <input type="file" id="fdsCsvFile" accept=".csv,text/csv">
+      </div>
+      <div class="simButtons">
+        <button id="btnClearFdsCsv" type="button">FDS解除</button>
+      </div>
+      <div id="fdsCsvStatus" class="hint">
+        未読込。列:
+        time_s,floor,cx,cy,heat_flux_kw_m2,optical_density_m_1,co_ppm,visibility_m,temperature_c
+      </div>
+      <div class="hint">
+        FDS等のCFD結果をCSV化して読み込むと、熱流束・煙濃度・CO濃度・視界距離を経路選択と危険度へ反映します。
+      </div>
     </div>
     <div class="block">
       <div class="sectionTitle">編集モード</div>
