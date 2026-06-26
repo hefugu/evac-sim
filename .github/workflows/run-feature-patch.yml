@@ -1,0 +1,37 @@
+name: Run feature patch
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/run-feature-patch.yml"
+      - ".github/scripts/apply_fire_engineering_features.py"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run patch script
+        run: python .github/scripts/apply_fire_engineering_features.py
+
+      - name: Commit generated changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add sim/index.html sim/js/ui.js sim/js/simulation/core.js docs/fire_engineering_model_basis.md docs/fds_risk_sample.csv
+          if git diff --cached --quiet; then
+            echo "No generated changes."
+          else
+            git commit -m "Add engineering CSV feature"
+            git push
+          fi
