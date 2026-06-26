@@ -1,0 +1,197 @@
+﻿<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>避難シミュレーション</title>
+  <link rel="stylesheet" href="./styles/main.css">
+</head>
+<body>
+  <div id="leftPanel">
+    <h1>避難シミュレーター</h1>
+
+    <div class="block">
+      <div class="sectionTitle">マップ</div>
+      <div class="row">
+        <label>マップ画像</label>
+        <input type="file" id="mapFile" accept="image/*">
+      </div>
+      <div class="row">
+        <label>白色しきい値</label>
+        <input type="range" id="thrRange" min="120" max="255" value="200">
+      </div>
+      <div class="row">
+        <label id="floorLabel">単一フロアシミュレーション</label>
+        <span style="font-size:10px;color:var(--text-dim);">（白=通行可、黒=壁）</span>
+      </div>
+      <input type="hidden" id="floorCount" value="1">
+      <select id="currentFloor" hidden>
+        <option value="0" selected>1F</option>
+      </select>
+      <button id="btnApplyFloors" type="button" hidden aria-hidden="true">フロア設定反映</button>
+    </div>
+    <div class="block">
+      <div class="sectionTitle">編集モード</div>
+      <div class="modeButtons">
+        <button id="modeSpawn" data-mode="spawn">開始位置</button>
+        <button id="modeExit" data-mode="exit">出口</button>
+        <button id="modeFire" data-mode="fire" class="danger">火元</button>
+        <button id="modeErase" data-mode="erase">消去</button>
+        <button id="btnMonte">MC x100</button>
+      </div>
+      <div style="margin-top:4px;font-size:10px;color:var(--text-dim);">
+        左クリック: 配置 / 消去<br>
+        開始位置: 初期群集の配置地点<br>
+        出口: 避難出口<br>
+        火元: 通行不可エリア
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="sectionTitle">流動パラメータ</div>
+      <div class="row">
+        <label>エージェント数</label>
+        <input type="number" id="numAgents" min="1" max="2000" value="80">
+      </div>
+      <div class="row">
+        <label>速度 [m/s]</label>
+        <input type="number" id="speed" min="0.2" max="4" step="0.1" value="1.2">
+      </div>
+      <div class="row">
+        <label>速度ばらつき [%]</label>
+        <input type="number" id="speedVar" min="0" max="100" value="25">
+      </div>
+      <div class="row">
+        <label>セルサイズ [m]</label>
+        <input type="number" id="cellSizeMeters" min="0.2" max="2" step="0.1" value="0.5">
+      </div>
+      <div class="row">
+        <label>開始ルール</label>
+        <select id="startRule">
+          <option value="simultaneous">一斉開始</option>
+          <option value="far_first" selected>遠方優先</option>
+        </select>
+      </div>
+      <div class="simButtons">
+        <button id="btnStart" class="danger pulse">シミュ開始</button>
+        <button id="btnStop">停止</button>
+        <button id="btnReset">リセット</button>
+        <button id="btnClearMap">クリア</button>
+      </div>
+      <div id="statusBar">待機中 - マップを読み込んでください。</div>
+    </div>
+
+    <div class="block">
+      <div class="sectionTitle">可視化</div>
+      <div class="toggleRow">
+        <input type="checkbox" id="vizTrails" checked>
+        <label for="vizTrails">軌跡ライン</label>
+      </div>
+      <div class="toggleRow">
+        <input type="checkbox" id="vizFlow" checked>
+        <label for="vizFlow">流れベクトル</label>
+      </div>
+      <div class="toggleRow">
+        <input type="checkbox" id="vizPotential">
+        <label for="vizPotential">ポテンシャル勾配</label>
+      </div>
+      <div class="row">
+        <label>ポテンシャル表示</label>
+        <select id="potentialViewMode">
+          <option value="combined" selected>統合ポテンシャル</option>
+          <option value="per_exit">出口別</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>表示出口番号</label>
+        <input type="number" id="potentialExitIndex" min="1" value="1">
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="sectionTitle">エージェント設定</div>
+      <div class="row">
+        <label>構成プリセット</label>
+        <select id="agentPreset">
+          <option value="default">標準</option>
+          <option value="teacher_student" selected>教師 + 生徒</option>
+          <option value="mixed">混合</option>
+          <option value="custom">カスタム</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>子供 [%]</label>
+        <input type="number" id="ratioChild" min="0" max="100" value="15">
+      </div>
+      <div class="row">
+        <label>高齢者 [%]</label>
+        <input type="number" id="ratioElderly" min="0" max="100" value="10">
+      </div>
+      <div class="row">
+        <label>パニック [%]</label>
+        <input type="number" id="ratioPanic" min="0" max="100" value="10">
+      </div>
+      <div class="row">
+        <label>リーダー [%]</label>
+        <input type="number" id="ratioLeader" min="0" max="100" value="8">
+      </div>
+      <div class="row">
+        <label>教師 [%]</label>
+        <input type="number" id="ratioTeacher" min="0" max="100" value="7">
+      </div>
+      <div class="row">
+        <label>生徒 [%]</label>
+        <input type="number" id="ratioStudent" min="0" max="100" value="20">
+      </div>
+      <div class="hint">構成比は自動正規化され、合計が100%を超えた場合は比率を縮小します。</div>
+    </div>
+
+    <div class="block">
+      <div class="sectionTitle">分析 / 最適化</div>
+      <div class="simButtons">
+        <button id="btnAnalyze">分析更新</button>
+        <button id="btnOptimizeExit">出口最適化</button>
+        <button id="btnAutoImprove">配置自動改善</button>
+      </div>
+      <div class="toggleRow">
+        <input type="checkbox" id="optimizeReverse">
+        <label for="optimizeReverse">逆最適化（悪化方向で試算）</label>
+      </div>
+      <div class="hint">出口最適化は候補セル評価で短縮見込みを算出します。</div>
+    </div>
+
+    <div class="block">
+      <div class="sectionTitle">設定 / 出力</div>
+      <div class="row">
+        <label>プリセット名</label>
+        <input type="text" id="presetName" value="my_preset">
+      </div>
+      <div class="row">
+        <label>保存済み</label>
+        <select id="presetSelect"></select>
+      </div>
+      <div class="simButtons">
+        <button id="btnSavePreset">保存</button>
+        <button id="btnLoadPreset">読込</button>
+        <button id="btnExportCsv">CSV出力</button>
+        <button id="btnParamHistory">履歴</button>
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="sectionTitle">レポート <span class="badge">自動</span></div>
+      <textarea id="log" readonly></textarea>
+    </div>
+  </div>
+
+  <div id="mainArea">
+    <canvas id="simCanvas"></canvas>
+    <div id="overlayHUD">
+      <div>時間: <strong id="hudTime">0.0 s</strong></div>
+      <div>避難: <strong id="hudEvac">0 避難 / 0 死亡 / 0</strong></div>
+      <div>平均: <strong id="hudAvg">--</strong>  最大: <strong id="hudMax">--</strong></div>
+    </div>
+  </div>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>
