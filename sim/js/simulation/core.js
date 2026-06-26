@@ -67,6 +67,13 @@ export function initSimulation() {
   const fdsCsvFileInput = ui.fdsCsvFileInput;
   const btnClearFdsCsv = ui.btnClearFdsCsv;
   const fdsCsvStatus = ui.fdsCsvStatus;
+  const fdsCsvStats = ui.fdsCsvStats;
+  const riskViewModeInput = ui.riskViewModeInput;
+  const smokeSourceRateInput = ui.smokeSourceRateInput;
+  const smokeDiffusionRateInput = ui.smokeDiffusionRateInput;
+  const smokeSpreadMixInput = ui.smokeSpreadMixInput;
+  const smokeDiagonalMixInput = ui.smokeDiagonalMixInput;
+  const smokeDecayRateInput = ui.smokeDecayRateInput;
 
   const btnStart = ui.btnStart;
   const btnStop = ui.btnStop;
@@ -174,7 +181,8 @@ export function initSimulation() {
     name: null,
     rows: 0,
     frames: [],
-    times: []
+    times: [],
+    stats: null
   }; 
   const FAR_FIRST_MAX_DELAY_SEC = 8.0;
   const MAX_OCCUPANCY_PER_CELL = 2;
@@ -896,13 +904,53 @@ export function initSimulation() {
     const times = [...frames.keys()].sort((a, b) => a - b);
     if (!times.length || rows === 0) throw new Error("有効なFDS行がありません。");
 
-    return {
+    const parsed = {
       active: true,
       name: fileName,
       rows,
       times,
       frames: times.map(time => ({ time, cells: frames.get(time) }))
     };
+    parsed.stats = summarizeFdsRiskCsv(parsed);
+    return parsed;
+  }
+
+  function summarizeFdsRiskCsv(risk) {
+    const stats = {
+      rows: risk?.rows || 0,
+      timeCount: risk?.times?.length || 0,
+      maxHeatFluxKwM2: 0,
+      maxOpticalDensityM1: 0,
+      maxCoPpm: 0,
+      minVisibilityM: Infinity,
+      maxTemperatureC: -Infinity
+    };
+    if (!risk?.frames?.length) return stats;
+    risk.frames.forEach(frame => {
+      frame.cells.forEach(rec => {
+        stats.maxHeatFluxKwM2 = Math.max(stats.maxHeatFluxKwM2, rec.heatFluxKwM2 || 0);
+        stats.maxOpticalDensityM1 = Math.max(stats.maxOpticalDensityM1, rec.opticalDensityM1 || 0);
+        stats.maxCoPpm = Math.max(stats.maxCoPpm, rec.coPpm || 0);
+        if (Number.isFinite(rec.visibilityM)) stats.minVisibilityM = Math.min(stats.minVisibilityM, rec.visibilityM);
+        if (Number.isFinite(rec.temperatureC)) stats.maxTemperatureC = Math.max(stats.maxTemperatureC, rec.temperatureC);
+      });
+    });
+    if (!Number.isFinite(stats.minVisibilityM)) stats.minVisibilityM = null;
+    if (!Number.isFinite(stats.maxTemperatureC)) stats.maxTemperatureC = null;
+    return stats;
+  }
+
+  function formatFdsStats(stats) {
+    if (!stats) return "FDS統計: 未読込";
+    const vis = stats.minVisibilityM == null ? "--" : `${stats.minVisibilityM.toFixed(1)}m`;
+    const temp = stats.maxTemperatureC == null ? "--" : `${stats.maxTemperatureC.toFixed(1)}℃`;
+    return (
+      `FDS統計: rows=${stats.rows}, times=${stats.timeCount}, ` +
+      `max HeatFlux=${stats.maxHeatFluxKwM2.toFixed(1)}kW/m², ` +
+      `max OD=${stats.maxOpticalDensityM1.toFixed(2)}1/m, ` +
+      `max CO=${stats.maxCoPpm.toFixed(0)}ppm, ` +
+      `min Visibility=${vis}, max Temp=${temp}`
+    );
   }
 
   function getNearestFdsFrame(time) {
@@ -969,7 +1017,9 @@ export function initSimulation() {
       importedFdsRisk = parseFdsRiskCsv(text, file.name);
       const msg = `FDS CSV読込: ${file.name} / ${importedFdsRisk.rows}行 / ${importedFdsRisk.times.length}時刻`;
       if (fdsCsvStatus) fdsCsvStatus.textContent = msg;
+      if (fdsCsvStats) fdsCsvStats.textContent = formatFdsStats(importedFdsRisk.stats);
       log(msg);
+      log(formatFdsStats(importedFdsRisk.stats));
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       alert(`FDS CSVの読込に失敗しました: ${reason}`);
@@ -979,10 +1029,11 @@ export function initSimulation() {
   });
 
   btnClearFdsCsv?.addEventListener("click", () => {
-    importedFdsRisk = { active: false, name: null, rows: 0, frames: [], times: [] };
+    importedFdsRisk = { active: false, name: null, rows: 0, frames: [], times: [], stats: null };
     if (fdsCsvStatus) {
       fdsCsvStatus.textContent = "未読込。FDS/CFD値は使わず、簡易t²火災フォールバックを使います。";
     }
+    if (fdsCsvStats) fdsCsvStats.textContent = "FDS統計: 未読込";
     log("FDS CSVを解除しました。");
   });
 
@@ -1574,7 +1625,8 @@ export function initSimulation() {
   agentPresetInput.addEventListener("change", () => {
     applyAgentPreset(agentPresetInput.value);
   });
-  [vizTrailsInput, vizFlowInput, vizPotentialInput, potentialViewModeInput, potentialExitIndexInput]
+  [vizTrailsInput, vizFlowInput, vizPotentialInput, potentialViewModeInput, potentialExitIndexInput, riskViewModeInput]
+    .filter(Boolean)
     .forEach(el => el.addEventListener("change", drawScene));
 
   btnSavePreset.addEventListener("click", saveCurrentPreset);
@@ -1648,12 +1700,14 @@ export function initSimulation() {
     const inBounds = (x, y) => x >= 0 && y >= 0 && x < gridW && y < gridH;
     const floorInBounds = f => f >= 0 && f < floorCount;
 
-    const MAX_SMOKE = 4.0;
-    const FIRE_SOURCE_PER_SEC = 3.4;
-    const DIFFUSE_PER_SEC = 2.05 / cellMeters;
-    const BASE_DECAY_PER_SEC = 0.008;
-    const upTransferRatio = Math.min(0.5, BUOYANCY_PER_SEC * dt);
-    const diffuseRatio = Math.min(0.9, DIFFUSE_PER_SEC * dt * 0.35);
+    const MAX_SMOKE = 4.5;
+    const FIRE_SOURCE_PER_SEC = Math.max(0, parseNum(smokeSourceRateInput, 3.8));
+    const DIFFUSE_PER_SEC = Math.max(0, parseNum(smokeDiffusionRateInput, 2.8)) / cellMeters;
+    const BASE_DECAY_PER_SEC = Math.max(0, parseNum(smokeDecayRateInput, 0.006));
+    const SMOKE_SPREAD_MIX = clamp(parseNum(smokeSpreadMixInput, 0.65), 0.05, 1.2);
+    const SMOKE_DIAGONAL_MIX = clamp(parseNum(smokeDiagonalMixInput, 0.25), 0, 0.8);
+    const upTransferRatio = Math.min(0.55, BUOYANCY_PER_SEC * dt);
+    const diffuseRatio = Math.min(0.92, DIFFUSE_PER_SEC * dt * SMOKE_SPREAD_MIX);
 
     for (let f = 0; f < floorCount; f++) {
       const fs = floorStates[f];
@@ -1679,6 +1733,31 @@ export function initSimulation() {
         return c.walkable || c.fire || c.stair;
       };
 
+      function collectSmokeTargets(x, y) {
+        const targets = [];
+        const add = (nx, ny, weight) => {
+          if (!inBounds(nx, ny)) return;
+          if (!smokePassable(nx, ny)) return;
+          targets.push({ x: nx, y: ny, weight });
+        };
+        for (const d of dirs4) add(x + d.dx, y + d.dy, 1.0);
+        if (SMOKE_DIAGONAL_MIX > 0) {
+          const diagonals = [
+            { dx: 1, dy: 1 }, { dx: -1, dy: 1 },
+            { dx: 1, dy: -1 }, { dx: -1, dy: -1 }
+          ];
+          for (const d of diagonals) {
+            const nx = x + d.dx;
+            const ny = y + d.dy;
+            if (!inBounds(nx, ny) || !smokePassable(nx, ny)) continue;
+            const sideA = inBounds(x + d.dx, y) && smokePassable(x + d.dx, y);
+            const sideB = inBounds(x, y + d.dy) && smokePassable(x, y + d.dy);
+            if (sideA || sideB) add(nx, ny, SMOKE_DIAGONAL_MIX);
+          }
+        }
+        return targets;
+      }
+
       for (let y = 0; y < gridH; y++) {
         for (let x = 0; x < gridW; x++) {
           if (!smokePassable(x, y)) continue;
@@ -1700,19 +1779,15 @@ export function initSimulation() {
             nextCeil[y][x] = true;
           }
 
-          const targets = [];
-          for (const d of dirs4) {
-            const nx = x + d.dx;
-            const ny = y + d.dy;
-            if (!inBounds(nx, ny)) continue;
-            if (!smokePassable(nx, ny)) continue;
-            targets.push({ x: nx, y: ny });
-          }
+          const targets = collectSmokeTargets(x, y);
           if (targets.length > 0) {
             const move = remain * diffuseRatio;
-            const per = move / targets.length;
+            const weightSum = targets.reduce((sum, t) => sum + Math.max(0, t.weight || 0), 0) || targets.length;
             remain -= move;
-            for (const t of targets) nextSmoke[t.y][t.x] += per;
+            for (const t of targets) {
+              const share = move * (Math.max(0, t.weight || 0) / weightSum);
+              nextSmoke[t.y][t.x] += share;
+            }
           }
           nextSmoke[y][x] += remain;
         }
@@ -2633,6 +2708,98 @@ export function initSimulation() {
     }
   }
 
+  function fireHeatForOverlay(floor, cx, cy) {
+    let heat = 0;
+    const fs = floorStates[floor];
+    const fGrid = fs?.grid;
+    if (!fGrid) return 0;
+    const r = Math.ceil(FIRE_DANGER_RADIUS);
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (nx < 0 || ny < 0 || nx >= gridW || ny >= gridH) continue;
+        if (!fGrid[ny][nx].fire) continue;
+        const d = Math.hypot(dx, dy);
+        if (d <= FIRE_DANGER_RADIUS) heat += (FIRE_DANGER_RADIUS - d) / FIRE_DANGER_RADIUS;
+      }
+    }
+    return heat;
+  }
+
+  function riskRecordForOverlay(floor, cx, cy) {
+    const fds = getFdsRiskAt(floor, cx, cy, simTime);
+    if (fds) return fds;
+    const smoke = floorStates[floor]?.smokeMap?.[cy]?.[cx] || 0;
+    const fireHeat = fireHeatForOverlay(floor, cx, cy);
+    const hrrScale = Math.min(1, t2FireHrrKw(simTime) / Math.max(1, T2_FIRE_MAX_HRR_KW));
+    const opticalDensityM1 = Math.max(0, smoke * 0.32);
+    return {
+      heatFluxKwM2: Math.max(0, fireHeat * 8.0 * (0.35 + 0.65 * hrrScale)),
+      opticalDensityM1,
+      coPpm: Math.max(0, smoke * 260 * (0.4 + 0.6 * hrrScale)),
+      visibilityM: opticalDensityM1 > 0.001 ? Math.min(30, 3.0 / opticalDensityM1) : 30,
+      source: 'overlay_fallback'
+    };
+  }
+
+  function buildRiskOverlayGrid(mode) {
+    if (!grid || !floorStates.length || !mode || mode === 'none') return null;
+    const overlay = {
+      mode,
+      label: mode,
+      unit: '',
+      cells: new Array(gridH).fill(null).map(() => new Array(gridW).fill(null)),
+      maxValue: 0,
+      minValue: Infinity,
+      source: importedFdsRisk.active ? 'fds_csv' : 'fallback_t2'
+    };
+    if (mode === 'heat_flux') { overlay.label = 'Heat Flux'; overlay.unit = 'kW/m²'; }
+    else if (mode === 'optical_density') { overlay.label = 'Optical Density'; overlay.unit = '1/m'; }
+    else if (mode === 'co') { overlay.label = 'CO'; overlay.unit = 'ppm'; }
+    else if (mode === 'visibility') { overlay.label = 'Visibility risk'; overlay.unit = 'm'; }
+    else { overlay.label = 'Total fire risk'; overlay.unit = 'risk'; }
+
+    for (let y = 0; y < gridH; y++) {
+      for (let x = 0; x < gridW; x++) {
+        if (!grid[y][x].walkable && !grid[y][x].fire && !grid[y][x].stair) continue;
+        const rec = riskRecordForOverlay(currentFloor, x, y);
+        const hf = Math.max(0, rec.heatFluxKwM2 || 0);
+        const od = Math.max(0, rec.opticalDensityM1 || 0);
+        const co = Math.max(0, rec.coPpm || 0);
+        const vis = Number.isFinite(rec.visibilityM) ? Math.max(0, rec.visibilityM) : 30;
+        let value = 0;
+        let norm = 0;
+        if (mode === 'heat_flux') {
+          value = hf;
+          norm = clamp(hf / FDS_HEAT_FLUX_HARD_KW_M2, 0, 1);
+        } else if (mode === 'optical_density') {
+          value = od;
+          norm = clamp(od / FDS_OPTICAL_DENSITY_HARD, 0, 1);
+        } else if (mode === 'co') {
+          value = co;
+          norm = clamp(co / FDS_CO_HARD_PPM, 0, 1);
+        } else if (mode === 'visibility') {
+          value = vis;
+          norm = clamp(1 - (vis / 10), 0, 1);
+        } else {
+          const heatNorm = clamp(hf / FDS_HEAT_FLUX_HARD_KW_M2, 0, 1);
+          const odNorm = clamp(od / FDS_OPTICAL_DENSITY_HARD, 0, 1);
+          const coNorm = clamp(co / FDS_CO_HARD_PPM, 0, 1);
+          const visNorm = clamp(1 - (vis / 10), 0, 1);
+          norm = clamp(Math.max(heatNorm, odNorm, coNorm, visNorm) * 0.7 + ((heatNorm + odNorm + coNorm + visNorm) / 4) * 0.3, 0, 1);
+          value = norm;
+        }
+        if (norm <= 0.001) continue;
+        overlay.cells[y][x] = { value, norm };
+        overlay.maxValue = Math.max(overlay.maxValue, value);
+        overlay.minValue = Math.min(overlay.minValue, value);
+      }
+    }
+    if (!Number.isFinite(overlay.minValue)) overlay.minValue = 0;
+    return overlay;
+  }
+
   // ==== Rendering ====
   const renderer = createRenderer({
     ctx,
@@ -2671,7 +2838,10 @@ export function initSimulation() {
       vizFlow: !!vizFlowInput.checked,
       vizPotential: !!vizPotentialInput.checked,
       potentialViewMode: potentialViewModeInput.value,
-      potentialExitIndex: Math.max(1, Math.floor(parseNum(potentialExitIndexInput, 1)))
+      potentialExitIndex: Math.max(1, Math.floor(parseNum(potentialExitIndexInput, 1))),
+      riskOverlayMode: riskViewModeInput?.value || "none",
+      riskOverlay: buildRiskOverlayGrid(riskViewModeInput?.value || "none"),
+      fdsStats: importedFdsRisk.stats
     };
     state.render.lastScene = scene;
     renderer.render(scene);

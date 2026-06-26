@@ -46,6 +46,41 @@
       <div class="hint">
         FDS等のCFD結果をCSV化して読み込むと、熱流束・煙濃度・CO濃度・視界距離を経路選択と危険度へ反映します。
       </div>
+      <div id="fdsCsvStats" class="hint">FDS統計: 未読込</div>
+      <div class="row">
+        <label>危険度表示</label>
+        <select id="riskViewMode">
+          <option value="none" selected>通常</option>
+          <option value="total">総合火災危険度</option>
+          <option value="heat_flux">Heat Flux</option>
+          <option value="optical_density">Optical Density</option>
+          <option value="co">CO濃度</option>
+          <option value="visibility">視界距離</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>煙発生量</label>
+        <input type="number" id="smokeSourceRate" min="0" max="20" step="0.1" value="3.8">
+      </div>
+      <div class="row">
+        <label>煙拡散速度</label>
+        <input type="number" id="smokeDiffusionRate" min="0" max="20" step="0.1" value="2.8">
+      </div>
+      <div class="row">
+        <label>煙分岐混合</label>
+        <input type="number" id="smokeSpreadMix" min="0.1" max="1.2" step="0.05" value="0.65">
+      </div>
+      <div class="row">
+        <label>斜め回り込み</label>
+        <input type="number" id="smokeDiagonalMix" min="0" max="0.8" step="0.05" value="0.25">
+      </div>
+      <div class="row">
+        <label>煙自然減衰</label>
+        <input type="number" id="smokeDecayRate" min="0" max="0.2" step="0.001" value="0.006">
+      </div>
+      <div class="hint">
+        T字・曲がり角で煙が止まる場合は、煙分岐混合と斜め回り込みを少し上げてください。
+      </div>
     </div>
     <div class="block">
       <div class="sectionTitle">編集モード</div>

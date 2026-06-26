@@ -1,4 +1,4 @@
-﻿function drawArrow(ctx, px, py, vx, vy, color, width = 0.35) {
+function drawArrow(ctx, px, py, vx, vy, color, width = 0.35) {
   const len = Math.hypot(vx, vy);
   if (len < 0.001) return;
   const ux = vx / len;
@@ -150,6 +150,24 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
       }
     }
     return true;
+  }
+
+  function drawRiskOverlay(scene) {
+    const { grid, gridW, gridH, riskOverlay } = scene;
+    if (!grid || !riskOverlay?.cells) return;
+    for (let y = 0; y < gridH; y++) {
+      for (let x = 0; x < gridW; x++) {
+        const cell = riskOverlay.cells[y]?.[x];
+        if (!cell) continue;
+        const t = clamp(cell.norm || 0, 0, 1);
+        const r = Math.floor(40 + 215 * t);
+        const g = Math.floor(220 - 190 * t);
+        const b = Math.floor(70 - 50 * t);
+        const alpha = 0.18 + 0.48 * t;
+        ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+        ctx.fillRect(x * cellSizePx, y * cellSizePx, cellSizePx, cellSizePx);
+      }
+    }
   }
 
   function drawSmoke(scene) {
@@ -314,6 +332,16 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
     ctx.fillText(`フロア ${scene.currentFloor + 1}/${scene.floorCount}`, 4, 4);
+    if (scene.riskOverlay && scene.riskOverlay.mode !== "none") {
+      const maxVal = Number.isFinite(scene.riskOverlay.maxValue)
+        ? scene.riskOverlay.maxValue.toFixed(scene.riskOverlay.maxValue >= 100 ? 0 : 2)
+        : "--";
+      ctx.fillText(
+        `Risk: ${scene.riskOverlay.label} / max=${maxVal}${scene.riskOverlay.unit ? " " + scene.riskOverlay.unit : ""} / ${scene.riskOverlay.source}`,
+        4,
+        17
+      );
+    }
   }
 
   function render(scene) {
@@ -321,6 +349,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
     ctx.clearRect(0, 0, rect.width, rect.height);
     const canContinue = drawGrid(scene);
     if (!canContinue || !scene.grid) return;
+    drawRiskOverlay(scene);
     drawSmoke(scene);
     drawAgents(scene);
     drawHeatmap(scene);
@@ -333,6 +362,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
     drawGrid,
     drawAgents,
     drawSmoke,
+    drawRiskOverlay,
     drawHeatmap,
     drawHUD
   };

@@ -36,3 +36,4 @@ node_modules/
 *.swp
 Thumbs.db
 .DS_Store
+.patch_backups/
