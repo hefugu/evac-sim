@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>避難シミュレーション — 3D校舎ビュー</title>
+  <link rel="stylesheet" href="./styles/main.css">
+</head>
+<body class="standalone3d">
+  <div id="standalone3dRoot">
+    <div id="viewToolbar" aria-label="3D表示コントロール">
+      <a class="buttonLink" href="./">2D編集へ戻る</a>
+      <button id="btnStandaloneSample" type="button">3Fサンプル</button>
+      <button id="btnStandaloneResetCamera" type="button">視点リセット</button>
+      <span class="viewToolbarSpacer"></span>
+      <label><input id="standaloneFire" type="checkbox" checked> 火災</label>
+      <label><input id="standaloneSmoke" type="checkbox" checked> 煙</label>
+      <label><input id="standaloneAgents" type="checkbox" checked> 人</label>
+      <label><input id="standaloneWalls" type="checkbox" checked> 壁</label>
+      <span id="standaloneConnection">2D状態を待機中</span>
+    </div>
+    <div id="pane3d" class="viewPane">
+      <canvas id="simCanvas3d"></canvas>
+      <div id="view3dStatus">3Fサンプルを準備しています…</div>
+    </div>
+  </div>
+  <script type="module" src="./js/3d-page.js"></script>
+</body>
+</html>

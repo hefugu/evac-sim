@@ -1,4 +1,6 @@
-const SAMPLE_3F_BASE64_URL = new URL("../assets/maps/scitech_3f_walkable.png.base64", import.meta.url);
+import { SCITECH_3F_PROFILE } from "./scitech3f-map3d.js";
+
+export const SAMPLE_3F_BASE64_URL = new URL("../assets/maps/scitech_3f_walkable.png.base64", import.meta.url);
 
 function base64ToBlob(base64Text, mimeType = "image/png") {
   const clean = String(base64Text || "").replace(/\s+/g, "");
@@ -8,7 +10,7 @@ function base64ToBlob(base64Text, mimeType = "image/png") {
   return new Blob([bytes], { type: mimeType });
 }
 
-async function loadBase64ImageAsFile(url, fileName) {
+export async function loadBase64ImageAsFile(url, fileName) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`sample map fetch failed: ${res.status}`);
   const base64 = await res.text();
@@ -28,6 +30,9 @@ export function setupSample3FLoader() {
   const thrRange = document.getElementById("thrRange");
   const cellSizeMetersInput = document.getElementById("cellSizeMeters");
   const agentPresetInput = document.getElementById("agentPreset");
+  const floorCountInput = document.getElementById("floorCount");
+  const currentFloorSelect = document.getElementById("currentFloor");
+  const btnApplyFloors = document.getElementById("btnApplyFloors");
   const statusBar = document.getElementById("statusBar");
   const mapBlock = mapFileInput?.closest(".block");
   if (!mapFileInput || !mapBlock || document.getElementById("btnLoadSample3F")) return;
@@ -44,7 +49,7 @@ export function setupSample3FLoader() {
 
   const hint = document.createElement("div");
   hint.className = "hint";
-  hint.textContent = "科学技術高校3Fの単一フロア検証用。白=通路、黒=壁として抽出済み。出口・開始位置・火元は読込後に配置してください。";
+  hint.textContent = "科学技術高校3F。白=通路、黒=壁、緑=階段候補として自動抽出します。出口・開始位置・火元は読込後に配置してください。";
 
   mapBlock.appendChild(row);
   mapBlock.appendChild(hint);
@@ -55,11 +60,20 @@ export function setupSample3FLoader() {
     btn.textContent = "読込中...";
     try {
       if (thrRange) thrRange.value = "200";
-      if (cellSizeMetersInput) cellSizeMetersInput.value = "0.5";
-      if (agentPresetInput) agentPresetInput.value = "teacher_student";
+      if (cellSizeMetersInput) cellSizeMetersInput.value = String(SCITECH_3F_PROFILE.cellSizeMeters);
+      if (agentPresetInput) {
+        agentPresetInput.value = "teacher_student";
+        agentPresetInput.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      if (floorCountInput) floorCountInput.value = "3";
+      btnApplyFloors?.click();
+      if (currentFloorSelect) {
+        currentFloorSelect.value = String(SCITECH_3F_PROFILE.floorIndex);
+        currentFloorSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      }
       const file = await loadBase64ImageAsFile(SAMPLE_3F_BASE64_URL, "scitech_3f_walkable.png");
       dispatchMapFile(mapFileInput, file);
-      if (statusBar) statusBar.textContent = "3Fサンプルマップを読み込みました。出口・開始位置・火元を配置してください。";
+      if (statusBar) statusBar.textContent = "3Fサンプルマップを読み込みました（0.42m/cell、緑=階段候補）。";
     } catch (err) {
       console.error(err);
       alert(`3Fサンプルマップの読み込みに失敗しました: ${err instanceof Error ? err.message : err}`);

@@ -8,6 +8,8 @@
 - `sim/js` 配下に `fetch` / `/api` / `localhost` 依存はありません。
 - 画像アップロードは `FileReader` を使用してブラウザ内で完結します（`sim/js/mapLoader.js`）。
 - CSV 出力は `Blob` + `URL.createObjectURL` でブラウザ内完結です（`sim/js/export/csv.js`）。
+- 2Dと3Dは同じ `state.agents` / floor / fire / smokeを参照し、3D側は計算を進めない表示専用です。
+- `/sim/3d.html` は外部CDNなしで動く閲覧専用3Dページです。主画面があればライブ同期し、単独時は3Fサンプルを表示します。
 - 本番 API URL は不要です（`/sim` 公開のみの場合）。
 
 そのため、**シミュレーション画面（`/sim`）は FastAPI なしで Vercel 単体デプロイ可能**です。
@@ -39,7 +41,16 @@
 5. `CSV出力` で `evac_report_*.csv` がダウンロードできることを確認する。
 6. `保存` / `読込`（プリセット）が再読み込み後も使えることを確認する（`localStorage`）。
 7. ブラウザ DevTools の Console / Network にエラーがないことを確認する。
-8. GitHub に小さな変更を push して、Vercel の自動再デプロイを確認する。
+8. `3Fサンプル読込` 後、`3D` / `同時表示` と `/sim/3d.html` が表示できることを確認する。
+9. GitHub に小さな変更を push して、Vercel の自動再デプロイを確認する。
+
+## ローカル回帰テスト
+
+追加のnpm依存なしで、2.5D座標、階段FIFO、火災、煙上昇、行動状態、3F抽出、閲覧同期を検査できます。
+
+```powershell
+node --test tests/3d-modules.test.mjs
+```
 
 ## Git 管理対象外（追加済み）
 

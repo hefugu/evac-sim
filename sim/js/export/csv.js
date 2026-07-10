@@ -32,6 +32,41 @@ export function downloadCsvReport(context) {
   lines.push(`summary,dead,${lastSummary.dead}`);
   lines.push(`summary,avg_time_s,${lastSummary.avgTime.toFixed(3)}`);
   lines.push(`summary,max_time_s,${lastSummary.maxTime.toFixed(3)}`);
+  lines.push(`summary,smoke_exposure,${Number(lastSummary.smokeExposure || 0).toFixed(3)}`);
+  lines.push(`summary,co_exposure_ppm_min,${Number(lastSummary.coExposurePpmMin || 0).toFixed(3)}`);
+  lines.push(`summary,heat_exposure,${Number(lastSummary.heatExposure || 0).toFixed(3)}`);
+  lines.push(`summary,stuck_events,${lastSummary.stuckEvents || 0}`);
+  lines.push(`summary,teacher_follow_rate,${Number(lastSummary.teacherFollowRate || 0).toFixed(4)}`);
+  lines.push(`summary,panic_escape_events,${lastSummary.panicEscapeEvents || 0}`);
+  lines.push(`summary,active_fire_cells,${lastSummary.activeFireCount || 0}`);
+  lines.push(`summary,total_hrr_kw,${Number(lastSummary.totalFireHrrKw || 0).toFixed(3)}`);
+
+  lines.push("");
+  lines.push("section,floor,current_occupancy,peak_occupancy");
+  const floorKeys = new Set([
+    ...Object.keys(lastSummary.floorOccupancy || {}),
+    ...Object.keys(lastSummary.floorPeakOccupancy || {})
+  ]);
+  [...floorKeys].sort((a, b) => Number(a) - Number(b)).forEach((floor) => {
+    lines.push(
+      `floor,${Number(floor) + 1},${lastSummary.floorOccupancy?.[floor] || 0},${lastSummary.floorPeakOccupancy?.[floor] || 0}`
+    );
+  });
+
+  lines.push("");
+  lines.push("section,stair_id,type,queued,in_transit,capacity,max_queue,completed");
+  (lastSummary.stairCongestion || []).forEach((stair) => {
+    lines.push([
+      "stair",
+      csvEscape(stair.id || stair.stairId || ""),
+      csvEscape(stair.type || ""),
+      stair.queued || 0,
+      stair.inTransit || 0,
+      stair.capacity || 0,
+      stair.maxQueue || 0,
+      stair.completed || 0
+    ].join(","));
+  });
 
   lines.push("");
   lines.push("section,time_s,avg_density,max_occ,active_agents");
@@ -46,7 +81,7 @@ export function downloadCsvReport(context) {
   });
 
   lines.push("");
-  lines.push("section,id,type,floor,target_exit,target_exit_floor,start_s,finish_s,dead,death_cause");
+  lines.push("section,id,type,floor,behavior_state,target_exit,target_exit_floor,target_stair,start_s,finish_s,dead,death_cause,smoke_dose,co_dose_ppm_min,heat_dose,heat_flux_dose,stuck_count,panic_escape_count");
   agents.forEach((a) => {
     const exit = allExitPoints[a.targetExitIndex] || null;
     lines.push(
@@ -55,12 +90,20 @@ export function downloadCsvReport(context) {
         a.id,
         csvEscape(TYPE_META[a.type]?.label || a.type || "Unknown"),
         (a.floor ?? 0) + 1,
+        csvEscape(a.behaviorState || "normal"),
         a.targetExitIndex ?? "",
         exit ? exit.floor + 1 : "",
+        csvEscape(a.targetStair || ""),
         Number.isFinite(a.startTime) ? a.startTime.toFixed(3) : "",
         Number.isFinite(a.finishTime) ? a.finishTime.toFixed(3) : "",
         a.dead ? 1 : 0,
-        a.deathCause || ""
+        a.deathCause || "",
+        Number(a.smokeDose || 0).toFixed(4),
+        Number(a.coDose ?? a.coDosePpmMin ?? 0).toFixed(4),
+        Number(a.heatDose || 0).toFixed(4),
+        Number(a.heatFluxDose || 0).toFixed(4),
+        a.stuckCount || 0,
+        a.panicEscapeCount || 0
       ].join(",")
     );
   });

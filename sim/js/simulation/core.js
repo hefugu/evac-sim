@@ -7,6 +7,25 @@ import { downloadCsvReport } from "../export/csv.js";
 import { loadImageFromFile } from "../mapLoader.js";
 import { loadPresetStore, savePresetStore } from "../storage/presets.js";
 import { pushParamHistoryEntry, showParamHistoryLog } from "../storage/history.js";
+import { extractScitech3FGrid, SCITECH_3F_PROFILE } from "../scitech3f-map3d.js";
+import {
+  stepFire3D,
+  applyFire3DResultToLegacyFloors
+} from "./fire3d.js";
+import { transferLegacySmokeThroughStairs } from "./smoke3d.js";
+import {
+  createStairTrafficState,
+  enqueueStairTransition,
+  stepStairTraffic,
+  getStairCongestion,
+  normalizeStairLink
+} from "./stairs3d.js";
+import {
+  normalizeAgent3D,
+  deriveAgentBehaviorState,
+  chooseClearAirStep,
+  summarizeAgentMetrics
+} from "./agents3d-sync.js";
 import {
   stairEndpointKey,
   normalizeStairLinkEndpoints,
@@ -74,6 +93,10 @@ export function initSimulation() {
   const smokeSpreadMixInput = ui.smokeSpreadMixInput;
   const smokeDiagonalMixInput = ui.smokeDiagonalMixInput;
   const smokeDecayRateInput = ui.smokeDecayRateInput;
+  const stairTypeInput = ui.stairTypeInput;
+  const stairTravelCostInput = ui.stairTravelCostInput;
+  const stairSmokeTransferInput = ui.stairSmokeTransferInput;
+  const stairCapacityInput = ui.stairCapacityInput;
 
   const btnStart = ui.btnStart;
   const btnStop = ui.btnStop;
@@ -140,7 +163,7 @@ export function initSimulation() {
   let floorStates = [];
   let floorCount = 1;
   let currentFloor = 0;
-  const SINGLE_FLOOR_MODE = true;
+  const SINGLE_FLOOR_MODE = false;
   let stairLinks = [];      // [{a:{floor,cx,cy}, b:{floor,cx,cy}}]
   let stairLinkIndex = new Map(); // key -> [{floor,cx,cy}]
   let pendingStairLink = null;    // {floor,cx,cy}
@@ -148,6 +171,9 @@ export function initSimulation() {
   let allSpawnPoints = [];  // {floor,cx,cy}
   let multiPotentialByExit = []; // [exit][floor][y][x]
   let multiCombinedPotential = null; // [floor][y][x]
+  let stairTrafficState = createStairTrafficState([]);
+  let stairCongestion = [];
+  let verticalSmokeTransfers = [];
 
   let exits = state.exits = [];         // {cx,cy}
   let spawns = state.spawns = [];        // {cx,cy,r}
@@ -172,6 +198,10 @@ export function initSimulation() {
   let potentialLegendMax = 1;
   let nextRouteReplanAt = 0;
   let nextCongestionSampleAt = 0;
+  let nextFireStepAt = 0;
+  let lastFireStepAt = 0;
+  let activeFireCount = 0;
+  let totalFireHrrKw = 0;
   const PRESET_STORAGE_KEY = "evac_presets_v1";
 
   let smokeMap = null; 
@@ -263,6 +293,12 @@ export function initSimulation() {
   };
 
   function syncPublicState() {
+    if (Array.isArray(agents) && floorStates.length) {
+      agents.forEach(agent => Object.assign(agent, normalizeAgent3D(agent, floorStates, {
+        cellSizeMeters: parseNum(cellSizeMetersInput, state.spatial.cellSizeMeters || 0.5),
+        floorHeightMeters: state.spatial.floorHeightMeters || 3.5
+      })));
+    }
     state.agents = agents;
     state.simRunning = simRunning;
     state.simTime = simTime;
@@ -302,6 +338,21 @@ export function initSimulation() {
     state.sim.lastSummary = lastSummary;
     state.sim.nextRouteReplanAt = nextRouteReplanAt;
     state.sim.nextCongestionSampleAt = nextCongestionSampleAt;
+    state.sim.stairTraffic = stairTrafficState;
+    state.sim.stairCongestion = stairCongestion;
+    state.sim.verticalSmokeTransfers = verticalSmokeTransfers;
+    state.sim.fireStats = { activeFireCount, totalHrrKw: totalFireHrrKw };
+    state.spatial.cellSizeMeters = Math.max(0.05, parseNum(cellSizeMetersInput, state.spatial.cellSizeMeters || 0.5));
+    state.hazards.fds = importedFdsRisk;
+    state.render.revision = (state.render.revision || 0) + 1;
+
+    const liveMetrics = summarizeAgentMetrics(agents);
+    state.evaluation.floorOccupancy = liveMetrics.floorOccupancy;
+    state.evaluation.stairCongestion = Object.fromEntries(
+      stairCongestion.map(item => [item.id || item.stairId, item])
+    );
+    state.evaluation.stuckEvents = liveMetrics.stuckCount;
+    state.evaluation.panicEscapeEvents = liveMetrics.panicEscapeCount;
 
     state.mc.running = mcRunning;
     state.mc.runs = mcRuns;
@@ -372,8 +423,16 @@ export function initSimulation() {
       const kb = stairEndpointKey(b.floor, b.cx, b.cy);
       if (!stairLinkIndex.has(ka)) stairLinkIndex.set(ka, []);
       if (!stairLinkIndex.has(kb)) stairLinkIndex.set(kb, []);
-      stairLinkIndex.get(ka).push({ floor: b.floor, cx: b.cx, cy: b.cy });
-      stairLinkIndex.get(kb).push({ floor: a.floor, cx: a.cx, cy: a.cy });
+      const metadata = {
+        linkId: link.id,
+        type: link.type || "indoor",
+        widthMeters: link.widthMeters || 1.5,
+        travelCostSec: link.travelCostSec || 8,
+        verticalSmokeTransfer: link.verticalSmokeTransfer ?? 0.35,
+        congestionCapacity: link.congestionCapacity || 2
+      };
+      stairLinkIndex.get(ka).push({ floor: b.floor, floorIndex: b.floor, cx: b.cx, cy: b.cy, ...metadata });
+      stairLinkIndex.get(kb).push({ floor: a.floor, floorIndex: a.floor, cx: a.cx, cy: a.cy, ...metadata });
     });
   }
 
@@ -391,10 +450,25 @@ export function initSimulation() {
       if (seen.has(h)) continue;
       seen.add(h);
       const [na, nb] = normalizeStairLinkEndpoints(a, b);
-      next.push({ a: na, b: nb });
+      const type = ["indoor", "outdoor", "emergency"].includes(link.type) ? link.type : "indoor";
+      next.push({
+        ...link,
+        id: link.id || `stair-${type}-${stairLinkHash(na, nb).replace(/[^a-zA-Z0-9_-]+/g, "-")}`,
+        type,
+        a: na,
+        b: nb,
+        from: { floorIndex: na.floor, cx: na.cx, cy: na.cy },
+        to: { floorIndex: nb.floor, cx: nb.cx, cy: nb.cy },
+        widthMeters: Math.max(0.5, Number(link.widthMeters) || 1.5),
+        travelCostSec: Math.max(0.5, Number(link.travelCostSec) || 8),
+        verticalSmokeTransfer: clamp(Number(link.verticalSmokeTransfer ?? 0.35), 0, 1),
+        congestionCapacity: Math.max(1, Math.floor(Number(link.congestionCapacity) || 2))
+      });
     }
     stairLinks = next;
     rebuildStairLinkIndex();
+    stairTrafficState = createStairTrafficState(stairLinks, simTime);
+    stairCongestion = getStairCongestion(stairTrafficState, stairLinks);
   }
 
   function removeStairLinksByCell(floor, cx, cy) {
@@ -452,7 +526,22 @@ export function initSimulation() {
       return false;
     }
     const [na, nb] = normalizeStairLinkEndpoints(aa, bb);
-    stairLinks.push({ a: na, b: nb });
+    const type = ["indoor", "outdoor", "emergency"].includes(stairTypeInput?.value)
+      ? stairTypeInput.value
+      : "indoor";
+    const hash = stairLinkHash(na, nb);
+    stairLinks.push({
+      id: `stair-${type}-${hash.replace(/[^a-zA-Z0-9_-]+/g, "-")}`,
+      type,
+      a: na,
+      b: nb,
+      from: { floorIndex: na.floor, cx: na.cx, cy: na.cy },
+      to: { floorIndex: nb.floor, cx: nb.cx, cy: nb.cy },
+      widthMeters: 1.5,
+      travelCostSec: Math.max(0.5, parseNum(stairTravelCostInput, 8)),
+      verticalSmokeTransfer: clamp(parseNum(stairSmokeTransferInput, type === "outdoor" ? 0.1 : 0.35), 0, 1),
+      congestionCapacity: Math.max(1, Math.floor(parseNum(stairCapacityInput, 2)))
+    });
     rebuildStairLinkIndex();
     return true;
   }
@@ -467,29 +556,76 @@ export function initSimulation() {
     );
   }
 
-  function cloneGridFromTemplate(template) {
+  function cloneGridFromTemplate(template, stairTemplate = null) {
     const out = new Array(gridH);
     for (let y = 0; y < gridH; y++) {
       out[y] = new Array(gridW);
       for (let x = 0; x < gridW; x++) {
+        const walkable = !!template?.[y]?.[x];
+        const stair = !!stairTemplate?.[y]?.[x];
         out[y][x] = {
-          walkable: !!template?.[y]?.[x],
+          walkable: walkable || stair,
+          wall: !(walkable || stair),
+          door: false,
           fire: false,
-          stair: false
+          fireIntensity: 0,
+          fireAgeSec: 0,
+          temperatureC: 20,
+          heatFluxKwM2: 0,
+          stair,
+          stairType: stair ? "indoor" : null,
+          smokeDensity: 0,
+          opticalDensity: 0,
+          coPpm: 0,
+          visibilityMeters: 30,
+          smoke: 0,
+          heat: 0,
+          co: 0,
+          visibility: 1
         };
       }
     }
     return out;
   }
 
-  function createFloorState(seedTemplate = null, seedImage = null) {
+  function collectStairCells(floorGrid) {
+    const cells = [];
+    if (!Array.isArray(floorGrid)) return cells;
+    for (let cy = 0; cy < floorGrid.length; cy++) {
+      const row = floorGrid[cy];
+      if (!Array.isArray(row)) continue;
+      for (let cx = 0; cx < row.length; cx++) {
+        const cell = row[cx];
+        if (cell?.stair) cells.push({ cx, cy, type: cell.stairType || "indoor" });
+      }
+    }
+    return cells;
+  }
+
+  function createFloorState(seedTemplate = null, seedImage = null, floorIndex = 0, options = {}) {
     const tpl = cloneWalkableTemplate(seedTemplate);
+    const stairTemplate = cloneWalkableTemplate(options.stairTemplate);
+    const floorGrid = cloneGridFromTemplate(tpl, stairTemplate);
+    const cellSizeMeters = Math.max(0.05, parseNum(cellSizeMetersInput, state.spatial.cellSizeMeters || 0.5));
+    const floorHeightMeters = Math.max(1, Number(options.floorHeightMeters) || state.spatial.floorHeightMeters || 3.5);
     return {
+      floorIndex,
+      name: options.name || `${floorIndex + 1}F`,
+      zMeters: floorIndex * floorHeightMeters,
+      elevationMeters: floorIndex * floorHeightMeters,
+      floorHeightMeters,
+      wallHeightMeters: Number(options.wallHeightMeters) || state.spatial.wallHeightMeters || 2.8,
+      cellSizeMeters,
+      gridWidth: gridW,
+      gridHeight: gridH,
+      mapProfile: options.mapProfile || null,
       baseImage: seedImage || null,
       walkableTemplate: tpl,
-      grid: cloneGridFromTemplate(tpl),
+      stairTemplate,
+      grid: floorGrid,
       exits: [],
       spawns: [],
+      stairs: collectStairCells(floorGrid),
       heatmap: makeScalarGrid(0),
       smokeMap: makeScalarGrid(0),
       smokeCeil: makeScalarGrid(false),
@@ -502,18 +638,31 @@ export function initSimulation() {
 
   function syncActiveFloorState() {
     if (!floorStates[currentFloor]) return;
-    floorStates[currentFloor].baseImage = baseImage;
-    floorStates[currentFloor].walkableTemplate = cloneWalkableTemplate(baseWalkableTemplate);
-    floorStates[currentFloor].grid = grid;
-    floorStates[currentFloor].exits = exits;
-    floorStates[currentFloor].spawns = spawns;
-    floorStates[currentFloor].heatmap = heatmap;
-    floorStates[currentFloor].smokeMap = smokeMap;
-    floorStates[currentFloor].smokeCeil = smokeCeil;
-    floorStates[currentFloor].flowField = flowField;
-    floorStates[currentFloor].potentialByExit = potentialByExit;
-    floorStates[currentFloor].combinedPotential = combinedPotential;
-    floorStates[currentFloor].potentialLegendMax = potentialLegendMax;
+    const active = floorStates[currentFloor];
+    active.floorIndex = currentFloor;
+    active.name = active.name || `${currentFloor + 1}F`;
+    active.floorHeightMeters = active.floorHeightMeters || state.spatial.floorHeightMeters || 3.5;
+    active.zMeters = currentFloor * active.floorHeightMeters;
+    active.elevationMeters = active.zMeters;
+    active.wallHeightMeters = active.wallHeightMeters || state.spatial.wallHeightMeters || 2.8;
+    active.cellSizeMeters = Math.max(0.05, parseNum(cellSizeMetersInput, active.cellSizeMeters || 0.5));
+    active.gridWidth = gridW;
+    active.gridHeight = gridH;
+    active.baseImage = baseImage;
+    // The template is immutable between map edits; keep a stable reference so
+    // the 3D geometry cache is not rebuilt on every simulation frame.
+    active.walkableTemplate = baseWalkableTemplate;
+    active.grid = grid;
+    active.exits = exits;
+    active.spawns = spawns;
+    active.stairs = collectStairCells(grid);
+    active.heatmap = heatmap;
+    active.smokeMap = smokeMap;
+    active.smokeCeil = smokeCeil;
+    active.flowField = flowField;
+    active.potentialByExit = potentialByExit;
+    active.combinedPotential = combinedPotential;
+    active.potentialLegendMax = potentialLegendMax;
   }
 
   function loadFloorState(floorIndex, redraw = true) {
@@ -532,6 +681,9 @@ export function initSimulation() {
     potentialByExit = fs.potentialByExit || [];
     combinedPotential = fs.combinedPotential || null;
     potentialLegendMax = fs.potentialLegendMax || 1;
+    if (cellSizeMetersInput && Number.isFinite(fs.cellSizeMeters)) {
+      cellSizeMetersInput.value = String(fs.cellSizeMeters);
+    }
     syncPotentialExitIndexControl();
     updateFloorLabel();
     if (redraw) {
@@ -591,8 +743,17 @@ export function initSimulation() {
     floorCount = requested;
     const next = [];
     for (let i = 0; i < floorCount; i++) {
-      if (preserve && i < prevCount && prevStates[i]) next.push(prevStates[i]);
-      else next.push(createFloorState(null, null));
+      if (preserve && i < prevCount && prevStates[i]) {
+        const existing = prevStates[i];
+        existing.floorIndex = i;
+        existing.name = existing.name || `${i + 1}F`;
+        existing.floorHeightMeters = existing.floorHeightMeters || state.spatial.floorHeightMeters || 3.5;
+        existing.zMeters = i * existing.floorHeightMeters;
+        existing.elevationMeters = existing.zMeters;
+        next.push(existing);
+      } else {
+        next.push(createFloorState(null, null, i));
+      }
     }
     floorStates = next;
     currentFloor = clamp(currentFloor, 0, floorCount - 1);
@@ -609,6 +770,7 @@ export function initSimulation() {
     allExitPoints = collectAllExits();
     allSpawnPoints = collectAllSpawns();
     if (allExitPoints.length) rebuildPotentialCache();
+    state.render.geometryRevision = (state.render.geometryRevision || 0) + 1;
     syncPublicState();
     drawScene();
   }
@@ -974,6 +1136,41 @@ export function initSimulation() {
     return frame.cells.get(`${Math.max(0, floor)}:${cx}:${cy}`) || null;
   }
 
+  function applyCurrentFdsToSharedHazards(time = simTime) {
+    const frame = getNearestFdsFrame(time);
+    if (!frame?.cells) return 0;
+    let applied = 0;
+    frame.cells.forEach(record => {
+      const floor = floorStates[record.floor];
+      const cell = floor?.grid?.[record.cy]?.[record.cx];
+      if (!cell) return;
+      const opticalDensity = Math.max(0, Number(record.opticalDensityM1) || 0);
+      const smokeDensity = opticalDensity > 0 ? opticalDensity / 0.32 : (floor.smokeMap?.[record.cy]?.[record.cx] || 0);
+      const coPpm = Math.max(0, Number(record.coPpm) || 0);
+      const visibilityMeters = Number.isFinite(record.visibilityM)
+        ? Math.max(0, record.visibilityM)
+        : (opticalDensity > 0.001 ? Math.min(30, 3 / opticalDensity) : 30);
+      if (floor.smokeMap?.[record.cy]) floor.smokeMap[record.cy][record.cx] = smokeDensity;
+      Object.assign(cell, {
+        smokeDensity,
+        smoke: smokeDensity,
+        opticalDensity,
+        opticalDensityM1: opticalDensity,
+        coPpm,
+        co: coPpm,
+        visibilityMeters,
+        visibilityM: visibilityMeters,
+        visibility: clamp(visibilityMeters / 30, 0, 1),
+        heatFluxKwM2: Math.max(0, Number(record.heatFluxKwM2) || 0),
+        heat: Math.max(0, Number(record.heatFluxKwM2) || 0),
+        temperatureC: Number.isFinite(record.temperatureC) ? record.temperatureC : (cell.temperatureC || 20),
+        hazardDataSource: "fds_csv"
+      });
+      applied++;
+    });
+    return applied;
+  }
+
   function t2FireHrrKw(timeSec) {
     const t = Math.max(0, Number(timeSec) || 0);
     return Math.min(T2_FIRE_MAX_HRR_KW, T2_FIRE_ALPHA * t * t);
@@ -985,7 +1182,14 @@ export function initSimulation() {
     const file = e.target.files?.[0];
     if (!file) return;
     syncActiveFloorState();
-    const targetFloor = 0;
+    const targetFloor = clamp(
+      Math.floor(parseNum(currentFloorSelect, currentFloor)),
+      0,
+      Math.max(0, floorCount - 1)
+    );
+    const mapProfile = /^scitech_3f_walkable\.png$/i.test(file.name)
+      ? SCITECH_3F_PROFILE.id
+      : null;
     try {
       const img = await loadImageFromFile(file);
       // Show immediate preview even before grid extraction succeeds.
@@ -994,12 +1198,14 @@ export function initSimulation() {
       drawScene();
       const ok = applyImageToFloorMap(img, targetFloor, {
         initializeAllFloors: false,
-        clearMarkers: true
+        clearMarkers: true,
+        mapProfile
       });
       if (!ok) return;
       resetSimulationCore(true);
       log(`マップ読込: ${targetFloor + 1}F <- ${file.name} (${img.width}x${img.height}px)`);
-      setStatus(`マップを読み込みました: ${targetFloor + 1}F`);
+      const stairCount = floorStates[targetFloor]?.stairs?.length || 0;
+      setStatus(`マップを読み込みました: ${targetFloor + 1}F${stairCount ? ` / 階段候補 ${stairCount}セル` : ""}`);
     } catch (err) {
       const reason = err instanceof Error ? err.message : "unknown";
       alert(`画像の読み込みに失敗しました: ${file.name}\n理由: ${reason}`);
@@ -1037,8 +1243,26 @@ export function initSimulation() {
     log("FDS CSVを解除しました。");
   });
 
-  function extractWalkableTemplateFromImage(image) {
+  function extractWalkableTemplateFromImage(image, options = {}) {
     if (!image) return null;
+    if (options.mapProfile === SCITECH_3F_PROFILE.id) {
+      try {
+        const parsed = extractScitech3FGrid(image, {
+          cellPixels: CELL_SIZE_PX,
+          whiteThreshold: parseInt(thrRange.value, 10)
+        });
+        return {
+          template: parsed.walkableTemplate,
+          stairTemplate: parsed.stairTemplate,
+          w: parsed.gridWidth,
+          h: parsed.gridHeight,
+          mapProfile: SCITECH_3F_PROFILE,
+          extractionStats: parsed
+        };
+      } catch (err) {
+        console.warn("3F map profile extraction failed; falling back to the legacy threshold.", err);
+      }
+    }
     // Draw image to an offscreen canvas and sample pixels
     const tmp = document.createElement("canvas");
     const tctx = tmp.getContext("2d");
@@ -1072,14 +1296,16 @@ export function initSimulation() {
         template[y][x] = (r > thr && g > thr && b > thr);
       }
     }
-    return { template, w, h };
+    return { template, stairTemplate: null, w, h, mapProfile: null };
   }
 
-  function clearFloorMarkersAndFields(fs, template) {
+  function clearFloorMarkersAndFields(fs, template, stairTemplate = null) {
     fs.walkableTemplate = cloneWalkableTemplate(template);
-    fs.grid = cloneGridFromTemplate(fs.walkableTemplate);
+    fs.stairTemplate = cloneWalkableTemplate(stairTemplate);
+    fs.grid = cloneGridFromTemplate(fs.walkableTemplate, fs.stairTemplate);
     fs.exits = [];
     fs.spawns = [];
+    fs.stairs = collectStairCells(fs.grid);
     fs.heatmap = makeScalarGrid(0);
     fs.smokeMap = makeScalarGrid(0);
     fs.smokeCeil = makeScalarGrid(false);
@@ -1090,39 +1316,76 @@ export function initSimulation() {
   }
 
   function applyImageToFloorMap(image, floorIndex, options = {}) {
-    const { clearMarkers = true } = options;
+    const { clearMarkers = true, mapProfile = null } = options;
     if (!image) return false;
-    const parsed = extractWalkableTemplateFromImage(image);
+    const parsed = extractWalkableTemplateFromImage(image, { mapProfile });
     if (!parsed) return false;
-    const { template, w, h } = parsed;
+    const { template, stairTemplate, w, h } = parsed;
 
-    if (!SINGLE_FLOOR_MODE && gridW > 0 && gridH > 0 && (w !== gridW || h !== gridH)) {
+    const hasLoadedFloor = floorStates.some(fs => !!fs?.baseImage);
+    if (hasLoadedFloor && gridW > 0 && gridH > 0 && (w !== gridW || h !== gridH)) {
       alert("フロアごとの画像サイズが一致していません。");
       return false;
     }
     gridW = w;
     gridH = h;
-    floorCount = 1;
-    currentFloor = 0;
-    if (floorCountInput) floorCountInput.value = "1";
+    floorCount = clamp(Math.floor(parseNum(floorCountInput, floorCount || 1)), 1, 8);
+    if (floorStates.length !== floorCount) applyFloorSetup(true);
+    for (let index = 0; index < floorCount; index++) {
+      const existing = floorStates[index];
+      const dimensionsMatch = existing?.grid?.length === gridH &&
+        (gridH === 0 || existing.grid[0]?.length === gridW);
+      if (!dimensionsMatch && !existing?.baseImage) {
+        floorStates[index] = createFloorState(null, null, index);
+      }
+    }
 
-    const fs = floorStates[0] || createFloorState(template, image);
+    const targetFloor = clamp(Math.floor(Number(floorIndex) || 0), 0, floorCount - 1);
+    const fs = floorStates[targetFloor] || createFloorState(template, image, targetFloor);
+    fs.floorIndex = targetFloor;
+    fs.name = parsed.mapProfile && targetFloor === parsed.mapProfile.floorIndex
+      ? parsed.mapProfile.floorName
+      : `${targetFloor + 1}F`;
+    fs.floorHeightMeters = parsed.mapProfile?.floorHeightMeters || fs.floorHeightMeters || 3.5;
+    fs.zMeters = targetFloor * fs.floorHeightMeters;
+    fs.elevationMeters = fs.zMeters;
+    fs.wallHeightMeters = parsed.mapProfile?.wallHeightMeters || fs.wallHeightMeters || 2.8;
+    fs.cellSizeMeters = parsed.mapProfile?.cellSizeMeters || parseNum(cellSizeMetersInput, 0.5);
+    fs.gridWidth = gridW;
+    fs.gridHeight = gridH;
+    fs.mapProfile = parsed.mapProfile?.id || mapProfile || null;
     fs.baseImage = image;
     fs.walkableTemplate = cloneWalkableTemplate(template);
     if (clearMarkers || !fs.grid || !fs.grid.length) {
-      clearFloorMarkersAndFields(fs, template);
+      clearFloorMarkersAndFields(fs, template, stairTemplate);
     }
-    floorStates = [fs];
-    stairLinks = [];
-    stairLinkIndex = new Map();
-    pendingStairLink = null;
+    if (fs.mapProfile === SCITECH_3F_PROFILE.id) {
+      for (let cy = 0; cy < fs.grid.length; cy++) {
+        for (let cx = 0; cx < (fs.grid[cy]?.length || 0); cx++) {
+          const cell = fs.grid[cy][cx];
+          if (!cell?.stair) continue;
+          // The lower-right green region is the labelled exterior stair.
+          cell.stairType = (cx >= 124 && cy >= 154) ? "outdoor" : "indoor";
+        }
+      }
+      fs.stairs = collectStairCells(fs.grid);
+    }
+    floorStates[targetFloor] = fs;
+    if (clearMarkers) removeStairLinksByFloor(targetFloor);
+    if (pendingStairLink?.floor === targetFloor) pendingStairLink = null;
 
     baseImage = image;
     baseWalkableTemplate = cloneWalkableTemplate(template);
+    currentFloor = targetFloor;
+    if (cellSizeMetersInput) cellSizeMetersInput.value = String(fs.cellSizeMeters);
+    state.spatial.cellSizeMeters = fs.cellSizeMeters;
+    state.spatial.floorHeightMeters = fs.floorHeightMeters;
+    state.spatial.wallHeightMeters = fs.wallHeightMeters;
+    state.spatial.activeMapProfile = fs.mapProfile;
 
     sanitizeStairLinks();
     refreshFloorSelector();
-    loadFloorState(0, false);
+    loadFloorState(targetFloor, false);
     allExitPoints = collectAllExits();
     allSpawnPoints = collectAllSpawns();
     syncPotentialExitIndexControl();
@@ -1130,6 +1393,7 @@ export function initSimulation() {
     congestionHistory = [];
     bottleneckReport = [];
     lastSummary = null;
+    state.render.geometryRevision = (state.render.geometryRevision || 0) + 1;
     syncPublicState();
     drawScene();
     setStatus("マップ解析が完了しました。");
@@ -1193,6 +1457,8 @@ export function initSimulation() {
       const toggled = !cellObj.stair;
       cellObj.stair = toggled;
       cellObj.walkable = true;
+      cellObj.wall = false;
+      cellObj.stairType = toggled ? (stairTypeInput?.value || "indoor") : null;
       if (!toggled) removeStairLinksByCell(currentFloor, cx, cy);
       log(`${toggled ? "階段を追加" : "階段を解除"}: ${currentFloor + 1}F (${cx},${cy})`);
     } else if (mode === "stairLink") {
@@ -1228,8 +1494,14 @@ export function initSimulation() {
       }
     } else if (mode === "fire") {
       cellObj.fire = true;
+      cellObj.fireIntensity = Math.max(0.05, Number(cellObj.fireIntensity) || 0);
+      cellObj.fireAgeSec = 0;
+      cellObj.temperatureC = Math.max(20, Number(cellObj.temperatureC) || 20);
+      cellObj.heatFluxKwM2 = Math.max(0, Number(cellObj.heatFluxKwM2) || 0);
       cellObj.stair = false;
+      cellObj.stairType = null;
       cellObj.walkable = false;
+      cellObj.wall = false;
       removeStairLinksByCell(currentFloor, cx, cy);
       log(`火元を追加: ${currentFloor + 1}F (${cx},${cy})`);
     } else if (mode === "erase") {
@@ -1237,10 +1509,17 @@ export function initSimulation() {
       spawns = spawns.filter(p => !(p.cx === cx && p.cy === cy));
       exits = exits.filter(p => !(p.cx === cx && p.cy === cy));
       cellObj.fire = false;
+      cellObj.fireIntensity = 0;
+      cellObj.fireAgeSec = 0;
+      cellObj.temperatureC = 20;
+      cellObj.heatFluxKwM2 = 0;
+      cellObj.heat = 0;
       cellObj.stair = false;
+      cellObj.stairType = null;
       removeStairLinksByCell(currentFloor, cx, cy);
       // Keep as walkable until map is rebuilt
       cellObj.walkable = !!baseWalkableTemplate?.[cy]?.[cx];
+      cellObj.wall = !cellObj.walkable;
       if (smokeMap) smokeMap[cy][cx] = 0;
       log(`セルを消去: ${currentFloor + 1}F (${cx},${cy})`);
     }
@@ -1251,6 +1530,7 @@ export function initSimulation() {
     allSpawnPoints = collectAllSpawns();
     syncPotentialExitIndexControl();
     if (allExitPoints.length > 0) rebuildPotentialCache();
+    state.render.geometryRevision = (state.render.geometryRevision || 0) + 1;
     syncPublicState();
     drawScene();
   });
@@ -1384,6 +1664,7 @@ export function initSimulation() {
       const seed = {
         id: i,
         floor: chosen.floor,
+        floorIndex: chosen.floor,
         cx: chosen.cx,
         cy: chosen.cy
       };
@@ -1410,6 +1691,7 @@ export function initSimulation() {
         smokeDose: 0,
         heatDose: 0,
         coDosePpmMin: 0,
+        coDose: 0,
         heatFluxDose: 0,
         visibility: 1,
         potential0: startPot,
@@ -1419,13 +1701,22 @@ export function initSimulation() {
         helpingId: null,
         recoveredUntil: 0,
         type,
+        behaviorState: "normal",
         panicFactor: meta.panic || 0,
         fallRiskMult: meta.fallRisk || 1,
         targetExitIndex: exitChoice.idx,
+        targetExit: exitChoice.idx,
+        targetStair: null,
         potentialField: exitChoice.field,
         prevCell: null,
         moveDir: null,
         stuckTime: 0,
+        stuckCount: 0,
+        stuckEventLatched: false,
+        panicEscapeCount: 0,
+        panicEscapeLatched: false,
+        stairTransition: null,
+        stairTransitionCount: 0,
         leaderId: null,
         trail: [{ floor: chosen.floor, x: chosen.cx, y: chosen.cy, t: 0 }],
         trailTick: 0
@@ -1482,6 +1773,13 @@ export function initSimulation() {
     lastSummary = null;
     nextRouteReplanAt = 0;
     nextCongestionSampleAt = 0;
+    stairTrafficState = createStairTrafficState(stairLinks, simTime);
+    stairCongestion = getStairCongestion(stairTrafficState, stairLinks);
+    verticalSmokeTransfers = [];
+    nextFireStepAt = 0;
+    lastFireStepAt = 0;
+    activeFireCount = 0;
+    totalFireHrrKw = 0;
     const startRuleLabel = (startRuleInput?.value === "far_first") ? "far_first" : "simultaneous";
     const typeCounts = agents.reduce((acc, a) => {
       acc[a.type] = (acc[a.type] || 0) + 1;
@@ -1522,6 +1820,13 @@ export function initSimulation() {
     lastSummary = null;
     nextRouteReplanAt = 0;
     nextCongestionSampleAt = 0;
+    stairTrafficState = createStairTrafficState(stairLinks, 0);
+    stairCongestion = getStairCongestion(stairTrafficState, stairLinks);
+    verticalSmokeTransfers = [];
+    nextFireStepAt = 0;
+    lastFireStepAt = 0;
+    activeFireCount = 0;
+    totalFireHrrKw = 0;
 
     //HUDreset
     hudTime.textContent = "0.0 s";
@@ -1558,8 +1863,15 @@ export function initSimulation() {
     if (grid) {
       for (let y=0;y<gridH;y++)for(let x=0;x<gridW;x++){
         grid[y][x].fire = false;
-        grid[y][x].stair = false;
-        grid[y][x].walkable = !!baseWalkableTemplate?.[y]?.[x];
+        grid[y][x].fireIntensity = 0;
+        grid[y][x].fireAgeSec = 0;
+        grid[y][x].temperatureC = 20;
+        grid[y][x].heatFluxKwM2 = 0;
+        grid[y][x].heat = 0;
+        grid[y][x].stair = !!floorStates[currentFloor]?.stairTemplate?.[y]?.[x];
+        grid[y][x].stairType = grid[y][x].stair ? (grid[y][x].stairType || "indoor") : null;
+        grid[y][x].walkable = !!baseWalkableTemplate?.[y]?.[x] || grid[y][x].stair;
+        grid[y][x].wall = !grid[y][x].walkable;
       }
     }
     removeStairLinksByFloor(currentFloor);
@@ -1570,6 +1882,7 @@ export function initSimulation() {
     syncPotentialExitIndexControl();
     rebuildPotentialCache();
     log(`Cleared markers on floor ${currentFloor + 1}F`);
+    state.render.geometryRevision = (state.render.geometryRevision || 0) + 1;
     syncPublicState();
     drawScene();
   });
@@ -1592,14 +1905,10 @@ export function initSimulation() {
 });
 
   btnApplyFloors.addEventListener("click", () => {
-    if (!gridW || !gridH || !floorStates.length || !floorStates.some(fs => !!fs?.baseImage)) {
-      alert("フロア設定を適用する前にマップを読み込んでください。");
-      return;
-    }
     syncActiveFloorState();
     applyFloorSetup(true);
     log(`Applied floor setup: ${floorCount} floor(s)`);
-    setStatus("フロア設定を反映しました。");
+    setStatus(`フロア設定を反映しました: ${floorCount}階。`);
   });
   currentFloorSelect.addEventListener("change", () => {
     const target = SINGLE_FLOOR_MODE ? 0 : clamp(Math.floor(parseNum(currentFloorSelect, currentFloor)), 0, floorCount - 1);
@@ -1619,7 +1928,7 @@ export function initSimulation() {
     }
   });
   floorCountInput.addEventListener("change", () => {
-    floorCountInput.value = "1";
+    floorCountInput.value = String(clamp(Math.floor(parseNum(floorCountInput, 1)), 1, 8));
   });
 
   agentPresetInput.addEventListener("change", () => {
@@ -1690,6 +1999,26 @@ export function initSimulation() {
 
     // === Smoke generation and diffusion (per-floor) ===
     const cellMeters = parseFloat(cellSizeMetersInput.value) || 0.5;
+    if (simTime >= nextFireStepAt) {
+      const fireDt = Math.max(dt, Math.min(1, simTime - lastFireStepAt || dt));
+      const fireResult = stepFire3D(floorStates, fireDt, {
+        timeSec: simTime,
+        cellSizeMeters: cellMeters,
+        floorHeightMeters: state.spatial.floorHeightMeters || 3.5,
+        stairLinks,
+        fdsLookup: getFdsRiskAt
+      });
+      const applied = applyFire3DResultToLegacyFloors(floorStates, fireResult, {
+        blockIgnitedCells: false
+      });
+      activeFireCount = fireResult.activeFireCount;
+      totalFireHrrKw = fireResult.totalHrrKw;
+      if (applied.ignitedCells.length) {
+        log(`火災延焼: ${applied.ignitedCells.length}セル / active=${activeFireCount}`);
+      }
+      lastFireStepAt = simTime;
+      nextFireStepAt = simTime + 0.5;
+    }
     const dirs8 = [
       {dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1},
       {dx:1,dy:1},{dx:-1,dy:1},{dx:1,dy:-1},{dx:-1,dy:-1}
@@ -1797,10 +2126,36 @@ export function initSimulation() {
         for (let x = 0; x < gridW; x++) {
           if (!smokePassable(x, y)) {
             nextSmoke[y][x] = 0;
+            Object.assign(fGrid[y][x], {
+              smokeDensity: 0,
+              opticalDensity: 0,
+              opticalDensityM1: 0,
+              coPpm: 0,
+              visibilityMeters: 30,
+              visibilityM: 30,
+              smoke: 0,
+              co: 0,
+              visibility: 1
+            });
             continue;
           }
           const decay = Math.max(0, 1 - (BASE_DECAY_PER_SEC + (vent[y][x] ? VENT_DECAY_BONUS : 0)) * dt);
-          nextSmoke[y][x] = Math.max(0, Math.min(MAX_SMOKE, nextSmoke[y][x] * decay));
+          const density = Math.max(0, Math.min(MAX_SMOKE, nextSmoke[y][x] * decay));
+          const opticalDensity = density * 0.32;
+          const coPpm = density * 260;
+          const visibilityMeters = opticalDensity > 0.001 ? Math.min(30, 3 / opticalDensity) : 30;
+          nextSmoke[y][x] = density;
+          Object.assign(fGrid[y][x], {
+            smokeDensity: density,
+            opticalDensity,
+            opticalDensityM1: opticalDensity,
+            coPpm,
+            visibilityMeters,
+            visibilityM: visibilityMeters,
+            smoke: density,
+            co: coPpm,
+            visibility: clamp(visibilityMeters / 30, 0, 1)
+          });
         }
       }
 
@@ -1808,10 +2163,30 @@ export function initSimulation() {
       fs.smokeCeil = nextCeil;
     }
 
+    verticalSmokeTransfers = transferLegacySmokeThroughStairs(
+      floorStates,
+      stairLinks,
+      dt,
+      {
+        floorHeightMeters: state.spatial.floorHeightMeters || 3.5,
+        syncCellFields: true
+      }
+    );
+    applyCurrentFdsToSharedHazards(simTime);
+
     if (!agents || agents.length === 0) {
       loadFloorState(currentFloor, false);
       return;
     }
+
+    const stairStep = stepStairTraffic(stairTrafficState, stairLinks, agents, dt);
+    stairTrafficState = stairStep.trafficState;
+    stairCongestion = stairStep.congestion;
+    stairStep.agents.forEach((nextAgent, index) => {
+      const current = agents[index];
+      if (!current || current.id !== nextAgent.id) return;
+      Object.assign(current, nextAgent);
+    });
 
     const smokeAt = (floor, x, y) =>
       (floorInBounds(floor) && inBounds(x, y))
@@ -1820,31 +2195,47 @@ export function initSimulation() {
 
     function fireRiskAt(floor, cx, cy) {
       let heat = 0;
+      let heatFluxKwM2 = 0;
+      let temperatureC = 20;
       let lethal = false;
       const fGrid = floorStates[floor]?.grid;
-      if (!fGrid) return { heat, lethal };
+      if (!fGrid) return { heat, heatFluxKwM2, temperatureC, lethal };
       const r = Math.ceil(FIRE_DANGER_RADIUS);
       for (let dy = -r; dy <= r; dy++) {
         for (let dx = -r; dx <= r; dx++) {
           const nx = cx + dx;
           const ny = cy + dy;
           if (!inBounds(nx, ny)) continue;
-          if (!fGrid[ny][nx].fire) continue;
+          const sourceCell = fGrid[ny][nx];
+          if (!sourceCell.fire) continue;
           const d = Math.hypot(dx, dy);
           if (d <= FIRE_LETHAL_RADIUS) lethal = true;
           if (d <= FIRE_DANGER_RADIUS) {
-            heat += (FIRE_DANGER_RADIUS - d) / FIRE_DANGER_RADIUS;
+            const intensity = clamp(Number(sourceCell.fireIntensity) || 0.05, 0.05, 1);
+            const attenuation = (FIRE_DANGER_RADIUS - d) / FIRE_DANGER_RADIUS;
+            heat += attenuation * (0.25 + intensity * 0.75);
+            heatFluxKwM2 = Math.max(
+              heatFluxKwM2,
+              Math.max(0, Number(sourceCell.heatFluxKwM2) || 0) * attenuation
+            );
+            temperatureC = Math.max(
+              temperatureC,
+              20 + (Math.max(20, Number(sourceCell.temperatureC) || 20) - 20) * attenuation
+            );
           }
         }
       }
-      return { heat, lethal };
+      return { heat, heatFluxKwM2, temperatureC, lethal };
     }
 
     function fallbackEngineeringRisk(floor, cx, cy) {
       const smoke = smokeAt(floor, cx, cy);
       const fire = fireRiskAt(floor, cx, cy);
       const hrrScale = Math.min(1, t2FireHrrKw(simTime) / Math.max(1, T2_FIRE_MAX_HRR_KW));
-      const heatFluxKwM2 = Math.max(0, fire.heat * 8.0 * (0.35 + 0.65 * hrrScale));
+      const heatFluxKwM2 = Math.max(
+        fire.heatFluxKwM2 || 0,
+        fire.heat * 8.0 * (0.35 + 0.65 * hrrScale)
+      );
       const opticalDensityM1 = Math.max(0, smoke * 0.32);
       const coPpm = Math.max(0, smoke * 260 * (0.4 + 0.6 * hrrScale));
       const visibilityM = opticalDensityM1 > 0.001 ? Math.min(30, 3.0 / opticalDensityM1) : 30;
@@ -1854,6 +2245,7 @@ export function initSimulation() {
         opticalDensityM1,
         coPpm,
         visibilityM,
+        temperatureC: fire.temperatureC,
         source: "fallback_t2"
       };
     }
@@ -1967,12 +2359,21 @@ export function initSimulation() {
           (Number.isInteger(a.targetExitIndex) && a.targetExitIndex >= 0 && a.targetExitIndex < allExitPoints.length)
             ? estimateExitCost(a.targetExitIndex, f, cx, cy, exitLoad)
             : Infinity;
+        const localRouteRisk = routeRiskAt(f, cx, cy);
+        const switchMargin = a.type === "teacher"
+          ? 0.5
+          : (a.type === "panic" ? 5.5 : EXIT_SWITCH_MARGIN);
+        const panicMaySwitch = a.type !== "panic" ||
+          localRouteRisk.penalty >= HIGH_SMOKE_BLOCK_SCORE * 0.35 ||
+          (a.stuckTime || 0) >= STUCK_UPHILL_RELEASE_SEC;
         const shouldSwitch =
           (choice.idx >= 0) &&
           (choice.idx !== a.targetExitIndex) &&
-          (choice.score + EXIT_SWITCH_MARGIN < curScore);
+          panicMaySwitch &&
+          (choice.score + switchMargin < curScore);
         if (shouldSwitch) {
           a.targetExitIndex = choice.idx;
+          a.targetExit = choice.idx;
           a.potentialField = choice.field;
         }
       });
@@ -2020,6 +2421,7 @@ export function initSimulation() {
       a.smokeDose += Math.max(0, smoke - 0.2) * Math.max(0, smoke - 0.2) * dt;
       a.heatDose += fire.heat * dt;
       a.coDosePpmMin = (a.coDosePpmMin || 0) + Math.max(0, localEngineeringRisk.coPpm || 0) * (dt / 60);
+      a.coDose = a.coDosePpmMin;
       a.heatFluxDose = (a.heatFluxDose || 0) +
         Math.max(0, (localEngineeringRisk.heatFluxKwM2 || 0) - FDS_HEAT_FLUX_SOFT_KW_M2) * dt;
 
@@ -2150,6 +2552,10 @@ export function initSimulation() {
 
       if (a.fallen) return;
       if (simTime < a.startTime + (a.evacDelay || 0)) return;
+      if (a.stairTransition) {
+        a.behaviorState = "stair_transition";
+        return;
+      }
 
       const potentialField = a.potentialField || multiCombinedPotential;
       if (!potentialField) return;
@@ -2177,7 +2583,20 @@ export function initSimulation() {
         }
       }
 
-      let best = { dx: 0, dy: 0, nx: cx, ny: cy, nf: floor, score: -Infinity };
+      a.behaviorState = deriveAgentBehaviorState(a, {
+        floors: floorStates,
+        cell: fGrid[cy][cx],
+        teacher: leaderTarget,
+        followTeacher: !!leaderTarget
+      });
+      if (a.behaviorState === "panic_escape") {
+        if (!a.panicEscapeLatched) a.panicEscapeCount = (a.panicEscapeCount || 0) + 1;
+        a.panicEscapeLatched = true;
+      } else {
+        a.panicEscapeLatched = false;
+      }
+
+      let best = { dx: 0, dy: 0, nx: cx, ny: cy, nf: floor, score: -Infinity, linkId: null };
       const dirPool = a.visibility < LOW_VISIBILITY_THRESHOLD ? dirs4 : dirs8;
       const candidates = dirPool.map(d => ({ ...d, nf: floor })).concat([{ dx: 0, dy: 0, nf: floor }]);
       const candidateKeys = new Set(
@@ -2188,20 +2607,20 @@ export function initSimulation() {
         const nx = Number.isFinite(c.nx) ? c.nx : (cx + (c.dx ?? 0));
         const ny = Number.isFinite(c.ny) ? c.ny : (cy + (c.dy ?? 0));
         const key = stairEndpointKey(nf, nx, ny);
-        if (candidateKeys.has(key)) return;
+        if (candidateKeys.has(key)) {
+          const existing = candidates.find(item => {
+            const itemFloor = item.nf ?? floor;
+            const itemX = Number.isFinite(item.nx) ? item.nx : (cx + (item.dx ?? 0));
+            const itemY = Number.isFinite(item.ny) ? item.ny : (cy + (item.dy ?? 0));
+            return itemFloor === nf && itemX === nx && itemY === ny;
+          });
+          if (existing) Object.assign(existing, c, { nf, nx, ny });
+          return;
+        }
         candidateKeys.add(key);
         candidates.push({ ...c, nf, nx, ny });
       }
       if (fGrid[cy][cx].stair) {
-        const floors = [floor - 1, floor + 1];
-        for (let i = 0; i < floors.length; i++) {
-          const nf = floors[i];
-          if (!floorInBounds(nf)) continue;
-          const nc = floorStates[nf].grid[cy][cx];
-          if (nc.walkable && nc.stair) {
-            pushCandidate({ dx: 0, dy: 0, nf, nx: cx, ny: cy, stairMove: true });
-          }
-        }
         const linked = getLinkedStairDestinations(floor, cx, cy);
         for (let i = 0; i < linked.length; i++) {
           const dst = linked[i];
@@ -2214,7 +2633,23 @@ export function initSimulation() {
             nx: dst.cx,
             ny: dst.cy,
             stairMove: true,
-            linkMove: true
+            linkMove: true,
+            linkId: dst.linkId,
+            travelCostSec: dst.travelCostSec
+          });
+        }
+      }
+      if (a.behaviorState === "seek_clear_air" || a.behaviorState === "stuck_escape") {
+        const clearAir = chooseClearAirStep(a, floorStates, { allowDiagonal: a.visibility >= LOW_VISIBILITY_THRESHOLD });
+        if (clearAir && clearAir.improvement >= 0) {
+          pushCandidate({
+            dx: clearAir.dx,
+            dy: clearAir.dy,
+            nf: floor,
+            nx: clearAir.cx,
+            ny: clearAir.cy,
+            clearAir: true,
+            clearAirImprovement: clearAir.improvement
           });
         }
       }
@@ -2278,7 +2713,8 @@ export function initSimulation() {
         score -= densityTarget * CONGESTION_PENALTY_WEIGHT;
         score -= smokeTarget * SMOKE_AVOID_WEIGHT;
         score -= fireHeat * FIRE_AVOID_WEIGHT;
-        score -= routeRiskPenalty;
+        const hazardAvoidance = a.type === "teacher" ? 1.35 : (a.type === "panic" ? 0.72 : 1);
+        score -= routeRiskPenalty * hazardAvoidance;
         if (routeVisibilityFactor < 0.35) {
           score -= (0.35 - routeVisibilityFactor) * FDS_ROUTE_VISIBILITY_WEIGHT;
         }
@@ -2300,8 +2736,10 @@ export function initSimulation() {
         if (leaderTarget) {
           const curDistLead = Math.hypot(leaderTarget.x - a.x, leaderTarget.y - a.y);
           const nxtDistLead = Math.hypot(leaderTarget.x - nx, leaderTarget.y - ny);
-          score += (curDistLead - nxtDistLead) * 1.1;
+          const followWeight = a.visibility < LOW_VISIBILITY_THRESHOLD ? 2.4 : 1.1;
+          score += (curDistLead - nxtDistLead) * followWeight;
         }
+        if (c.clearAir) score += 2.5 + Math.max(0, c.clearAirImprovement || 0) * 3;
         if (panicDir && c.dx === panicDir.dx && c.dy === panicDir.dy) {
           score += 0.9 + (a.panicFactor * 1.5);
         }
@@ -2312,7 +2750,8 @@ export function initSimulation() {
           score += (Math.random() - 0.5) * (1.8 * a.panicFactor);
         }
 
-        if (score > best.score) best = { dx: c.dx, dy: c.dy, nx, ny, nf, score };
+        if (nf !== floor) score -= Math.max(0, Number(c.travelCostSec) || 0) * 0.08;
+        if (score > best.score) best = { dx: c.dx, dy: c.dy, nx, ny, nf, score, linkId: c.linkId || null };
       }
 
       let speedFactor = 1;
@@ -2331,14 +2770,31 @@ export function initSimulation() {
       const prevFloor = floor;
 
       if (best.nf !== floor) {
-        if (occupancyDynamicByFloor[best.nf][best.ny][best.nx] < MAX_OCCUPANCY_PER_CELL) {
-          occupancyDynamicByFloor[floor][cy][cx] = Math.max(0, occupancyDynamicByFloor[floor][cy][cx] - 1);
-          occupancyDynamicByFloor[best.nf][best.ny][best.nx] += 1;
-          a.floor = best.nf;
-          a.x = best.nx;
-          a.y = best.ny;
-          a.cx = best.nx;
-          a.cy = best.ny;
+        const rawLink = stairLinks.find(link => link.id === best.linkId);
+        if (rawLink) {
+          const link = normalizeStairLink(rawLink);
+          const queued = enqueueStairTransition(
+            stairTrafficState,
+            link,
+            a,
+            { floorIndex: floor, cx, cy },
+            simTime
+          );
+          if (queued.status === "queued") {
+            stairTrafficState = queued.state;
+            a.behaviorState = "stair_transition";
+            a.targetStair = link.id;
+            a.stairTransition = {
+              status: "queued",
+              linkId: link.id,
+              from: { floorIndex: floor, cx, cy },
+              to: { floorIndex: best.nf, cx: best.nx, cy: best.ny },
+              travelCostSec: link.travelCostSec,
+              remainingSec: link.travelCostSec,
+              progress: 0
+            };
+            stairCongestion = getStairCongestion(stairTrafficState, stairLinks);
+          }
         }
       } else {
         const stepCells = a.v * speedFactor * dt;
@@ -2370,6 +2826,7 @@ export function initSimulation() {
       if (nowFloor !== floor || gx2 !== cx || gy2 !== cy) {
         a.prevCell = { floor, cx, cy };
         a.stuckTime = 0;
+        a.stuckEventLatched = false;
         if (nowFloor === floor) {
           const mdx = gx2 - cx;
           const mdy = gy2 - cy;
@@ -2380,6 +2837,10 @@ export function initSimulation() {
         }
       } else {
         a.stuckTime = (a.stuckTime || 0) + dt;
+        if (a.stuckTime >= 2 && !a.stuckEventLatched) {
+          a.stuckCount = (a.stuckCount || 0) + 1;
+          a.stuckEventLatched = true;
+        }
       }
       if (inBounds(gx2, gy2)) {
         floorStates[nowFloor].heatmap[gy2][gx2] += 1;
@@ -2425,24 +2886,30 @@ export function initSimulation() {
       let occupiedCells = 0;
       let occSum = 0;
       let maxOcc = 0;
+      const floorOccupancy = {};
       for (let f = 0; f < floorCount; f++) {
+        let floorTotal = 0;
         for (let y = 0; y < gridH; y++) {
           for (let x = 0; x < gridW; x++) {
             const o = occupancyDynamicByFloor[f][y][x];
             if (o > 0) {
               occupiedCells++;
               occSum += o;
+              floorTotal += o;
               if (o > maxOcc) maxOcc = o;
             }
           }
         }
+        floorOccupancy[f] = floorTotal;
       }
       const activeAgents = agents.filter(a => !a.dead && !a.finished).length;
       congestionHistory.push({
         time: simTime,
         avgDensity: occupiedCells ? (occSum / occupiedCells) : 0,
         maxOcc,
-        active: activeAgents
+        active: activeAgents,
+        floorOccupancy,
+        stairCongestion: stairCongestion.map(item => ({ ...item }))
       });
       if (congestionHistory.length > 1200) congestionHistory.shift();
       nextCongestionSampleAt = simTime + 1.0;
@@ -2673,11 +3140,26 @@ export function initSimulation() {
 
     const avgT = times.length ? (times.reduce((x, y) => x + y, 0) / times.length) : 0;
     const maxT = times.length ? Math.max(...times) : 0;
+    const agentMetrics = summarizeAgentMetrics(agents);
+    const floorPeakOccupancy = {};
+    congestionHistory.forEach(sample => {
+      Object.entries(sample.floorOccupancy || {}).forEach(([floor, count]) => {
+        floorPeakOccupancy[floor] = Math.max(floorPeakOccupancy[floor] || 0, Number(count) || 0);
+      });
+    });
+    const stuckEvents = agents.reduce((sum, agent) => sum + Math.max(0, Number(agent.stuckCount) || 0), 0);
+    const panicEscapeEvents = agents.reduce((sum, agent) => sum + Math.max(0, Number(agent.panicEscapeCount) || 0), 0);
 
     hudAvg.textContent = times.length ? `${avgT.toFixed(1)} s` : "--";
     hudMax.textContent = times.length ? `${maxT.toFixed(1)} s` : "--";
 
     log(`Summary: agents=${agents.length}, evacuated=${evacuated.length}, dead=${dead.length}, avg=${avgT.toFixed(2)}s, max=${maxT.toFixed(2)}s`);
+    log(
+      `Exposure: smoke=${agentMetrics.smokeExposure.toFixed(2)}, ` +
+      `CO=${agentMetrics.coExposurePpmMin.toFixed(2)}ppm-min, heat=${agentMetrics.heatExposure.toFixed(2)}, ` +
+      `stuck=${stuckEvents}, teacher_follow=${(agentMetrics.teacherFollowRate * 100).toFixed(1)}%, ` +
+      `panic_escape=${panicEscapeEvents}`
+    );
 
     lastSummary = {
       agents: agents.length,
@@ -2685,8 +3167,28 @@ export function initSimulation() {
       dead: dead.length,
       avgTime: avgT,
       maxTime: maxT,
+      floorOccupancy: agentMetrics.floorOccupancy,
+      floorPeakOccupancy,
+      stairCongestion: stairCongestion.map(item => ({ ...item })),
+      smokeExposure: agentMetrics.smokeExposure,
+      coExposurePpmMin: agentMetrics.coExposurePpmMin,
+      heatExposure: agentMetrics.heatExposure,
+      stuckEvents,
+      teacherFollowRate: agentMetrics.teacherFollowRate,
+      panicEscapeEvents,
+      activeFireCount,
+      totalFireHrrKw,
       at: new Date().toISOString()
     };
+    state.evaluation = {
+      ...state.evaluation,
+      floorOccupancy: agentMetrics.floorOccupancy,
+      stairCongestion: Object.fromEntries(stairCongestion.map(item => [item.id, item])),
+      stuckEvents,
+      teacherFollowActiveSamples: agentMetrics.teacherFollowRate,
+      panicEscapeEvents
+    };
+    state.sim.lastSummary = lastSummary;
 
     if (mcRunning) {
       const mcAvg = times.length ? avgT : simTime;

@@ -23,11 +23,18 @@
         <label id="floorLabel">単一フロアシミュレーション</label>
         <span style="font-size:10px;color:var(--text-dim);">（白=通行可、黒=壁）</span>
       </div>
-      <input type="hidden" id="floorCount" value="1">
-      <select id="currentFloor" hidden>
-        <option value="0" selected>1F</option>
-      </select>
-      <button id="btnApplyFloors" type="button" hidden aria-hidden="true">フロア設定反映</button>
+      <div class="row">
+        <label for="floorCount">階数</label>
+        <input type="number" id="floorCount" min="1" max="8" step="1" value="1">
+      </div>
+      <div class="row">
+        <label for="currentFloor">編集フロア</label>
+        <select id="currentFloor">
+          <option value="0" selected>1F</option>
+        </select>
+      </div>
+      <button id="btnApplyFloors" type="button">フロア設定反映</button>
+      <div class="hint">マップ画像は現在選択中のフロアへ読み込みます。全階で同じ画像寸法を使用してください。</div>
     </div>
 
     <div class="block">
@@ -87,6 +94,8 @@
       <div class="modeButtons">
         <button id="modeSpawn" data-mode="spawn">開始位置</button>
         <button id="modeExit" data-mode="exit">出口</button>
+        <button id="modeStair" data-mode="stair">階段</button>
+        <button id="modeStairLink" data-mode="stairLink">階段リンク</button>
         <button id="modeFire" data-mode="fire" class="danger">火元</button>
         <button id="modeErase" data-mode="erase">消去</button>
         <button id="btnMonte">MC x100</button>
@@ -96,6 +105,26 @@
         開始位置: 初期群集の配置地点<br>
         出口: 避難出口<br>
         火元: 通行不可エリア
+      </div>
+      <div class="row" style="margin-top:6px;">
+        <label for="stairType">階段種別</label>
+        <select id="stairType">
+          <option value="indoor" selected>屋内</option>
+          <option value="outdoor">屋外</option>
+          <option value="emergency">非常階段</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="stairTravelCost">移動時間 [s]</label>
+        <input type="number" id="stairTravelCost" min="0.5" max="120" step="0.5" value="8">
+      </div>
+      <div class="row">
+        <label for="stairSmokeTransfer">煙上昇率</label>
+        <input type="number" id="stairSmokeTransfer" min="0" max="1" step="0.05" value="0.35">
+      </div>
+      <div class="row">
+        <label for="stairCapacity">同時通行人数</label>
+        <input type="number" id="stairCapacity" min="1" max="20" step="1" value="2">
       </div>
     </div>
 
@@ -236,12 +265,32 @@
     </div>
   </div>
 
-  <div id="mainArea">
-    <canvas id="simCanvas"></canvas>
-    <div id="overlayHUD">
-      <div>時間: <strong id="hudTime">0.0 s</strong></div>
-      <div>避難: <strong id="hudEvac">0 避難 / 0 死亡 / 0</strong></div>
-      <div>平均: <strong id="hudAvg">--</strong>  最大: <strong id="hudMax">--</strong></div>
+  <div id="mainArea" class="view-mode-2d">
+    <div id="viewToolbar" aria-label="表示切替">
+      <button id="btnView2D" type="button" class="viewActive">2D</button>
+      <button id="btnView3D" type="button">3D</button>
+      <button id="btnViewSplit" type="button">同時表示</button>
+      <button id="btnOpen3D" type="button">3D専用ページ</button>
+      <span class="viewToolbarSpacer"></span>
+      <label><input id="view3dFire" type="checkbox" checked> 火災</label>
+      <label><input id="view3dSmoke" type="checkbox" checked> 煙</label>
+      <label><input id="view3dAgents" type="checkbox" checked> 人</label>
+      <label><input id="view3dWalls" type="checkbox" checked> 壁</label>
+      <button id="btnReset3DCamera" type="button">視点リセット</button>
+    </div>
+    <div id="viewWorkspace">
+      <div id="pane2d" class="viewPane">
+        <canvas id="simCanvas"></canvas>
+        <div id="overlayHUD">
+          <div>時間: <strong id="hudTime">0.0 s</strong></div>
+          <div>避難: <strong id="hudEvac">0 避難 / 0 死亡 / 0</strong></div>
+          <div>平均: <strong id="hudAvg">--</strong>  最大: <strong id="hudMax">--</strong></div>
+        </div>
+      </div>
+      <div id="pane3d" class="viewPane" aria-label="3D校舎ビュー">
+        <canvas id="simCanvas3d"></canvas>
+        <div id="view3dStatus">3D表示を準備しています…</div>
+      </div>
     </div>
   </div>
 

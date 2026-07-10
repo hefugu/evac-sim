@@ -49,26 +49,13 @@ export function computePotentialFieldFromSeedsModule(seeds, ctx) {
       }
     }
     if (floorGrid[cy][cx].stair) {
-      const stairsTo = [floor - 1, floor + 1];
-      for (let i = 0; i < stairsTo.length; i++) {
-        const nf = stairsTo[i];
-        if (nf < 0 || nf >= floorCount) continue;
-        const nc = floorStates[nf]?.grid?.[cy]?.[cx];
-        if (!isAgentTraversableCell(nf, cx, cy)) continue;
-        if (!nc?.stair) continue;
-        const newPot = base + 1.0;
-        if (newPot < potential[nf][cy][cx]) {
-          potential[nf][cy][cx] = newPot;
-          q.push({ floor: nf, cx, cy });
-        }
-      }
       const linked = getLinkedStairDestinations(floor, cx, cy);
       for (let i = 0; i < linked.length; i++) {
         const dst = linked[i];
         if (!isAgentTraversableCell(dst.floor, dst.cx, dst.cy)) continue;
         const nd = floorStates[dst.floor]?.grid?.[dst.cy]?.[dst.cx];
         if (!nd?.stair) continue;
-        const newPot = base + 1.0;
+        const newPot = base + Math.max(1, Number(dst.travelCostSec) || 8);
         if (newPot < potential[dst.floor][dst.cy][dst.cx]) {
           potential[dst.floor][dst.cy][dst.cx] = newPot;
           q.push({ floor: dst.floor, cx: dst.cx, cy: dst.cy });

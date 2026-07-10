@@ -24,6 +24,11 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 app.mount("/sim/styles", StaticFiles(directory=os.path.join(SIM_DIR, "styles")), name="sim_styles")
 app.mount("/sim/js", StaticFiles(directory=os.path.join(SIM_DIR, "js")), name="sim_js")
+app.mount(
+    "/sim/assets",
+    StaticFiles(directory=os.path.join(SIM_DIR, "assets")),
+    name="sim_assets",
+)
 
 
 # -----------------------
@@ -297,6 +302,11 @@ def sim():
 @app.get("/sim/")
 def sim_slash():
     return FileResponse(os.path.join(SIM_DIR, "index.html"))
+
+
+@app.get("/sim/3d.html")
+def sim_3d():
+    return FileResponse(os.path.join(SIM_DIR, "3d.html"))
 
 
 @app.get("/sim/styles.css")

@@ -1,0 +1,170 @@
+#mainArea {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#viewToolbar {
+  min-height: 38px;
+  padding: 5px 8px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  background: linear-gradient(180deg, #19070c, #090306);
+  border-bottom: 1px solid #550011;
+  box-shadow: 0 5px 18px #0008;
+  position: relative;
+  z-index: 5;
+}
+
+#viewToolbar button {
+  width: auto;
+  min-width: 54px;
+  padding-inline: 9px;
+}
+
+#viewToolbar button.viewActive {
+  color: #fff;
+  border-color: #ff7a00;
+  background: #7b2100;
+  box-shadow: 0 0 10px #ff650066;
+}
+
+#viewToolbar .buttonLink {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 3px 9px;
+  color: var(--text-main);
+  text-decoration: none;
+  border: 1px solid #640018;
+  border-radius: 2px;
+  background: #29030c;
+  font-size: 11px;
+}
+
+#standaloneConnection {
+  color: #8fc9dd;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+#viewToolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-dim);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+#viewToolbar input[type="checkbox"] {
+  accent-color: #ff6a00;
+}
+
+.viewToolbarSpacer {
+  flex: 1 1 18px;
+}
+
+#viewWorkspace {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  background: #030306;
+}
+
+.viewPane {
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+#pane2d,
+#pane3d {
+  grid-area: 1 / 1;
+}
+
+#simCanvas3d {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background:
+    radial-gradient(circle at 50% 35%, #16212a 0, #080c12 48%, #020305 100%);
+  touch-action: none;
+}
+
+#view3dStatus {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  max-width: min(520px, calc(100% - 24px));
+  padding: 5px 8px;
+  color: #b9d8e6;
+  background: #061018d9;
+  border: 1px solid #235066;
+  border-radius: 3px;
+  font-size: 10px;
+  pointer-events: none;
+}
+
+.view-mode-2d #pane3d,
+.view-mode-3d #pane2d {
+  display: none;
+}
+
+.view-mode-split #viewWorkspace {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.view-mode-split #pane2d {
+  grid-area: 1 / 1;
+  border-right: 1px solid #633;
+}
+
+.view-mode-split #pane3d {
+  grid-area: 1 / 2;
+}
+
+.standalone3d {
+  display: block;
+  background: #020305;
+}
+
+.standalone3d #standalone3dRoot {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.standalone3d #viewToolbar {
+  flex: 0 0 auto;
+}
+
+.standalone3d #pane3d {
+  flex: 1;
+}
+
+@media (max-width: 980px) {
+  #viewToolbar label {
+    display: none;
+  }
+
+  .view-mode-split #viewWorkspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+  }
+
+  .view-mode-split #pane2d {
+    grid-area: 1 / 1;
+    border-right: 0;
+    border-bottom: 1px solid #633;
+  }
+
+  .view-mode-split #pane3d {
+    grid-area: 2 / 1;
+  }
+}
