@@ -111,6 +111,109 @@ function rowWidth(source) {
   return width;
 }
 
+function mergeMaskRuns(mask, width, height) {
+  const runs = [];
+  let activeRuns = new Map();
+  for (let cy = 0; cy < height; cy += 1) {
+    const nextRuns = new Map();
+    let cx = 0;
+    while (cx < width) {
+      while (cx < width && !mask[cy * width + cx]) cx += 1;
+      if (cx >= width) break;
+      const start = cx;
+      while (cx < width && mask[cy * width + cx]) cx += 1;
+      const end = cx;
+      const key = `${start}:${end}`;
+      const run = activeRuns.get(key) || { x0: start, x1: end, y0: cy, y1: cy + 1 };
+      run.y1 = cy + 1;
+      nextRuns.set(key, run);
+    }
+    activeRuns.forEach((run, key) => {
+      if (!nextRuns.has(key)) runs.push(run);
+    });
+    activeRuns = nextRuns;
+  }
+  activeRuns.forEach(run => runs.push(run));
+  return runs;
+}
+
+/** Groups adjacent stair cells into deterministic regions for rendering. */
+export function groupStairCells3D(stairs = []) {
+  const unique = new Map();
+  for (const stair of Array.isArray(stairs) ? stairs : []) {
+    const rawX = Number(stair?.cx ?? stair?.x);
+    const rawY = Number(stair?.cy ?? stair?.y);
+    if (!Number.isFinite(rawX) || !Number.isFinite(rawY)) continue;
+    const floorIndex = floorIndexOf(stair, 0);
+    const cx = Math.round(rawX);
+    const cy = Math.round(rawY);
+    unique.set(`${floorIndex}:${cx}:${cy}`, {
+      ...stair,
+      floorIndex,
+      cx,
+      cy,
+      type: stair?.type || stair?.stairType || "indoor"
+    });
+  }
+
+  const remaining = new Set(unique.keys());
+  const regions = [];
+  for (const firstKey of unique.keys()) {
+    if (!remaining.has(firstKey)) continue;
+    remaining.delete(firstKey);
+    const queue = [unique.get(firstKey)];
+    const cells = [];
+    let minCx = Infinity;
+    let minCy = Infinity;
+    let maxCx = -Infinity;
+    let maxCy = -Infinity;
+    const regionType = queue[0].type;
+    for (let index = 0; index < queue.length; index += 1) {
+      const cell = queue[index];
+      cells.push(cell);
+      minCx = Math.min(minCx, cell.cx);
+      minCy = Math.min(minCy, cell.cy);
+      maxCx = Math.max(maxCx, cell.cx);
+      maxCy = Math.max(maxCy, cell.cy);
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const key = `${cell.floorIndex}:${cell.cx + dx}:${cell.cy + dy}`;
+        if (!remaining.has(key)) continue;
+        if (unique.get(key)?.type !== regionType) continue;
+        remaining.delete(key);
+        queue.push(unique.get(key));
+      }
+    }
+
+    const width = maxCx - minCx + 1;
+    const height = maxCy - minCy + 1;
+    const localMask = new Uint8Array(width * height);
+    cells.forEach(cell => {
+      localMask[(cell.cy - minCy) * width + cell.cx - minCx] = 1;
+    });
+    const runs = mergeMaskRuns(localMask, width, height).map(run => ({
+      x0: run.x0 + minCx,
+      x1: run.x1 + minCx,
+      y0: run.y0 + minCy,
+      y1: run.y1 + minCy
+    }));
+    regions.push({
+      floorIndex: cells[0].floorIndex,
+      type: regionType,
+      cells,
+      runs,
+      minCx,
+      minCy,
+      maxCx,
+      maxCy,
+      widthCells: width,
+      heightCells: height
+    });
+  }
+  return regions.sort((a, b) =>
+    a.floorIndex - b.floorIndex || a.minCy - b.minCy || a.minCx - b.minCx
+  );
+}
+
 function cross(a, b) {
   return {
     x: a.y * b.z - a.z * b.y,
@@ -192,7 +295,7 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
   const camera = {
     target: { x: 0, y: 0.8, z: 0 },
     yaw: finiteNumber(options?.camera?.yaw, -0.72),
-    pitch: clamp(finiteNumber(options?.camera?.pitch, 0.58), 0.08, 1.42),
+    pitch: clamp(finiteNumber(options?.camera?.pitch, 0.78), 0.08, 1.42),
     distance: positiveNumber(options?.camera?.distance, 18),
     fitted: false,
     userAdjusted: false
@@ -318,38 +421,43 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
   function buildGeometry(floor) {
     const { width, height } = floor;
     const mask = new Uint8Array(width * height);
+    const stairMask = new Uint8Array(width * height);
     for (let cy = 0; cy < height; cy += 1) {
       const offset = cy * width;
       for (let cx = 0; cx < width; cx += 1) {
-        mask[offset + cx] = isWalkable(floor, cx, cy) ? 1 : 0;
+        const stair = !!rawCellAt(floor, cx, cy)?.stair || !!floor.source?.stairTemplate?.[cy]?.[cx];
+        mask[offset + cx] = isWalkable(floor, cx, cy) || stair ? 1 : 0;
+        stairMask[offset + cx] = stair ? 1 : 0;
       }
     }
+    floor.stairs.forEach(stair => {
+      const rawX = Number(stair?.cx ?? stair?.x);
+      const rawY = Number(stair?.cy ?? stair?.y);
+      if (!Number.isFinite(rawX) || !Number.isFinite(rawY)) return;
+      const cx = Math.round(rawX);
+      const cy = Math.round(rawY);
+      if (cx < 0 || cy < 0 || cx >= width || cy >= height) return;
+      mask[cy * width + cx] = 1;
+      stairMask[cy * width + cx] = 1;
+    });
 
     // Merge equal horizontal walkable runs through consecutive rows. A large
     // 150x200 corridor therefore becomes a handful of floor polygons instead
     // of up to 30,000 individual cell polygons.
-    const floorRuns = [];
-    let activeRuns = new Map();
-    for (let cy = 0; cy < height; cy += 1) {
-      const nextRuns = new Map();
-      let cx = 0;
-      while (cx < width) {
-        while (cx < width && !mask[cy * width + cx]) cx += 1;
-        if (cx >= width) break;
-        const start = cx;
-        while (cx < width && mask[cy * width + cx]) cx += 1;
-        const end = cx;
-        const key = `${start}:${end}`;
-        const run = activeRuns.get(key) || { x0: start, x1: end, y0: cy, y1: cy + 1 };
-        run.y1 = cy + 1;
-        nextRuns.set(key, run);
-      }
-      activeRuns.forEach((run, key) => {
-        if (!nextRuns.has(key)) floorRuns.push(run);
-      });
-      activeRuns = nextRuns;
+    const floorRuns = mergeMaskRuns(mask, width, height);
+    const floorSurfaceMask = mask.slice();
+    let hasStairs = false;
+    for (let index = 0; index < floorSurfaceMask.length; index += 1) {
+      if (!stairMask[index]) continue;
+      floorSurfaceMask[index] = 0;
+      hasStairs = true;
     }
-    activeRuns.forEach(run => floorRuns.push(run));
+    // When stair rendering is enabled, remove its footprint from the large
+    // merged floor polygons. This prevents average-depth painter sorting from
+    // covering a stair surface with the surrounding floor afterwards.
+    const floorRunsWithoutStairs = hasStairs
+      ? mergeMaskRuns(floorSurfaceMask, width, height)
+      : floorRuns;
 
     // A wall exists only where a walkable cell meets a blocked/outside cell.
     // Collinear one-cell edges are merged into long boundary segments.
@@ -412,6 +520,8 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
       cellSize: floor.cellSize,
       version: geometryVersion(floor),
       floorRuns,
+      floorRunsWithoutStairs,
+      hasStairs,
       walls
     };
   }
@@ -477,7 +587,7 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
       z: (bounds.minZ + bounds.maxZ) * 0.5
     };
     camera.yaw = finiteNumber(options?.camera?.yaw, -0.72);
-    camera.pitch = clamp(finiteNumber(options?.camera?.pitch, 0.58), 0.08, 1.42);
+    camera.pitch = clamp(finiteNumber(options?.camera?.pitch, 0.78), 0.08, 1.42);
     camera.distance = clamp(
       Math.max(4, radius / Math.max(0.1, Math.sin(halfFov)) * 1.12),
       config.minCameraDistance,
@@ -534,9 +644,11 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
 
   function pushPolygon(primitives, points, basis, style = {}) {
     const projected = points.map(point => project(point, basis));
-    if (projected.some(point => !point)) return;
+    if (projected.some(point => !point)) return null;
     const depth = projected.reduce((sum, point) => sum + point.depth, 0) / projected.length;
-    primitives.push({ kind: "polygon", points: projected, depth, order: style.order ?? 0, ...style });
+    const primitive = { kind: "polygon", points: projected, depth, order: style.order ?? 0, ...style };
+    primitives.push(primitive);
+    return primitive;
   }
 
   function pushLine(primitives, from, to, basis, style = {}) {
@@ -607,7 +719,10 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
     for (let cy = 0; cy < floor.height; cy += 1) {
       for (let cx = 0; cx < floor.width; cx += 1) {
         const cell = rawCellAt(floor, cx, cy);
-        if (needStairs && cell?.stair) stairs.push({ cx, cy });
+        const stair = !!cell?.stair || !!floor.source?.stairTemplate?.[cy]?.[cx];
+        if (needStairs && stair) {
+          stairs.push({ cx, cy, type: cell?.stairType || cell?.type || "indoor" });
+        }
 
         if (needFire) {
           const intensity = Math.max(0, finiteNumber(cell?.fireIntensity, cell?.fire ? 1 : 0));
@@ -652,7 +767,10 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
       const color = Math.abs(floor.floorIndex) % 2
         ? config.alternateFloorColor
         : config.floorColor;
-      geometry.floorRuns.forEach(run => {
+      const floorRuns = layerVisibility.stairs && geometry.hasStairs
+        ? geometry.floorRunsWithoutStairs
+        : geometry.floorRuns;
+      floorRuns.forEach(run => {
         const x0 = (run.x0 - 0.5) * cell;
         const x1 = (run.x1 - 0.5) * cell;
         const z0 = (run.y0 - 0.5) * cell;
@@ -728,7 +846,10 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
         if (Number.isFinite(Number(stair?.cx ?? stair?.x))) {
           const floorIndex = floorIndexOf(stair, floor.floorIndex);
           landings.set(stairKey(floorIndex, endpointX(stair), endpointY(stair)), {
-            cx: endpointX(stair), cy: endpointY(stair), floorIndex
+            cx: endpointX(stair),
+            cy: endpointY(stair),
+            floorIndex,
+            type: stair.type || stair.stairType || "indoor"
           });
         }
       });
@@ -745,40 +866,121 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
       [link.from, link.to].forEach(endpoint => {
         const floorIndex = floorIndexOf(endpoint, 0);
         landings.set(stairKey(floorIndex, endpointX(endpoint), endpointY(endpoint)), {
-          cx: endpointX(endpoint), cy: endpointY(endpoint), floorIndex
+          cx: endpointX(endpoint),
+          cy: endpointY(endpoint),
+          floorIndex,
+          type: link.type || "indoor"
         });
       });
     });
-    return { landings: [...landings.values()], links, floorByIndex };
+    const landingCells = [...landings.values()];
+    return {
+      landings: landingCells,
+      regions: groupStairCells3D(landingCells),
+      links,
+      floorByIndex
+    };
   }
 
   function addStairPrimitives(primitives, stairs, basis) {
-    const { landings, links, floorByIndex } = stairs;
-    landings.forEach(stair => {
-      const floor = floorByIndex.get(stair.floorIndex);
-      const cell = floor?.cellSize || config.cellSizeMeters;
-      const center = worldForEndpoint(stair, floorByIndex, stair.floorIndex);
-      const half = cell * 0.48;
-      const y = center.y + 0.035;
-      pushPolygon(primitives, [
-        { x: center.x - half, y, z: center.z - half },
-        { x: center.x + half, y, z: center.z - half },
-        { x: center.x + half, y, z: center.z + half },
-        { x: center.x - half, y, z: center.z + half }
-      ], basis, {
-        fill: "rgba(20, 210, 180, 0.9)",
-        stroke: "rgba(205, 255, 246, 0.95)",
-        lineWidth: 0.8,
-        order: 2
+    const { landings, regions, links, floorByIndex } = stairs;
+    regions.forEach(region => {
+      const floor = floorByIndex.get(region.floorIndex);
+      if (!floor) return;
+      const cell = floor.cellSize || config.cellSizeMeters;
+      const baseY = floor.elevation + 0.012;
+      const topY = floor.elevation + clamp(cell * 0.28, 0.09, 0.16);
+      const palette = region.type === "emergency"
+        ? { top: "#ffd34d", side: "#8a5a08", edge: "#fff4be", tread: "#5c3900" }
+        : (region.type === "outdoor"
+            ? { top: "#20d8c4", side: "#08766e", edge: "#d9fffb", tread: "#034a45" }
+            : { top: "#28e36f", side: "#08763a", edge: "#ddffe9", tread: "#034524" });
+      const topDepths = [];
+
+      region.runs.forEach(run => {
+        const x0 = (run.x0 - 0.5) * cell;
+        const x1 = (run.x1 - 0.5) * cell;
+        const z0 = (run.y0 - 0.5) * cell;
+        const z1 = (run.y1 - 0.5) * cell;
+        pushPolygon(primitives, [
+          { x: x0, y: baseY, z: z0 },
+          { x: x1, y: baseY, z: z0 },
+          { x: x1, y: topY, z: z0 },
+          { x: x0, y: topY, z: z0 }
+        ], basis, { fill: palette.side, stroke: palette.edge, lineWidth: 0.7, order: 2 });
+        pushPolygon(primitives, [
+          { x: x1, y: baseY, z: z0 },
+          { x: x1, y: baseY, z: z1 },
+          { x: x1, y: topY, z: z1 },
+          { x: x1, y: topY, z: z0 }
+        ], basis, { fill: palette.side, stroke: palette.edge, lineWidth: 0.7, order: 2 });
+        pushPolygon(primitives, [
+          { x: x1, y: baseY, z: z1 },
+          { x: x0, y: baseY, z: z1 },
+          { x: x0, y: topY, z: z1 },
+          { x: x1, y: topY, z: z1 }
+        ], basis, { fill: palette.side, stroke: palette.edge, lineWidth: 0.7, order: 2 });
+        pushPolygon(primitives, [
+          { x: x0, y: baseY, z: z1 },
+          { x: x0, y: baseY, z: z0 },
+          { x: x0, y: topY, z: z0 },
+          { x: x0, y: topY, z: z1 }
+        ], basis, { fill: palette.side, stroke: palette.edge, lineWidth: 0.7, order: 2 });
+        const topPrimitive = pushPolygon(primitives, [
+          { x: x0, y: topY, z: z0 },
+          { x: x1, y: topY, z: z0 },
+          { x: x1, y: topY, z: z1 },
+          { x: x0, y: topY, z: z1 }
+        ], basis, {
+          fill: palette.top,
+          stroke: palette.edge,
+          lineWidth: 1.45,
+          alpha: 0.98,
+          order: 3
+        });
+        if (topPrimitive) topDepths.push(topPrimitive.depth);
       });
-      for (let step = -2; step <= 2; step += 1) {
-        const z = center.z + step * cell * 0.16;
-        pushLine(primitives,
-          { x: center.x - half * 0.72, y: y + 0.012, z },
-          { x: center.x + half * 0.72, y: y + 0.012, z },
-          basis,
-          { stroke: "rgba(4, 73, 70, 0.9)", lineWidth: 0.75, order: 3 }
-        );
+
+      const x0 = (region.minCx - 0.5) * cell;
+      const x1 = (region.maxCx + 0.5) * cell;
+      const z0 = (region.minCy - 0.5) * cell;
+      const z1 = (region.maxCy + 0.5) * cell;
+      const alongZ = region.heightCells >= region.widthCells;
+      const longCells = alongZ ? region.heightCells : region.widthCells;
+      const treadCount = Math.min(11, Math.max(4, longCells - 1));
+      const inset = Math.min(cell * 0.28, (alongZ ? x1 - x0 : z1 - z0) * 0.08);
+      // Use the same sort depth as the top surface. `order: 4` then reliably
+      // paints tread lines after the opaque top instead of losing far-side
+      // lines to tiny average-depth differences.
+      const treadDepth = topDepths.length
+        ? topDepths.reduce((sum, depth) => sum + depth, 0) / topDepths.length
+        : undefined;
+      const treadStyle = {
+        stroke: palette.tread,
+        lineWidth: 1.15,
+        alpha: 0.96,
+        order: 4,
+        ...(Number.isFinite(treadDepth) ? { depth: treadDepth } : {})
+      };
+      for (let step = 1; step <= treadCount; step += 1) {
+        const ratio = step / (treadCount + 1);
+        if (alongZ) {
+          const z = z0 + (z1 - z0) * ratio;
+          pushLine(primitives,
+            { x: x0 + inset, y: topY + 0.009, z },
+            { x: x1 - inset, y: topY + 0.009, z },
+            basis,
+            treadStyle
+          );
+        } else {
+          const x = x0 + (x1 - x0) * ratio;
+          pushLine(primitives,
+            { x, y: topY + 0.009, z: z0 + inset },
+            { x, y: topY + 0.009, z: z1 - inset },
+            basis,
+            treadStyle
+          );
+        }
       }
     });
 
@@ -797,6 +999,7 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
         }
       );
     });
+    return { cells: landings.length, regions: regions.length };
   }
 
   function addHazardPrimitives(primitives, floor, dynamic, basis, timestamp) {
@@ -1326,7 +1529,16 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
     const usableFloors = floors.filter(floor => floor.width > 0 && floor.height > 0);
     if (!usableFloors.length) {
       drawEmptyState();
-      lastRenderStats = { rendered: true, empty: true, floors: 0, agents: 0, primitives: 0, smokeSamples: 0 };
+      lastRenderStats = {
+        rendered: true,
+        empty: true,
+        floors: 0,
+        agents: 0,
+        primitives: 0,
+        smokeSamples: 0,
+        stairCells: 0,
+        stairRegions: 0
+      };
       return { ...lastRenderStats };
     }
     if (!camera.fitted && !camera.userAdjusted) fitCamera(usableFloors);
@@ -1342,9 +1554,9 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
       addHazardPrimitives(primitives, floor, dynamic, basis, timestamp);
     });
 
-    if (layerVisibility.stairs) {
-      addStairPrimitives(primitives, collectStairs(snapshot, usableFloors, dynamicByFloor), basis);
-    }
+    const stairStats = layerVisibility.stairs
+      ? addStairPrimitives(primitives, collectStairs(snapshot, usableFloors, dynamicByFloor), basis)
+      : { cells: 0, regions: 0 };
     addEndpointPrimitives(primitives, snapshot, usableFloors, basis);
     addAgentPrimitives(primitives, snapshot, usableFloors, basis);
 
@@ -1357,7 +1569,9 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
       floors: usableFloors.length,
       agents: Array.isArray(snapshot?.agents) ? snapshot.agents.length : 0,
       primitives: primitives.length,
-      smokeSamples
+      smokeSamples,
+      stairCells: stairStats.cells,
+      stairRegions: stairStats.regions
     };
     drawHud(snapshot, usableFloors, stats);
     lastRenderStats = stats;

@@ -7,7 +7,11 @@ import { downloadCsvReport } from "../export/csv.js";
 import { loadImageFromFile } from "../mapLoader.js";
 import { loadPresetStore, savePresetStore } from "../storage/presets.js";
 import { pushParamHistoryEntry, showParamHistoryLog } from "../storage/history.js";
-import { extractScitech3FGrid, SCITECH_3F_PROFILE } from "../scitech3f-map3d.js";
+import {
+  extractScitech3FGrid,
+  isLikelyScitech3FExtraction,
+  SCITECH_3F_PROFILE
+} from "../scitech3f-map3d.js";
 import {
   stepFire3D,
   applyFire3DResultToLegacyFloors
@@ -1187,11 +1191,29 @@ export function initSimulation() {
       0,
       Math.max(0, floorCount - 1)
     );
-    const mapProfile = /^scitech_3f_walkable\.png$/i.test(file.name)
+    let mapProfile = /^scitech_3f_walkable\.png$/i.test(file.name)
       ? SCITECH_3F_PROFILE.id
       : null;
     try {
       const img = await loadImageFromFile(file);
+      // Renaming the provided map must not disable its green stair extraction.
+      // Dimensions narrow the check, while extracted green cells avoid treating
+      // every unrelated 600x800 image as the bundled school-map profile.
+      if (!mapProfile &&
+          img.width === SCITECH_3F_PROFILE.sourceWidthPx &&
+          img.height === SCITECH_3F_PROFILE.sourceHeightPx) {
+        try {
+          const detected = extractScitech3FGrid(img, {
+            cellPixels: SCITECH_3F_PROFILE.gridCellPixels,
+            whiteThreshold: parseInt(thrRange.value, 10)
+          });
+          if (isLikelyScitech3FExtraction(detected, img.width, img.height)) {
+            mapProfile = SCITECH_3F_PROFILE.id;
+          }
+        } catch (_error) {
+          // The regular threshold loader below remains available as fallback.
+        }
+      }
       // Show immediate preview even before grid extraction succeeds.
       baseImage = img;
       syncPublicState();

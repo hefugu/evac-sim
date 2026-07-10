@@ -22,7 +22,11 @@ import {
   chooseClearAirStep,
   normalizeAgent3D
 } from "../sim/js/simulation/agents3d-sync.js";
-import { extractScitech3FGridFromImageData } from "../sim/js/scitech3f-map3d.js";
+import {
+  extractScitech3FGridFromImageData,
+  isLikelyScitech3FExtraction
+} from "../sim/js/scitech3f-map3d.js";
+import { groupStairCells3D } from "../sim/js/renderer3d.js";
 import {
   createGeometrySnapshot3D,
   createDynamicSnapshot3D,
@@ -164,6 +168,58 @@ test("3F image extraction keeps the main white/green component and drops text", 
   assert.equal(parsed.walkableTemplate[0][5], false);
 });
 
+test("3F stair cells collapse into five exact render regions", () => {
+  const rectangles = [
+    [91, 102, 90, 104, "indoor"],
+    [39, 51, 142, 151, "indoor"],
+    [20, 28, 66, 79, "indoor"],
+    [118, 125, 65, 79, "indoor"],
+    [126, 131, 157, 170, "outdoor"]
+  ];
+  const cells = [];
+  for (const [minCx, maxCx, minCy, maxCy, type] of rectangles) {
+    for (let cy = minCy; cy <= maxCy; cy += 1) {
+      for (let cx = minCx; cx <= maxCx; cx += 1) {
+        cells.push({ floorIndex: 2, cx, cy, type });
+      }
+    }
+  }
+  const regions = groupStairCells3D(cells);
+  assert.equal(cells.length, 640);
+  assert.equal(regions.length, 5);
+  assert.equal(regions.reduce((sum, region) => sum + region.cells.length, 0), 640);
+  assert.ok(regions.every(region => region.runs.length === 1));
+  assert.deepEqual(
+    regions.map(region => [region.minCx, region.maxCx, region.minCy, region.maxCy, region.type]),
+    [
+      [118, 125, 65, 79, "indoor"],
+      [20, 28, 66, 79, "indoor"],
+      [91, 102, 90, 104, "indoor"],
+      [39, 51, 142, 151, "indoor"],
+      [126, 131, 157, 170, "outdoor"]
+    ]
+  );
+  assert.equal(groupStairCells3D([
+    { floorIndex: 0, cx: 0, cy: 0, type: "indoor" },
+    { floorIndex: 0, cx: 1, cy: 0, type: "outdoor" }
+  ]).length, 2);
+});
+
+test("renamed 3F profile detection rejects generic same-size images", () => {
+  const sample = { gridWidth: 150, gridHeight: 200, walkableCells: 2889, stairCells: 640 };
+  assert.equal(isLikelyScitech3FExtraction(sample, 600, 800), true);
+  assert.equal(isLikelyScitech3FExtraction({ ...sample, stairCells: 0 }, 600, 800), false);
+  assert.equal(
+    isLikelyScitech3FExtraction(
+      { gridWidth: 150, gridHeight: 200, walkableCells: 30000, stairCells: 30000 },
+      600,
+      800
+    ),
+    false
+  );
+  assert.equal(isLikelyScitech3FExtraction(sample, 1200, 1600), false);
+});
+
 test("view-only bridge snapshots rebuild geometry and dynamic hazards", () => {
   const source = {
     agents: [{ id: 7, floor: 2, x: 1, y: 0, type: "teacher" }],
@@ -193,4 +249,3 @@ test("view-only bridge snapshots rebuild geometry and dynamic hazards", () => {
   assert.equal(target.agents[0].id, 7);
   assert.equal(target.sim.time, 12);
 });
-

@@ -33,6 +33,21 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+/** Checks whether an extracted, renamed image still matches the bundled map profile. */
+export function isLikelyScitech3FExtraction(extraction, width, height) {
+  const walkableCells = Math.max(0, finiteNumber(extraction?.walkableCells, 0));
+  const stairCells = Math.max(0, finiteNumber(extraction?.stairCells, 0));
+  const stairShare = walkableCells > 0 ? stairCells / walkableCells : 0;
+  return width === SCITECH_3F_PROFILE.sourceWidthPx &&
+    height === SCITECH_3F_PROFILE.sourceHeightPx &&
+    extraction?.gridWidth === Math.floor(width / SCITECH_3F_PROFILE.gridCellPixels) &&
+    extraction?.gridHeight === Math.floor(height / SCITECH_3F_PROFILE.gridCellPixels) &&
+    walkableCells >= 500 &&
+    stairCells >= 20 &&
+    stairShare >= 0.02 &&
+    stairShare <= 0.45;
+}
+
 export function isStairGreen(r, g, b, a = 255) {
   return a > 24 && g >= 145 && g >= r * 1.45 && g >= b * 1.35;
 }

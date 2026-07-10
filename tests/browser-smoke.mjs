@@ -148,6 +148,7 @@ const result = await evaluate(`(async () => {
 
   const smokeMax = Math.max(...floor.smokeMap.flat());
   const firstAgent = state.agents[0] || null;
+  const renderStats = state.render.renderer3d?.renderOnce() || null;
   return {
     floorCount: state.map.floorStates.length,
     floorIndex: floor.floorIndex,
@@ -172,7 +173,12 @@ const result = await evaluate(`(async () => {
     smokeMax,
     viewMode: state.render.viewMode,
     canvas3dWidth: document.getElementById('simCanvas3d').width,
-    renderer3d: !!state.render.renderer3d
+    renderer3d: !!state.render.renderer3d,
+    stairRender: renderStats && {
+      cells: renderStats.stairCells,
+      regions: renderStats.stairRegions,
+      primitives: renderStats.primitives
+    }
   };
 })()`);
 
@@ -197,6 +203,44 @@ assert.ok(result.smokeMax > 0);
 assert.equal(result.viewMode, "split");
 assert.ok(result.canvas3dWidth > 0);
 assert.equal(result.renderer3d, true);
+assert.equal(result.stairRender.cells, 640);
+assert.equal(result.stairRender.regions, 5);
+assert.ok(result.stairRender.primitives > 0);
+
+const renamedMap = await evaluate(`(async () => {
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const { state } = await import('./js/state.js');
+  const { loadBase64ImageAsFile, SAMPLE_3F_BASE64_URL } = await import('./js/sample3f-loader.js');
+  document.getElementById('btnStop').click();
+  const select = document.getElementById('currentFloor');
+  select.value = '2';
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+  const file = await loadBase64ImageAsFile(SAMPLE_3F_BASE64_URL, 'renamed-school-plan.png');
+  const transfer = new DataTransfer();
+  transfer.items.add(file);
+  const input = document.getElementById('mapFile');
+  input.files = transfer.files;
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  for (let i = 0; i < 80; i++) {
+    const floor = state.map.floorStates?.[2];
+    if (floor?.mapProfile === 'scitech-3f' && floor.stairs?.length) break;
+    await sleep(50);
+  }
+  const floor = state.map.floorStates?.[2];
+  const stats = state.render.renderer3d.renderOnce();
+  return {
+    profile: floor?.mapProfile,
+    stairs: floor?.stairs?.length || 0,
+    stairCells: stats.stairCells,
+    stairRegions: stats.stairRegions
+  };
+})()`);
+
+console.log(JSON.stringify({ renamedMap }, null, 2));
+assert.equal(renamedMap.profile, 'scitech-3f');
+assert.equal(renamedMap.stairs, 640);
+assert.equal(renamedMap.stairCells, 640);
+assert.equal(renamedMap.stairRegions, 5);
 
 const multiFloor = await evaluate(`(async () => {
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
