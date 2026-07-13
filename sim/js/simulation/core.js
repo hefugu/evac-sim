@@ -8,7 +8,7 @@ import { loadImageFromFile } from "../mapLoader.js";
 import { loadPresetStore, savePresetStore } from "../storage/presets.js";
 import { pushParamHistoryEntry, showParamHistoryLog } from "../storage/history.js";
 import {
-  extractScitech3FGrid,
+  extractColorMapGrid,
   isLikelyScitech3FExtraction,
   SCITECH_3F_PROFILE
 } from "../scitech3f-map3d.js";
@@ -606,6 +606,18 @@ export function initSimulation() {
     return cells;
   }
 
+  function normalizeImageExits(exitPoints, template) {
+    const exitsByCell = new Map();
+    for (const exit of Array.isArray(exitPoints) ? exitPoints : []) {
+      const cx = Math.round(Number(exit?.cx));
+      const cy = Math.round(Number(exit?.cy));
+      if (!Number.isFinite(cx) || !Number.isFinite(cy)) continue;
+      if (cx < 0 || cy < 0 || cx >= gridW || cy >= gridH || !template?.[cy]?.[cx]) continue;
+      exitsByCell.set(`${cx}:${cy}`, { cx, cy, source: "image" });
+    }
+    return [...exitsByCell.values()];
+  }
+
   function createFloorState(seedTemplate = null, seedImage = null, floorIndex = 0, options = {}) {
     const tpl = cloneWalkableTemplate(seedTemplate);
     const stairTemplate = cloneWalkableTemplate(options.stairTemplate);
@@ -626,8 +638,10 @@ export function initSimulation() {
       baseImage: seedImage || null,
       walkableTemplate: tpl,
       stairTemplate,
+      exitTemplate: cloneWalkableTemplate(options.exitTemplate),
       grid: floorGrid,
-      exits: [],
+      exits: normalizeImageExits(options.exitPoints, tpl),
+      imageExits: normalizeImageExits(options.exitPoints, tpl),
       spawns: [],
       stairs: collectStairCells(floorGrid),
       heatmap: makeScalarGrid(0),
@@ -1200,10 +1214,11 @@ export function initSimulation() {
       // Dimensions narrow the check, while extracted green cells avoid treating
       // every unrelated 600x800 image as the bundled school-map profile.
       if (!mapProfile &&
+          targetFloor === SCITECH_3F_PROFILE.floorIndex &&
           img.width === SCITECH_3F_PROFILE.sourceWidthPx &&
           img.height === SCITECH_3F_PROFILE.sourceHeightPx) {
         try {
-          const detected = extractScitech3FGrid(img, {
+          const detected = extractColorMapGrid(img, {
             cellPixels: SCITECH_3F_PROFILE.gridCellPixels,
             whiteThreshold: parseInt(thrRange.value, 10)
           });
@@ -1227,7 +1242,12 @@ export function initSimulation() {
       resetSimulationCore(true);
       log(`マップ読込: ${targetFloor + 1}F <- ${file.name} (${img.width}x${img.height}px)`);
       const stairCount = floorStates[targetFloor]?.stairs?.length || 0;
-      setStatus(`マップを読み込みました: ${targetFloor + 1}F${stairCount ? ` / 階段候補 ${stairCount}セル` : ""}`);
+      const exitCount = floorStates[targetFloor]?.exits?.length || 0;
+      setStatus(
+        `マップを読み込みました: ${targetFloor + 1}F` +
+        `${stairCount ? ` / 階段候補 ${stairCount}セル` : ""}` +
+        `${exitCount ? ` / 出口 ${exitCount}か所` : ""}`
+      );
     } catch (err) {
       const reason = err instanceof Error ? err.message : "unknown";
       alert(`画像の読み込みに失敗しました: ${file.name}\n理由: ${reason}`);
@@ -1267,23 +1287,23 @@ export function initSimulation() {
 
   function extractWalkableTemplateFromImage(image, options = {}) {
     if (!image) return null;
-    if (options.mapProfile === SCITECH_3F_PROFILE.id) {
-      try {
-        const parsed = extractScitech3FGrid(image, {
-          cellPixels: CELL_SIZE_PX,
-          whiteThreshold: parseInt(thrRange.value, 10)
-        });
-        return {
-          template: parsed.walkableTemplate,
-          stairTemplate: parsed.stairTemplate,
-          w: parsed.gridWidth,
-          h: parsed.gridHeight,
-          mapProfile: SCITECH_3F_PROFILE,
-          extractionStats: parsed
-        };
-      } catch (err) {
-        console.warn("3F map profile extraction failed; falling back to the legacy threshold.", err);
-      }
+    try {
+      const parsed = extractColorMapGrid(image, {
+        cellPixels: CELL_SIZE_PX,
+        whiteThreshold: parseInt(thrRange.value, 10)
+      });
+      return {
+        template: parsed.walkableTemplate,
+        stairTemplate: parsed.stairTemplate,
+        exitTemplate: parsed.exitTemplate,
+        exitPoints: parsed.exitPoints,
+        w: parsed.gridWidth,
+        h: parsed.gridHeight,
+        mapProfile: options.mapProfile === SCITECH_3F_PROFILE.id ? SCITECH_3F_PROFILE : null,
+        extractionStats: parsed
+      };
+    } catch (err) {
+      console.warn("Color map extraction failed; falling back to the legacy white threshold.", err);
     }
     // Draw image to an offscreen canvas and sample pixels
     const tmp = document.createElement("canvas");
@@ -1318,14 +1338,30 @@ export function initSimulation() {
         template[y][x] = (r > thr && g > thr && b > thr);
       }
     }
-    return { template, stairTemplate: null, w, h, mapProfile: null };
+    return {
+      template,
+      stairTemplate: null,
+      exitTemplate: null,
+      exitPoints: [],
+      w,
+      h,
+      mapProfile: null
+    };
   }
 
-  function clearFloorMarkersAndFields(fs, template, stairTemplate = null) {
+  function clearFloorMarkersAndFields(
+    fs,
+    template,
+    stairTemplate = null,
+    exitTemplate = null,
+    exitPoints = []
+  ) {
     fs.walkableTemplate = cloneWalkableTemplate(template);
     fs.stairTemplate = cloneWalkableTemplate(stairTemplate);
+    fs.exitTemplate = cloneWalkableTemplate(exitTemplate);
     fs.grid = cloneGridFromTemplate(fs.walkableTemplate, fs.stairTemplate);
-    fs.exits = [];
+    fs.imageExits = normalizeImageExits(exitPoints, fs.walkableTemplate);
+    fs.exits = fs.imageExits.map(exit => ({ ...exit }));
     fs.spawns = [];
     fs.stairs = collectStairCells(fs.grid);
     fs.heatmap = makeScalarGrid(0);
@@ -1342,7 +1378,7 @@ export function initSimulation() {
     if (!image) return false;
     const parsed = extractWalkableTemplateFromImage(image, { mapProfile });
     if (!parsed) return false;
-    const { template, stairTemplate, w, h } = parsed;
+    const { template, stairTemplate, exitTemplate, exitPoints, w, h } = parsed;
 
     const hasLoadedFloor = floorStates.some(fs => !!fs?.baseImage);
     if (hasLoadedFloor && gridW > 0 && gridH > 0 && (w !== gridW || h !== gridH)) {
@@ -1379,7 +1415,7 @@ export function initSimulation() {
     fs.baseImage = image;
     fs.walkableTemplate = cloneWalkableTemplate(template);
     if (clearMarkers || !fs.grid || !fs.grid.length) {
-      clearFloorMarkersAndFields(fs, template, stairTemplate);
+      clearFloorMarkersAndFields(fs, template, stairTemplate, exitTemplate, exitPoints);
     }
     if (fs.mapProfile === SCITECH_3F_PROFILE.id) {
       for (let cy = 0; cy < fs.grid.length; cy++) {
@@ -1469,8 +1505,10 @@ export function initSimulation() {
         setStatus("出口は通行可能セルに配置してください。");
         return;
       }
-      exits.push({ cx, cy });
-      log(`出口を追加: ${currentFloor + 1}F (${cx},${cy})`);
+      if (!exits.some(exit => exit.cx === cx && exit.cy === cy)) {
+        exits.push({ cx, cy, source: "manual" });
+        log(`出口を追加: ${currentFloor + 1}F (${cx},${cy})`);
+      }
     } else if (mode === "stair") {
       if (cellObj.fire) {
         setStatus("火元セルは階段にできません。");
@@ -1529,7 +1567,12 @@ export function initSimulation() {
     } else if (mode === "erase") {
       // Remove spawn/exit/fire markers at this cell
       spawns = spawns.filter(p => !(p.cx === cx && p.cy === cy));
-      exits = exits.filter(p => !(p.cx === cx && p.cy === cy));
+      const imageExitKeys = new Set(
+        (floorStates[currentFloor]?.imageExits || []).map(exit => `${exit.cx}:${exit.cy}`)
+      );
+      exits = exits.filter(p =>
+        !(p.cx === cx && p.cy === cy) || imageExitKeys.has(`${p.cx}:${p.cy}`)
+      );
       cellObj.fire = false;
       cellObj.fireIntensity = 0;
       cellObj.fireAgeSec = 0;
@@ -1881,7 +1924,7 @@ export function initSimulation() {
 
   btnClearMap.addEventListener("click", () => {
     spawns = [];
-    exits = [];
+    exits = (floorStates[currentFloor]?.imageExits || []).map(exit => ({ ...exit }));
     if (grid) {
       for (let y=0;y<gridH;y++)for(let x=0;x<gridW;x++){
         grid[y][x].fire = false;

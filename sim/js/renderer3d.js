@@ -1071,7 +1071,9 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
     if (layerVisibility.exits) {
       collectEndpoints(snapshot, floors, "exit").forEach((endpoint, index) => {
         const world = worldForEndpoint(endpoint, floorByIndex, 0);
-        pushMarker(primitives, "exit", { x: world.x, y: world.y + 0.04, z: world.z }, 1.22, basis, {
+        const floor = floorByIndex.get(world.floorIndex);
+        const markerHeight = Math.max(1.9, (floor?.wallHeight || config.wallHeightMeters) + 0.28);
+        pushMarker(primitives, "exit", { x: world.x, y: world.y + 0.04, z: world.z }, markerHeight, basis, {
           label: endpoint.label || endpoint.name || String(index + 1),
           order: 7
         });
@@ -1234,15 +1236,15 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
     const x = primitive.top.x;
     const y = primitive.top.y;
     context.save();
-    context.shadowColor = "rgba(35, 255, 130, 0.65)";
+    context.shadowColor = "rgba(255, 221, 51, 0.72)";
     context.shadowBlur = 8;
-    context.fillStyle = "#16c66d";
-    context.strokeStyle = "#dfffee";
+    context.fillStyle = "#ffdd33";
+    context.strokeStyle = "#fff7c2";
     context.lineWidth = 1;
     context.fillRect(x - width * 0.5, y, width, signHeight);
     context.strokeRect(x - width * 0.5, y, width, signHeight);
     context.shadowBlur = 0;
-    context.fillStyle = "#ffffff";
+    context.fillStyle = "#3b2200";
     context.font = `700 ${clamp(signHeight * 0.5, 7, 11)}px system-ui, sans-serif`;
     context.textAlign = "center";
     context.textBaseline = "middle";

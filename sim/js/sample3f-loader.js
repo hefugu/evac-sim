@@ -49,7 +49,7 @@ export function setupSample3FLoader() {
 
   const hint = document.createElement("div");
   hint.className = "hint";
-  hint.textContent = "科学技術高校3F。白=通路、黒=壁、緑=階段候補として自動抽出します。出口・開始位置・火元は読込後に配置してください。";
+  hint.textContent = "全マップ共通: 白=通路、黒=壁、緑=階段、黄=出口として自動抽出します。この3Fサンプルには黄色出口がないため、出口・開始位置・火元は読込後に配置してください。";
 
   mapBlock.appendChild(row);
   mapBlock.appendChild(hint);

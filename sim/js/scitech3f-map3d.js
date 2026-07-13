@@ -1,9 +1,9 @@
 /**
  * Science and Technology High School 3F map calibration and extraction.
  *
- * The source drawing uses white for corridors, green for stairs and black for
- * rooms/walls.  Labels are also white, so the largest connected component is
- * retained to keep the corridor network while removing isolated glyphs.
+ * Every supported drawing uses the same color contract: white corridors,
+ * green stairs, yellow exits and black rooms/walls. Labels may also be white,
+ * so the largest connected component can be retained to remove glyphs.
  */
 
 export const SCITECH_3F_PROFILE = Object.freeze({
@@ -24,6 +24,13 @@ export const SCITECH_3F_PROFILE = Object.freeze({
   whiteThreshold: 200
 });
 
+export const MAP_CELL_CLASS = Object.freeze({
+  wall: 0,
+  corridor: 1,
+  stair: 2,
+  exit: 3
+});
+
 function finiteNumber(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
@@ -37,49 +44,75 @@ function clamp(value, min, max) {
 export function isLikelyScitech3FExtraction(extraction, width, height) {
   const walkableCells = Math.max(0, finiteNumber(extraction?.walkableCells, 0));
   const stairCells = Math.max(0, finiteNumber(extraction?.stairCells, 0));
-  const stairShare = walkableCells > 0 ? stairCells / walkableCells : 0;
+  // Exact calibrated topology counts distinguish 3F from the other 600x800
+  // school maps; dimensions and color ratios alone classify every floor alike.
   return width === SCITECH_3F_PROFILE.sourceWidthPx &&
     height === SCITECH_3F_PROFILE.sourceHeightPx &&
     extraction?.gridWidth === Math.floor(width / SCITECH_3F_PROFILE.gridCellPixels) &&
     extraction?.gridHeight === Math.floor(height / SCITECH_3F_PROFILE.gridCellPixels) &&
-    walkableCells >= 500 &&
-    stairCells >= 20 &&
-    stairShare >= 0.02 &&
-    stairShare <= 0.45;
+    walkableCells === 2889 &&
+    stairCells === 640;
 }
 
 export function isStairGreen(r, g, b, a = 255) {
   return a > 24 && g >= 145 && g >= r * 1.45 && g >= b * 1.35;
 }
 
+export function isExitYellow(r, g, b, a = 255) {
+  return a > 24 &&
+    r >= 180 &&
+    g >= 170 &&
+    b <= 160 &&
+    r - b >= 60 &&
+    g - b >= 40 &&
+    Math.abs(r - g) <= 90;
+}
+
 export function isWalkableWhite(r, g, b, a = 255, threshold = SCITECH_3F_PROFILE.whiteThreshold) {
   return a > 24 && r > threshold && g > threshold && b > threshold;
 }
 
-/** Returns 0=wall, 1=corridor, 2=stair. */
-export function classifyScitech3FPixel(r, g, b, a = 255, options = {}) {
-  if (isStairGreen(r, g, b, a)) return 2;
+/** Returns 0=wall, 1=corridor, 2=stair, 3=exit. */
+export function classifyColorMapPixel(r, g, b, a = 255, options = {}) {
+  if (isExitYellow(r, g, b, a)) return MAP_CELL_CLASS.exit;
+  if (isStairGreen(r, g, b, a)) return MAP_CELL_CLASS.stair;
   return isWalkableWhite(r, g, b, a, finiteNumber(options.whiteThreshold, SCITECH_3F_PROFILE.whiteThreshold))
-    ? 1
-    : 0;
+    ? MAP_CELL_CLASS.corridor
+    : MAP_CELL_CLASS.wall;
 }
 
-function largestConnectedMask(classGrid) {
+export function classifyScitech3FPixel(r, g, b, a = 255, options = {}) {
+  return classifyColorMapPixel(r, g, b, a, options);
+}
+
+function connectedComponentMask(classGrid, options = {}) {
   const height = classGrid.length;
   const width = height ? classGrid[0].length : 0;
   const visited = Array.from({ length: height }, () => new Uint8Array(width));
   const directions = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-  let largest = [];
+  const components = [];
 
   for (let cy = 0; cy < height; cy++) {
     for (let cx = 0; cx < width; cx++) {
       if (!classGrid[cy][cx] || visited[cy][cx]) continue;
       const queue = [[cx, cy]];
       const component = [];
+      let stairCells = 0;
+      let exitCells = 0;
+      let minX = cx;
+      let minY = cy;
+      let maxX = cx;
+      let maxY = cy;
       visited[cy][cx] = 1;
       for (let index = 0; index < queue.length; index++) {
         const [x, y] = queue[index];
         component.push([x, y]);
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+        if (classGrid[y][x] === MAP_CELL_CLASS.stair) stairCells++;
+        if (classGrid[y][x] === MAP_CELL_CLASS.exit) exitCells++;
         for (const [dx, dy] of directions) {
           const nx = x + dx;
           const ny = y + dy;
@@ -89,13 +122,81 @@ function largestConnectedMask(classGrid) {
           queue.push([nx, ny]);
         }
       }
-      if (component.length > largest.length) largest = component;
+      components.push({ cells: component, stairCells, exitCells, minX, minY, maxX, maxY });
     }
   }
 
+  components.sort((a, b) => b.cells.length - a.cells.length);
+  const largestSize = components[0]?.cells.length || 0;
+  const minimumSize = Math.max(
+    2,
+    Math.floor(finiteNumber(options.minComponentCells, 12)),
+    Math.ceil(largestSize * clamp(finiteNumber(options.minComponentShare, 0.05), 0, 1))
+  );
+  const policy = options.keepAllComponents ? "all" : (options.componentPolicy || "meaningful");
+  const kept = components.filter((component, index) => {
+    if (policy === "all") return true;
+    if (policy === "largest") return index === 0;
+    if (index === 0 || component.stairCells > 0 || component.exitCells > 0) return true;
+    if (options.keepLargeWhiteComponents === false || component.cells.length < minimumSize) return false;
+    const componentWidth = component.maxX - component.minX + 1;
+    const componentHeight = component.maxY - component.minY + 1;
+    const touchesBoundary = component.minX === 0 || component.minY === 0 ||
+      component.maxX === width - 1 || component.maxY === height - 1;
+    return !(touchesBoundary && (componentWidth <= 2 || componentHeight <= 2));
+  });
   const keep = Array.from({ length: height }, () => new Uint8Array(width));
-  largest.forEach(([cx, cy]) => { keep[cy][cx] = 1; });
-  return { keep, componentSize: largest.length };
+  kept.forEach(component => {
+    component.cells.forEach(([cx, cy]) => { keep[cy][cx] = 1; });
+  });
+  return {
+    keep,
+    componentSize: kept.reduce((sum, component) => sum + component.cells.length, 0),
+    componentCount: components.length,
+    keptComponentCount: kept.length,
+    largestComponentSize: largestSize
+  };
+}
+
+function collectMarkerRegions(template) {
+  const height = template.length;
+  const width = height ? template[0].length : 0;
+  const visited = Array.from({ length: height }, () => new Uint8Array(width));
+  const directions = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  const regions = [];
+  for (let cy = 0; cy < height; cy += 1) {
+    for (let cx = 0; cx < width; cx += 1) {
+      if (!template[cy][cx] || visited[cy][cx]) continue;
+      const queue = [[cx, cy]];
+      const cells = [];
+      let sumX = 0;
+      let sumY = 0;
+      visited[cy][cx] = 1;
+      for (let index = 0; index < queue.length; index += 1) {
+        const [x, y] = queue[index];
+        cells.push([x, y]);
+        sumX += x;
+        sumY += y;
+        for (const [dx, dy] of directions) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+          if (visited[ny][nx] || !template[ny][nx]) continue;
+          visited[ny][nx] = 1;
+          queue.push([nx, ny]);
+        }
+      }
+      const centerX = sumX / cells.length;
+      const centerY = sumY / cells.length;
+      const [markerX, markerY] = cells.slice().sort((a, b) => {
+        const distanceA = (a[0] - centerX) ** 2 + (a[1] - centerY) ** 2;
+        const distanceB = (b[0] - centerX) ** 2 + (b[1] - centerY) ** 2;
+        return distanceA - distanceB || a[1] - b[1] || a[0] - b[0];
+      })[0];
+      regions.push({ cx: markerX, cy: markerY, cellCount: cells.length });
+    }
+  }
+  return regions;
 }
 
 /**
@@ -113,6 +214,7 @@ export function extractScitech3FGridFromImageData(imageData, width, height, opti
   const gridHeight = Math.floor(height / cellPixels);
   const whiteCoverage = clamp(finiteNumber(options.whiteCoverage, 0.22), 0.01, 1);
   const stairCoverage = clamp(finiteNumber(options.stairCoverage, 0.16), 0.01, 1);
+  const exitCoverage = clamp(finiteNumber(options.exitCoverage, 0.16), 0.01, 1);
   const sampleMode = options.sampleMode || "center";
   const classes = Array.from({ length: gridHeight }, () => new Uint8Array(gridWidth));
 
@@ -129,6 +231,7 @@ export function extractScitech3FGridFromImageData(imageData, width, height, opti
       }
       let white = 0;
       let green = 0;
+      let yellow = 0;
       let sampled = 0;
       for (let py = cy * cellPixels; py < Math.min(height, (cy + 1) * cellPixels); py++) {
         for (let px = cx * cellPixels; px < Math.min(width, (cx + 1) * cellPixels); px++) {
@@ -136,27 +239,34 @@ export function extractScitech3FGridFromImageData(imageData, width, height, opti
           const kind = classifyScitech3FPixel(
             data[offset], data[offset + 1], data[offset + 2], data[offset + 3], options
           );
-          if (kind === 2) green++;
-          else if (kind === 1) white++;
+          if (kind === MAP_CELL_CLASS.exit) yellow++;
+          else if (kind === MAP_CELL_CLASS.stair) green++;
+          else if (kind === MAP_CELL_CLASS.corridor) white++;
           sampled++;
         }
       }
-      if (sampled && green / sampled >= stairCoverage) classes[cy][cx] = 2;
-      else if (sampled && (white + green) / sampled >= whiteCoverage) classes[cy][cx] = 1;
+      if (sampled && yellow / sampled >= exitCoverage) classes[cy][cx] = MAP_CELL_CLASS.exit;
+      else if (sampled && green / sampled >= stairCoverage) classes[cy][cx] = MAP_CELL_CLASS.stair;
+      else if (sampled && (white + green + yellow) / sampled >= whiteCoverage) {
+        classes[cy][cx] = MAP_CELL_CLASS.corridor;
+      }
     }
   }
 
-  const { keep, componentSize } = options.keepAllComponents
-    ? {
-        keep: classes.map(row => Uint8Array.from(row, value => value ? 1 : 0)),
-        componentSize: classes.reduce((sum, row) => sum + row.reduce((a, value) => a + (value ? 1 : 0), 0), 0)
-      }
-    : largestConnectedMask(classes);
+  const {
+    keep,
+    componentSize,
+    componentCount,
+    keptComponentCount,
+    largestComponentSize
+  } = connectedComponentMask(classes, options);
 
   const walkableTemplate = Array.from({ length: gridHeight }, () => new Array(gridWidth).fill(false));
   const stairTemplate = Array.from({ length: gridHeight }, () => new Array(gridWidth).fill(false));
+  const exitTemplate = Array.from({ length: gridHeight }, () => new Array(gridWidth).fill(false));
   let walkableCells = 0;
   let stairCells = 0;
+  let exitCells = 0;
   let minCx = gridWidth;
   let minCy = gridHeight;
   let maxCx = -1;
@@ -166,9 +276,11 @@ export function extractScitech3FGridFromImageData(imageData, width, height, opti
     for (let cx = 0; cx < gridWidth; cx++) {
       if (!keep[cy][cx]) continue;
       walkableTemplate[cy][cx] = true;
-      stairTemplate[cy][cx] = classes[cy][cx] === 2;
+      stairTemplate[cy][cx] = classes[cy][cx] === MAP_CELL_CLASS.stair;
+      exitTemplate[cy][cx] = classes[cy][cx] === MAP_CELL_CLASS.exit;
       walkableCells++;
-      if (classes[cy][cx] === 2) stairCells++;
+      if (stairTemplate[cy][cx]) stairCells++;
+      if (exitTemplate[cy][cx]) exitCells++;
       minCx = Math.min(minCx, cx);
       minCy = Math.min(minCy, cy);
       maxCx = Math.max(maxCx, cx);
@@ -176,15 +288,22 @@ export function extractScitech3FGridFromImageData(imageData, width, height, opti
     }
   }
 
+  const exitPoints = collectMarkerRegions(exitTemplate);
   return {
     gridWidth,
     gridHeight,
     walkableTemplate,
     stairTemplate,
+    exitTemplate,
+    exitPoints,
     classes,
     componentSize,
+    componentCount,
+    keptComponentCount,
+    largestComponentSize,
     walkableCells,
     stairCells,
+    exitCells,
     bounds: walkableCells ? { minCx, minCy, maxCx, maxCy } : null,
     cellPixels
   };
@@ -202,6 +321,14 @@ export function extractScitech3FGrid(image, options = {}) {
   context.drawImage(image, 0, 0);
   const imageData = context.getImageData(0, 0, image.width, image.height);
   return extractScitech3FGridFromImageData(imageData, image.width, image.height, options);
+}
+
+export function extractColorMapGridFromImageData(imageData, width, height, options = {}) {
+  return extractScitech3FGridFromImageData(imageData, width, height, options);
+}
+
+export function extractColorMapGrid(image, options = {}) {
+  return extractScitech3FGrid(image, options);
 }
 
 /** Combines the two supplied real-world references into an adjustable scale. */

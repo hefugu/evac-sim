@@ -67,7 +67,7 @@ function sampleFloorFromImage(image) {
     smokeMap: parsed.walkableTemplate.map(row => row.map(() => 0)),
     smokeCeil: parsed.walkableTemplate.map(row => row.map(() => false)),
     stairs,
-    exits: [],
+    exits: parsed.exitPoints.map(exit => ({ cx: exit.cx, cy: exit.cy })),
     spawns: []
   };
 }
@@ -139,4 +139,3 @@ window.addEventListener("beforeunload", () => {
   receiver.destroy();
   renderer.destroy();
 }, { once: true });
-

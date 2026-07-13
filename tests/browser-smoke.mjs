@@ -242,6 +242,113 @@ assert.equal(renamedMap.stairs, 640);
 assert.equal(renamedMap.stairCells, 640);
 assert.equal(renamedMap.stairRegions, 5);
 
+const sharedColorMaps = await evaluate(`(async () => {
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const { state } = await import('./js/state.js');
+  const { extractColorMapGrid, isLikelyScitech3FExtraction } = await import('./js/scitech3f-map3d.js');
+  const parsedFloors = [];
+  for (let floorNumber = 1; floorNumber <= 7; floorNumber++) {
+    const response = await fetch('../uploads/' + floorNumber + 'F.png');
+    if (!response.ok) throw new Error('map fetch failed: ' + floorNumber + 'F');
+    const blob = await response.blob();
+    const image = await createImageBitmap(blob);
+    const imageWidth = image.width;
+    const imageHeight = image.height;
+    const parsed = extractColorMapGrid(image, { cellPixels: 4, whiteThreshold: 200 });
+    image.close();
+    parsedFloors.push({
+      floor: floorNumber,
+      walkable: parsed.walkableCells,
+      stairs: parsed.stairCells,
+      exits: parsed.exitPoints,
+      keptComponents: parsed.keptComponentCount,
+      likely3FProfile: isLikelyScitech3FExtraction(parsed, imageWidth, imageHeight),
+      leftEdgeWalkable: parsed.walkableTemplate.some(row => row[0] || row[1])
+    });
+  }
+
+  const select = document.getElementById('currentFloor');
+  select.value = '0';
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+  const mapBlob = await fetch('../uploads/1F.png').then(response => response.blob());
+  const file = new File([mapBlob], '1F.png', { type: 'image/png' });
+  const transfer = new DataTransfer();
+  transfer.items.add(file);
+  const input = document.getElementById('mapFile');
+  input.files = transfer.files;
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  for (let i = 0; i < 80; i++) {
+    const floor = state.map.floorStates?.[0];
+    if (floor?.baseImage && floor.exits?.length === 4 && floor.stairs?.length) break;
+    await sleep(50);
+  }
+  const floor = state.map.floorStates?.[0];
+  const beforeClear = floor.exits.map(exit => [exit.cx, exit.cy]);
+  const canvas = document.getElementById('simCanvas');
+  const clickCell = (buttonId, cell) => {
+    const rect = canvas.getBoundingClientRect();
+    const scale = Math.min(rect.width / floor.baseImage.width, rect.height / floor.baseImage.height);
+    const ox = (rect.width - floor.baseImage.width * scale) / 2;
+    const oy = (rect.height - floor.baseImage.height * scale) / 2;
+    document.getElementById(buttonId).click();
+    canvas.dispatchEvent(new PointerEvent('pointerdown', {
+      bubbles: true,
+      clientX: rect.left + ox + (cell.cx + 0.5) * 4 * scale,
+      clientY: rect.top + oy + (cell.cy + 0.5) * 4 * scale,
+      pointerId: 3,
+      button: 0
+    }));
+  };
+  clickCell('modeErase', floor.exits[0]);
+  const imageExitCountAfterErase = floor.exits.length;
+  let manualExit = null;
+  for (let cy = 0; cy < floor.grid.length && !manualExit; cy++) {
+    for (let cx = 0; cx < floor.grid[cy].length; cx++) {
+      const cell = floor.grid[cy][cx];
+      if (cell.walkable && !cell.stair && !floor.exits.some(exit => exit.cx === cx && exit.cy === cy)) {
+        manualExit = { cx, cy };
+        break;
+      }
+    }
+  }
+  if (!manualExit) throw new Error('manual exit cell missing');
+  clickCell('modeExit', manualExit);
+  const exitCountWithManual = floor.exits.length;
+  document.getElementById('btnClearMap').click();
+  await sleep(50);
+  const afterClear = state.map.floorStates?.[0]?.exits?.map(exit => [exit.cx, exit.cy]) || [];
+  const stats = state.render.renderer3d.renderOnce();
+  return {
+    parsedFloors,
+    profile: floor?.mapProfile,
+    stairs: floor?.stairs?.length || 0,
+    exits: beforeClear,
+    imageExitCountAfterErase,
+    exitCountWithManual,
+    exitsAfterClear: afterClear,
+    globalImageExits: state.map.allExitPoints.filter(exit => exit.floor === 0).length,
+    exitWalkable: beforeClear.every(([cx, cy]) => floor.grid?.[cy]?.[cx]?.walkable),
+    renderer: stats.rendered
+  };
+})()`);
+
+console.log(JSON.stringify({ sharedColorMaps }, null, 2));
+assert.deepEqual(sharedColorMaps.parsedFloors.map(floor => floor.exits.length), [4, 0, 0, 0, 0, 0, 0]);
+assert.deepEqual(
+  sharedColorMaps.parsedFloors.map(floor => floor.likely3FProfile),
+  [false, false, true, false, false, false, false]
+);
+assert.equal(sharedColorMaps.parsedFloors[3].leftEdgeWalkable, false);
+assert.equal(sharedColorMaps.profile, null);
+assert.ok(sharedColorMaps.stairs > 0);
+assert.deepEqual(sharedColorMaps.exits, [[43, 75], [90, 124], [51, 140], [124, 145]]);
+assert.equal(sharedColorMaps.imageExitCountAfterErase, 4);
+assert.equal(sharedColorMaps.exitCountWithManual, 5);
+assert.deepEqual(sharedColorMaps.exitsAfterClear, sharedColorMaps.exits);
+assert.equal(sharedColorMaps.globalImageExits, 4);
+assert.equal(sharedColorMaps.exitWalkable, true);
+assert.equal(sharedColorMaps.renderer, true);
+
 const multiFloor = await evaluate(`(async () => {
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const { state } = await import('./js/state.js');

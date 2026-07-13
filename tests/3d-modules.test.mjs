@@ -23,8 +23,10 @@ import {
   normalizeAgent3D
 } from "../sim/js/simulation/agents3d-sync.js";
 import {
+  classifyColorMapPixel,
   extractScitech3FGridFromImageData,
-  isLikelyScitech3FExtraction
+  isLikelyScitech3FExtraction,
+  MAP_CELL_CLASS
 } from "../sim/js/scitech3f-map3d.js";
 import { groupStairCells3D } from "../sim/js/renderer3d.js";
 import {
@@ -145,7 +147,7 @@ test("agent behavior leaves a hazardous stuck cell toward clear air", () => {
   assert.equal(normalized.behaviorState, "normal");
 });
 
-test("3F image extraction keeps the main white/green component and drops text", () => {
+test("color map extraction recognizes white, green and yellow while dropping text", () => {
   const width = 12;
   const height = 8;
   const data = new Uint8ClampedArray(width * height * 4);
@@ -158,14 +160,39 @@ test("3F image extraction keeps the main white/green component and drops text", 
       }
     }
   };
-  paintCell(0, 1, [255, 255, 255]);
+  paintCell(0, 1, [255, 221, 51]);
+  paintCell(0, 2, [255, 255, 0]);
   paintCell(1, 1, [255, 255, 255]);
   paintCell(2, 1, [0, 255, 0]);
+  paintCell(3, 1, [255, 255, 255]);
+  paintCell(4, 1, [255, 221, 51]);
   paintCell(5, 0, [255, 255, 255]); // isolated label
   const parsed = extractScitech3FGridFromImageData({ data }, width, height, { cellPixels: 2 });
-  assert.equal(parsed.walkableCells, 3);
+  assert.equal(parsed.walkableCells, 6);
   assert.equal(parsed.stairCells, 1);
+  assert.equal(parsed.exitCells, 3);
+  assert.deepEqual(parsed.exitPoints, [
+    { cx: 0, cy: 1, cellCount: 2 },
+    { cx: 4, cy: 1, cellCount: 1 }
+  ]);
+  assert.equal(parsed.exitTemplate[1][0], true);
+  assert.equal(parsed.walkableTemplate[1][4], true);
   assert.equal(parsed.walkableTemplate[0][5], false);
+  assert.equal(classifyColorMapPixel(255, 255, 255), MAP_CELL_CLASS.corridor);
+  assert.equal(classifyColorMapPixel(13, 255, 0), MAP_CELL_CLASS.stair);
+  assert.equal(classifyColorMapPixel(255, 221, 51), MAP_CELL_CLASS.exit);
+  assert.equal(classifyColorMapPixel(255, 222, 89), MAP_CELL_CLASS.exit);
+  assert.equal(classifyColorMapPixel(255, 165, 0), MAP_CELL_CLASS.wall);
+  assert.equal(classifyColorMapPixel(150, 120, 70), MAP_CELL_CLASS.wall);
+  assert.equal(classifyColorMapPixel(255, 0, 0), MAP_CELL_CLASS.wall);
+  const coverageParsed = extractScitech3FGridFromImageData(
+    { data },
+    width,
+    height,
+    { cellPixels: 2, sampleMode: "coverage" }
+  );
+  assert.equal(coverageParsed.exitCells, 3);
+  assert.equal(coverageParsed.exitPoints.length, 2);
 });
 
 test("3F stair cells collapse into five exact render regions", () => {
@@ -210,6 +237,10 @@ test("renamed 3F profile detection rejects generic same-size images", () => {
   assert.equal(isLikelyScitech3FExtraction(sample, 600, 800), true);
   assert.equal(isLikelyScitech3FExtraction({ ...sample, stairCells: 0 }, 600, 800), false);
   assert.equal(
+    isLikelyScitech3FExtraction({ ...sample, walkableCells: 2872 }, 600, 800),
+    false
+  );
+  assert.equal(
     isLikelyScitech3FExtraction(
       { gridWidth: 150, gridHeight: 200, walkableCells: 30000, stairCells: 30000 },
       600,
@@ -246,6 +277,7 @@ test("view-only bridge snapshots rebuild geometry and dynamic hazards", () => {
   assert.equal(target.map.floorStates[0].floorIndex, 2);
   assert.equal(target.map.floorStates[0].grid[0][1].fire, true);
   assert.equal(target.map.floorStates[0].smokeMap[0][1], 0.8);
+  assert.deepEqual(target.map.floorStates[0].exits, [{ cx: 1, cy: 0 }]);
   assert.equal(target.agents[0].id, 7);
   assert.equal(target.sim.time, 12);
 });

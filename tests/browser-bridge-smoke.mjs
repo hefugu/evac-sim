@@ -51,6 +51,7 @@ const evaluated = await send("Runtime.evaluate", {
       floorIndices: floors.map(floor => floor.floorIndex),
       smokeMax: floors.length ? Math.max(...floors.map(floor => floor.smokeMap?.length ? Math.max(...floor.smokeMap.flat()) : 0)) : 0,
       fires: floors.reduce((sum, floor) => sum + (floor.grid?.flat().filter(cell => cell.fire).length || 0), 0),
+      exits: floors.reduce((sum, floor) => sum + (floor.exits?.length || 0), 0),
       simTime: state.sim.time,
       canvasWidth: document.getElementById('simCanvas3d')?.width || 0
     };
@@ -68,6 +69,7 @@ assert.ok(result.agents > 0);
 assert.ok(result.floorIndices.includes(1));
 assert.ok(result.floorIndices.includes(2));
 assert.ok(result.smokeMax > 0);
+assert.ok(result.exits >= 4);
 assert.ok(result.simTime > 0);
 assert.ok(result.canvasWidth > 0);
 assert.deepEqual(errors, []);
