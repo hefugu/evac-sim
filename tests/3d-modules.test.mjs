@@ -16,7 +16,14 @@ import {
   stepFire3D,
   applyFire3DResultToLegacyFloors
 } from "../sim/js/simulation/fire3d.js";
-import { transferLegacySmokeThroughStairs } from "../sim/js/simulation/smoke3d.js";
+import {
+  clearLegacySmokePhysicsCell,
+  markLegacySmokeCellForDerivation,
+  normalizeFdsSmokeRecord,
+  smokeRiskAt3D,
+  stepSmoke3D,
+  transferLegacySmokeThroughStairs
+} from "../sim/js/simulation/smoke3d.js";
 import {
   deriveAgentBehaviorState,
   chooseClearAirStep,
@@ -46,6 +53,13 @@ function legacyCell(overrides = {}) {
     heatFluxKwM2: 0,
     ...overrides
   };
+}
+
+function assertNearlyEqual(actual, expected, tolerance = 1e-12) {
+  assert.ok(
+    Math.abs(actual - expected) <= tolerance,
+    `expected ${actual} to be within ${tolerance} of ${expected}`
+  );
 }
 
 test("2.5D floor schema and exact grid-to-world conversion", () => {
@@ -105,6 +119,532 @@ test("legacy smoke rises through an indoor stair without replacing maps", () => 
   assert.ok(lowerMap[0][0] < 3);
   assert.ok(upperMap[0][0] > 0);
   assert.equal(floors[1].grid[0][0].smokeDensity, upperMap[0][0]);
+});
+
+test("reduced-order smoke accounts for generated soot and CO", () => {
+  const hrrKw = 445;
+  const durationSec = 2;
+  const options = {
+    heatOfCombustionKJPerKg: 44500,
+    sootYieldKgPerKg: 0.015,
+    coYieldKgPerKg: 0.008,
+    sourceMultiplier: 1,
+    turbulentDiffusivityM2Sec: 0,
+    leakageRatePerSec: 0,
+    sootDepositionRatePerSec: 0,
+    heatLossRatePerSec: 0,
+    maxSubstepSec: 0.1
+  };
+  const floor = createFloor3D({
+    floorIndex: 0,
+    cellSizeMeters: 0.5,
+    wallHeightMeters: 3,
+    grid: [[legacyCell({ fire: true, fireIntensity: 1, hrrKw })]]
+  });
+
+  const result = stepSmoke3D([floor], [], durationSec, options);
+  const expectedFuelKg = hrrKw / options.heatOfCombustionKJPerKg * durationSec;
+  const expectedSootKg = expectedFuelKg * options.sootYieldKgPerKg;
+  const expectedCoKg = expectedFuelKg * options.coYieldKgPerKg;
+  const physics = result.floors[0].smokePhysics;
+
+  assertNearlyEqual(physics.generatedSootKg, expectedSootKg);
+  assertNearlyEqual(physics.generatedCoKg, expectedCoKg);
+  assertNearlyEqual(result.totalSootKg + physics.ventedSootKg, expectedSootKg);
+  assertNearlyEqual(result.totalCoKg + physics.ventedCoKg, expectedCoKg);
+  assert.equal(physics.ventedSootKg, 0);
+  assert.equal(physics.ventedCoKg, 0);
+});
+
+test("zero smoke-source multiplier creates no hidden hot layer", () => {
+  const floor = createFloor3D({
+    floorIndex: 0,
+    cellSizeMeters: 0.5,
+    wallHeightMeters: 3,
+    grid: [[legacyCell({ fire: true, fireIntensity: 1, hrrKw: 445 })]]
+  });
+  const result = stepSmoke3D([floor], [], 1, {
+    sourceMultiplier: 0,
+    turbulentDiffusivityM2Sec: 0,
+    leakageRatePerSec: 0,
+    sootDepositionRatePerSec: 0,
+    heatLossRatePerSec: 0
+  });
+  const physics = result.floors[0].smokePhysics;
+
+  assert.equal(result.totalHotGasVolumeM3, 0);
+  assert.equal(result.totalSootKg, 0);
+  assert.equal(result.totalCoKg, 0);
+  assert.equal(physics.excessHeatKJ[0], 0);
+});
+
+test("soot deposition is reported separately from ventilation", () => {
+  const seeded = stepSmoke3D([createFloor3D({
+    floorIndex: 0,
+    cellSizeMeters: 0.5,
+    wallHeightMeters: 3,
+    grid: [[legacyCell({ smokeDensity: 1, smokeLayerDepthMeters: 0.5 })]],
+    smokeMap: [[1]]
+  })], [], 0, {
+    turbulentDiffusivityM2Sec: 0,
+    leakageRatePerSec: 0,
+    sootDepositionRatePerSec: 0,
+    heatLossRatePerSec: 0
+  });
+  const initialSoot = seeded.totalSootKg;
+  const result = stepSmoke3D(seeded.floors, [], 1, {
+    turbulentDiffusivityM2Sec: 0,
+    leakageRatePerSec: 0,
+    sootDepositionRatePerSec: 0.4,
+    heatLossRatePerSec: 0
+  });
+  const physics = result.floors[0].smokePhysics;
+
+  assert.ok(physics.depositedSootKg > 0);
+  assert.equal(physics.ventedSootKg, 0);
+  assertNearlyEqual(result.totalSootKg + physics.depositedSootKg, initialSoot);
+});
+
+test("cell ventilation is a single first-order removal rate", () => {
+  const removalRatePerSec = 0.4;
+  const seeded = stepSmoke3D([createFloor3D({
+    floorIndex: 0,
+    cellSizeMeters: 0.5,
+    wallHeightMeters: 3,
+    grid: [[legacyCell({
+      ventilation: removalRatePerSec,
+      smokeDensity: 1,
+      coPpm: 260,
+      smokeLayerDepthMeters: 0.5
+    })]],
+    smokeMap: [[1]]
+  })], [], 0, {
+    turbulentDiffusivityM2Sec: 0,
+    leakageRatePerSec: 0,
+    sootDepositionRatePerSec: 0,
+    heatLossRatePerSec: 0
+  });
+  const initialVolume = seeded.totalHotGasVolumeM3;
+  const initialSoot = seeded.totalSootKg;
+  const result = stepSmoke3D(seeded.floors, [], 1, {
+    turbulentDiffusivityM2Sec: 0,
+    leakageRatePerSec: 0,
+    sootDepositionRatePerSec: 0,
+    heatLossRatePerSec: 0
+  });
+  const expectedFractionRemaining = Math.exp(-removalRatePerSec);
+
+  assertNearlyEqual(result.totalHotGasVolumeM3 / initialVolume, expectedFractionRemaining);
+  assertNearlyEqual(result.totalSootKg / initialSoot, expectedFractionRemaining);
+});
+
+test("full fire cell redistributes plume volume without timestep loss", () => {
+  const options = {
+    turbulentDiffusivityM2Sec: 0,
+    ceilingJetVelocityMultiplier: 0,
+    gravityMps2: 0,
+    exitDischargeCoefficient: 0,
+    leakageRatePerSec: 0,
+    sootDepositionRatePerSec: 0,
+    heatLossRatePerSec: 0,
+    maxSubstepSec: 0.1
+  };
+  const makeFloor = () => createFloor3D({
+    floorIndex: 0,
+    cellSizeMeters: 0.5,
+    wallHeightMeters: 3,
+    grid: [[
+      legacyCell({
+        fire: true,
+        hrrKw: 300,
+        smokeDensity: 1,
+        coPpm: 260,
+        smokeLayerDepthMeters: 3
+      }),
+      legacyCell()
+    ]],
+    smokeMap: [[1, 0]]
+  });
+  const seed = stepSmoke3D([makeFloor()], [], 0, options);
+  const single = stepSmoke3D(seed.floors, [], 0.1, options);
+  let split = seed;
+  for (let index = 0; index < 10; index++) {
+    split = stepSmoke3D(split.floors, [], 0.01, options);
+  }
+
+  assertNearlyEqual(single.totalHotGasVolumeM3, split.totalHotGasVolumeM3, 1e-10);
+  assertNearlyEqual(single.totalSootKg, split.totalSootKg, 1e-12);
+  assertNearlyEqual(single.totalCoKg, split.totalCoKg, 1e-12);
+  assert.ok(single.floors[0].smokePhysics.hotGasVolumeM3[1] > 0);
+});
+
+test("runtime legacy smoke reseed overrides stale zero aliases", () => {
+  const floor = createFloor3D({
+    floorIndex: 0,
+    cellSizeMeters: 0.5,
+    wallHeightMeters: 3,
+    grid: [[legacyCell()]],
+    smokeMap: [[0]]
+  });
+  const cleared = stepSmoke3D([floor], [], 0);
+  const reseededFloor = cleared.floors[0];
+  reseededFloor.smokeMap[0][0] = 1;
+  reseededFloor.grid[0][0].smokeDensity = 1;
+  const reseeded = stepSmoke3D([reseededFloor], [], 0);
+
+  assert.ok(reseeded.floors[0].smokePhysics.sootMassKg[0] > 0);
+  assert.ok(reseeded.floors[0].smokePhysics.coMassKg[0] > 0);
+  assert.ok(reseeded.floors[0].smokeMap[0][0] > 0);
+});
+
+test("external FDS cell can restore without becoming a legacy seed", () => {
+  const floor = createFloor3D({
+    floorIndex: 0,
+    cellSizeMeters: 0.5,
+    wallHeightMeters: 3,
+    grid: [[legacyCell()]],
+    smokeMap: [[0]]
+  });
+  const initialized = stepSmoke3D([floor], [], 0).floors[0];
+  initialized.smokeMap[0][0] = 1;
+  Object.assign(initialized.grid[0][0], {
+    smokeDensity: 1,
+    opticalDensityM1: 0.32,
+    hazardDataSource: "fds_csv",
+    smokeDataSource: "fds_csv"
+  });
+  markLegacySmokeCellForDerivation(initialized, 0, 0);
+  const restored = stepSmoke3D([initialized], [], 0);
+
+  assert.equal(restored.floors[0].smokeMap[0][0], 0);
+  assert.equal(restored.floors[0].smokePhysics.sootMassKg[0], 0);
+  assert.equal(restored.floors[0].grid[0][0].smokeDataSource, "reduced_order_nist");
+});
+
+test("clearing one smoke cell also clears all derived render fields", () => {
+  const floor = stepSmoke3D([createFloor3D({
+    floorIndex: 0,
+    cellSizeMeters: 0.5,
+    wallHeightMeters: 3,
+    grid: [[legacyCell({ smokeDensity: 1, smokeLayerDepthMeters: 2 })]],
+    smokeMap: [[1]],
+    smokeCeil: [[true]]
+  })], [], 0).floors[0];
+
+  clearLegacySmokePhysicsCell(floor, 0, 0, { clearDerivedFields: true });
+
+  assert.equal(floor.smokeMap[0][0], 0);
+  assert.equal(floor.smokeCeil[0][0], false);
+  assert.equal(floor.grid[0][0].upperLayerExtinctionCoefficientM1, 0);
+  assert.equal(floor.grid[0][0].sootConcentrationKgM3, 0);
+  assert.equal(floor.grid[0][0].smokeLayerDepthMeters, 0);
+});
+
+test("reduced-order smoke cannot cross a diagonally sealed wall corner", () => {
+  const wall = legacyCell({ walkable: false, wall: true });
+  const floor = createFloor3D({
+    floorIndex: 0,
+    cellSizeMeters: 0.5,
+    wallHeightMeters: 3,
+    grid: [
+      [legacyCell({ smokeDensity: 2, coPpm: 520, smokeLayerDepthMeters: 0.5 }), wall],
+      [wall, legacyCell()]
+    ],
+    smokeMap: [[2, 0], [0, 0]]
+  });
+
+  const result = stepSmoke3D([floor], [], 2, {
+    turbulentDiffusivityM2Sec: 1,
+    diagonalMix: 1,
+    leakageRatePerSec: 0,
+    sootDepositionRatePerSec: 0,
+    heatLossRatePerSec: 0,
+    maxSubstepSec: 0.05
+  });
+  const nextFloor = result.floors[0];
+  const diagonalIndex = nextFloor.smokePhysics.width + 1;
+
+  assert.ok(nextFloor.grid[0][0].smokeDensity > 0);
+  assert.equal(nextFloor.grid[0][1].smokeDensity, 0);
+  assert.equal(nextFloor.grid[1][0].smokeDensity, 0);
+  assert.equal(nextFloor.grid[1][1].smokeDensity, 0);
+  assert.equal(nextFloor.smokePhysics.hotGasVolumeM3[diagonalIndex], 0);
+  assert.equal(nextFloor.smokePhysics.sootMassKg[diagonalIndex], 0);
+  assert.equal(nextFloor.smokePhysics.coMassKg[diagonalIndex], 0);
+});
+
+test("eye-height exposure remains clear until the upper layer descends", () => {
+  const makeLayerFloor = (floorIndex, smokeLayerDepthMeters) => createFloor3D({
+    floorIndex,
+    cellSizeMeters: 0.5,
+    wallHeightMeters: 3,
+    grid: [[legacyCell({
+      smokeDensity: 1,
+      opticalDensity: 0.32,
+      coPpm: 260,
+      smokeLayerDepthMeters
+    })]],
+    smokeMap: [[1]]
+  });
+  const result = stepSmoke3D(
+    [makeLayerFloor(0, 0.5), makeLayerFloor(1, 2)],
+    [],
+    0,
+    { eyeHeightMeters: 1.6, layerTransitionMeters: 0.2 }
+  );
+  const shallow = result.floors[0].grid[0][0];
+  const deep = result.floors[1].grid[0][0];
+
+  assertNearlyEqual(shallow.smokeLayerInterfaceHeightMeters, 2.5);
+  assert.ok(shallow.upperLayerExtinctionCoefficientM1 > 0);
+  assert.equal(shallow.eyeLevelExtinctionCoefficientM1, 0);
+  assert.equal(shallow.eyeLevelCoPpm, 0);
+  assert.equal(shallow.visibilityMeters, 30);
+  const shallowRisk = smokeRiskAt3D(result.floors, { floorIndex: 0, cx: 0, cy: 0 });
+  assert.equal(shallowRisk.smokeDensity, 0);
+  assert.equal(shallowRisk.opticalDensity, 0);
+  assert.equal(shallowRisk.coPpm, 0);
+  assert.ok(shallowRisk.upperLayerSmokeDensity > 0);
+
+  assertNearlyEqual(deep.smokeLayerInterfaceHeightMeters, 1);
+  assertNearlyEqual(deep.eyeLevelExtinctionCoefficientM1, deep.upperLayerExtinctionCoefficientM1);
+  assertNearlyEqual(deep.eyeLevelCoPpm, deep.upperLayerCoPpm);
+  assert.ok(deep.visibilityMeters < shallow.visibilityMeters);
+});
+
+test("metric geometry changes preserve smoke quantities and update layer depth", () => {
+  const seeded = stepSmoke3D([createFloor3D({
+    floorIndex: 0,
+    cellSizeMeters: 0.5,
+    wallHeightMeters: 3,
+    grid: [[legacyCell({ smokeDensity: 1, smokeLayerDepthMeters: 0.5 })]],
+    smokeMap: [[1]]
+  })], [], 0);
+  const floor = seeded.floors[0];
+  const volumeBefore = floor.smokePhysics.hotGasVolumeM3[0];
+  const sootBefore = floor.smokePhysics.sootMassKg[0];
+  floor.cellSizeMeters = 1;
+  const resized = stepSmoke3D([floor], [], 0);
+  const resizedFloor = resized.floors[0];
+
+  assert.equal(resizedFloor.smokePhysics.cellSizeMeters, 1);
+  assertNearlyEqual(resizedFloor.smokePhysics.hotGasVolumeM3[0], volumeBefore);
+  assertNearlyEqual(resizedFloor.smokePhysics.sootMassKg[0], sootBefore);
+  assertNearlyEqual(resizedFloor.grid[0][0].smokeLayerDepthMeters, volumeBefore);
+});
+
+test("stair fan-out conserves hot gas, soot and CO", () => {
+  const options = {
+    turbulentDiffusivityM2Sec: 0,
+    leakageRatePerSec: 0,
+    sootDepositionRatePerSec: 0,
+    heatLossRatePerSec: 0,
+    maxSubstepSec: 1,
+    minimumVentVelocityMps: 0.05
+  };
+  const stairCell = overrides => legacyCell({
+    stair: true,
+    stairType: "indoor",
+    ...overrides
+  });
+  const floors = [
+    createFloor3D({
+      floorIndex: 0,
+      zMeters: 0,
+      cellSizeMeters: 0.5,
+      wallHeightMeters: 3,
+      grid: [[stairCell({
+        smokeDensity: 1,
+        coPpm: 260,
+        smokeLayerDepthMeters: 0.5
+      })]],
+      smokeMap: [[1]]
+    }),
+    createFloor3D({
+      floorIndex: 1,
+      zMeters: 3.5,
+      cellSizeMeters: 0.5,
+      wallHeightMeters: 3,
+      grid: [[stairCell()]],
+      smokeMap: [[0]]
+    }),
+    createFloor3D({
+      floorIndex: 2,
+      zMeters: 7,
+      cellSizeMeters: 0.5,
+      wallHeightMeters: 3,
+      grid: [[stairCell()]],
+      smokeMap: [[0]]
+    })
+  ];
+  const seeded = stepSmoke3D(floors, [], 0, options);
+  const links = [1, 2].map(floorIndex => createStairLink({
+    id: `fan-out-${floorIndex}`,
+    type: "indoor",
+    from: { floorIndex: 0, cx: 0, cy: 0 },
+    to: { floorIndex, cx: 0, cy: 0 },
+    widthMeters: 10,
+    verticalSmokeTransfer: 10
+  }));
+
+  const result = stepSmoke3D(seeded.floors, links, 1, options);
+  const lower = result.floors[0].smokePhysics;
+  const upperVolumes = result.floors.slice(1).map(item => item.smokePhysics.hotGasVolumeM3[0]);
+
+  assert.equal(result.verticalTransfers.length, 2);
+  assert.ok(result.verticalTransfers.every(item => item.volumeM3 > 0));
+  assert.ok(upperVolumes.every(volume => volume > 0));
+  assert.ok(lower.hotGasVolumeM3[0] >= 0);
+  assertNearlyEqual(result.totalHotGasVolumeM3, seeded.totalHotGasVolumeM3);
+  assertNearlyEqual(result.totalSootKg, seeded.totalSootKg);
+  assertNearlyEqual(result.totalCoKg, seeded.totalCoKg);
+  assert.ok(
+    result.verticalTransfers.reduce((sum, item) => sum + item.volumeM3, 0) <=
+      seeded.totalHotGasVolumeM3 + 1e-12
+  );
+});
+
+test("stair inflow respects receiving upper-layer capacity", () => {
+  const cellSizeMeters = 0.5;
+  const wallHeightMeters = 3;
+  const cellVolume = cellSizeMeters * cellSizeMeters * wallHeightMeters;
+  const makeFloor = (floorIndex, depth) => createFloor3D({
+    floorIndex,
+    zMeters: floorIndex * 3.5,
+    cellSizeMeters,
+    wallHeightMeters,
+    grid: [[legacyCell({
+      stair: true,
+      stairType: "indoor",
+      smokeDensity: 1,
+      coPpm: 260,
+      smokeLayerDepthMeters: depth
+    })]],
+    smokeMap: [[1]]
+  });
+  const seeded = stepSmoke3D([makeFloor(0, 3), makeFloor(1, 2.8)], [], 0, {
+    turbulentDiffusivityM2Sec: 0,
+    leakageRatePerSec: 0,
+    sootDepositionRatePerSec: 0,
+    heatLossRatePerSec: 0
+  });
+  const beforeVolume = seeded.totalHotGasVolumeM3;
+  const link = createStairLink({
+    id: "capacity-stair",
+    type: "indoor",
+    from: { floorIndex: 0, cx: 0, cy: 0 },
+    to: { floorIndex: 1, cx: 0, cy: 0 },
+    widthMeters: 10,
+    verticalSmokeTransfer: 10
+  });
+  const moved = stepSmoke3D(seeded.floors, [link], 1, {
+    turbulentDiffusivityM2Sec: 0,
+    leakageRatePerSec: 0,
+    sootDepositionRatePerSec: 0,
+    heatLossRatePerSec: 0
+  });
+  const settled = stepSmoke3D(moved.floors, [], 0.1, {
+    turbulentDiffusivityM2Sec: 0,
+    leakageRatePerSec: 0,
+    sootDepositionRatePerSec: 0,
+    heatLossRatePerSec: 0
+  });
+
+  assert.ok(moved.floors[1].smokePhysics.hotGasVolumeM3[0] <= cellVolume + 1e-12);
+  assertNearlyEqual(moved.totalHotGasVolumeM3, beforeVolume);
+  assertNearlyEqual(settled.totalHotGasVolumeM3, beforeVolume);
+});
+
+test("linked outdoor stair does not count the same vent twice", () => {
+  const makeStairFloor = (floorIndex, smoky) => createFloor3D({
+    floorIndex,
+    zMeters: floorIndex * 3.5,
+    cellSizeMeters: 0.5,
+    wallHeightMeters: 3,
+    grid: [[legacyCell({
+      stair: true,
+      stairType: "outdoor",
+      smokeDensity: smoky ? 1 : 0,
+      coPpm: smoky ? 260 : 0,
+      smokeLayerDepthMeters: smoky ? 0.5 : 0
+    })]],
+    smokeMap: [[smoky ? 1 : 0]]
+  });
+  const options = {
+    turbulentDiffusivityM2Sec: 0,
+    leakageRatePerSec: 0,
+    sootDepositionRatePerSec: 0,
+    heatLossRatePerSec: 0,
+    gravityMps2: 0,
+    maxSubstepSec: 1
+  };
+  const seeded = stepSmoke3D([makeStairFloor(0, true), makeStairFloor(1, false)], [], 0, options);
+  const link = createStairLink({
+    id: "outdoor-no-double-vent",
+    type: "outdoor",
+    from: { floorIndex: 0, cx: 0, cy: 0 },
+    to: { floorIndex: 1, cx: 0, cy: 0 },
+    verticalSmokeTransfer: 0.5
+  });
+  const result = stepSmoke3D(seeded.floors, [link], 0.1, options);
+
+  assert.equal(result.verticalTransfers.length, 1);
+  assert.equal(result.verticalTransfers[0].ventedVolumeM3, 0);
+  assert.ok(result.floors[0].smokePhysics.ventedSootKg > 0);
+  assertNearlyEqual(
+    result.totalSootKg + result.floors[0].smokePhysics.ventedSootKg,
+    seeded.totalSootKg
+  );
+});
+
+test("partial FDS smoke overlay replaces CO without erasing fallback fields", () => {
+  const makeFloor = () => createFloor3D({
+    floorIndex: 0,
+    cellSizeMeters: 0.5,
+    wallHeightMeters: 3,
+    grid: [[legacyCell({
+      smokeDensity: 1,
+      opticalDensity: 0.32,
+      coPpm: 260,
+      smokeLayerDepthMeters: 0.5
+    })]],
+    smokeMap: [[1]]
+  });
+  const fallback = stepSmoke3D([makeFloor()], [], 0).floors[0].grid[0][0];
+  const overlayResult = stepSmoke3D([makeFloor()], [], 0, {
+    fdsLookup: () => ({ co_ppm: 777 })
+  });
+  const overlaid = overlayResult.floors[0].grid[0][0];
+
+  assert.equal(overlaid.smokeDataSource, "fds_csv");
+  assert.equal(overlaid.hazardDataSource, "fds_csv");
+  assertNearlyEqual(overlaid.smokeDensity, fallback.smokeDensity);
+  assertNearlyEqual(overlaid.opticalDensityM1, fallback.opticalDensityM1);
+  assertNearlyEqual(overlaid.visibilityMeters, fallback.visibilityMeters);
+  assert.equal(overlaid.coPpm, 777);
+  assertNearlyEqual(overlayResult.totalSmoke, fallback.smokeDensity);
+});
+
+test("FDS-only smoke contributes to public display metrics", () => {
+  const floor = createFloor3D({
+    floorIndex: 0,
+    cellSizeMeters: 0.5,
+    wallHeightMeters: 3,
+    grid: [[legacyCell()]],
+    smokeMap: [[0]]
+  });
+  const result = stepSmoke3D([floor], [], 0, {
+    fdsLookup: () => ({ extinction_coefficient_m_1: 0.32 })
+  });
+
+  assertNearlyEqual(result.maxSmokeDensity, 1);
+  assertNearlyEqual(result.totalSmoke, 1);
+  assertNearlyEqual(result.floors[0].smokeMap[0][0], 1);
+});
+
+test("base-10 optical density input converts to natural-log extinction", () => {
+  const record = normalizeFdsSmokeRecord({ optical_density_base10_m_1: 0.1 });
+  assertNearlyEqual(record.opticalDensity, 0.1 * Math.LN10);
 });
 
 test("fire grows, spreads deterministically and applies in place", () => {

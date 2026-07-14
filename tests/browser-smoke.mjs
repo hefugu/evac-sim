@@ -125,13 +125,20 @@ const result = await evaluate(`(async () => {
   };
   place('modeSpawn', cells[0]);
   place('modeExit', cells[cells.length - 1]);
-  place('modeFire', cells[Math.floor(cells.length * 0.55)]);
+  const fireCell = cells[Math.floor(cells.length * 0.55)];
+  place('modeFire', fireCell);
 
+  const fdsCell = cells[5];
+  const temperatureCell = cells[10];
   const fdsText = [
-    'time_s,floor,cx,cy,heat_flux_kw_m2,optical_density_m_1,co_ppm,visibility_m,temperature_c',
-    '0,3,10,60,0,0,0,30,20',
-    '30,3,10,60,3.0,0.20,250,12,45',
-    '60,3,10,60,8.5,0.70,800,4,90'
+    'time_s,floor,cx,cy,heat_flux_kw_m2,extinction_coefficient_m_1,co_ppm,visibility_m,temperature_c',
+    '0,3,' + fdsCell.cx + ',' + fdsCell.cy + ',6.5,0.40,350,7.5,88',
+    '0,3,' + fireCell.cx + ',' + fireCell.cy + ',9.0,,,,100',
+    // This later sparse update must retain both t=0 cells and must affect
+    // routing/exposure even though it contains temperature only.
+    '0.5,3,' + temperatureCell.cx + ',' + temperatureCell.cy + ',,,,,500',
+    '30,3,' + fdsCell.cx + ',' + fdsCell.cy + ',3.0,0.20,250,12,45',
+    '60,3,' + fdsCell.cx + ',' + fdsCell.cy + ',8.5,0.70,800,4,90'
   ].join('\\n');
   const fdsFile = new File([fdsText], 'fds_risk_sample.csv', { type: 'text/csv' });
   const transfer = new DataTransfer();
@@ -141,14 +148,145 @@ const result = await evaluate(`(async () => {
   fdsInput.dispatchEvent(new Event('change', { bubbles: true }));
   await sleep(150);
 
+  document.getElementById('btnReset').click();
+  await sleep(80);
+  const fdsAfterActiveReset = {
+    active: state.hazards.fds.active,
+    heatFluxKwM2: floor.grid[fdsCell.cy][fdsCell.cx].heatFluxKwM2,
+    temperatureC: floor.grid[fdsCell.cy][fdsCell.cx].temperatureC,
+    hazardDataSource: floor.grid[fdsCell.cy][fdsCell.cx].hazardDataSource
+  };
+
+  // A failed start temporarily removes the FDS overlay while it rebuilds the
+  // fallback route/fire baseline. The stopped view must receive it back.
+  place('modeErase', cells[cells.length - 1]);
   document.getElementById('btnStart').click();
+  await sleep(80);
+  const fdsAfterFailedStart = {
+    active: state.hazards.fds.active,
+    running: state.sim.running,
+    heatFluxKwM2: floor.grid[fdsCell.cy][fdsCell.cx].heatFluxKwM2,
+    temperatureC: floor.grid[fdsCell.cy][fdsCell.cx].temperatureC,
+    hazardDataSource: floor.grid[fdsCell.cy][fdsCell.cx].hazardDataSource
+  };
+  place('modeExit', cells[cells.length - 1]);
+  document.getElementById('btnStart').click();
+  const fdsAtSuccessfulStart = {
+    heatFluxKwM2: floor.grid[fdsCell.cy][fdsCell.cx].heatFluxKwM2,
+    temperatureC: floor.grid[fdsCell.cy][fdsCell.cx].temperatureC,
+    hazardDataSource: floor.grid[fdsCell.cy][fdsCell.cx].hazardDataSource
+  };
+  const exposedAgent = state.agents[0];
+  exposedAgent.x = temperatureCell.cx;
+  exposedAgent.y = temperatureCell.cy;
+  exposedAgent.cx = temperatureCell.cx;
+  exposedAgent.cy = temperatureCell.cy;
+  exposedAgent.floor = 2;
+  exposedAgent.floorIndex = 2;
+  exposedAgent.evacDelay = 100;
   await sleep(1200);
   document.getElementById('btnViewSplit').click();
   await sleep(350);
 
   const smokeMax = Math.max(...floor.smokeMap.flat());
   const firstAgent = state.agents[0] || null;
+  const agentCountDuring = state.agents.length;
   const renderStats = state.render.renderer3d?.renderOnce() || null;
+  const fdsActive = state.hazards.fds.active;
+  const fdsTarget = floor.grid[fdsCell.cy][fdsCell.cx];
+  const fdsDuring = {
+    heatFluxKwM2: fdsTarget.heatFluxKwM2,
+    temperatureC: fdsTarget.temperatureC,
+    eyeLevelTemperatureC: fdsTarget.eyeLevelTemperatureC,
+    extinctionCoefficientM1: fdsTarget.eyeLevelExtinctionCoefficientM1,
+    coPpm: fdsTarget.eyeLevelCoPpm,
+    hazardDataSource: fdsTarget.hazardDataSource,
+    fireDataSource: fdsTarget.fireDataSource
+  };
+  const fireTarget = floor.grid[fireCell.cy][fireCell.cx];
+  const fireDuring = {
+    heatFluxKwM2: fireTarget.heatFluxKwM2,
+    temperatureC: fireTarget.temperatureC,
+    eyeLevelTemperatureC: fireTarget.eyeLevelTemperatureC,
+    fireDataSource: fireTarget.fireDataSource
+  };
+  const temperatureTarget = floor.grid[temperatureCell.cy][temperatureCell.cx];
+  const temperatureOnlyDuring = {
+    temperatureC: temperatureTarget.temperatureC,
+    eyeLevelTemperatureC: temperatureTarget.eyeLevelTemperatureC,
+    heatFluxKwM2: temperatureTarget.heatFluxKwM2,
+    fireDataSource: temperatureTarget.fireDataSource,
+    temperatureDoseCSeconds: firstAgent?.temperatureDoseCSeconds || 0,
+    heatDose: firstAgent?.heatDose || 0
+  };
+  document.getElementById('btnClearFdsCsv').click();
+  await sleep(80);
+  const fdsAfter = {
+    heatFluxKwM2: fdsTarget.heatFluxKwM2,
+    temperatureC: fdsTarget.temperatureC,
+    eyeLevelTemperatureC: fdsTarget.eyeLevelTemperatureC,
+    extinctionCoefficientM1: fdsTarget.eyeLevelExtinctionCoefficientM1,
+    coPpm: fdsTarget.eyeLevelCoPpm,
+    hazardDataSource: fdsTarget.hazardDataSource,
+    fireDataSource: fdsTarget.fireDataSource
+  };
+  const fireAfter = {
+    heatFluxKwM2: fireTarget.heatFluxKwM2,
+    temperatureC: fireTarget.temperatureC,
+    eyeLevelTemperatureC: fireTarget.eyeLevelTemperatureC,
+    fireDataSource: fireTarget.fireDataSource
+  };
+  const temperatureOnlyAfter = {
+    temperatureC: temperatureTarget.temperatureC,
+    eyeLevelTemperatureC: temperatureTarget.eyeLevelTemperatureC,
+    fireDataSource: temperatureTarget.fireDataSource
+  };
+
+  // Reset must make each manual/Monte-Carlo run start from the same fire age
+  // and must remove cells that were ignited by spread in the preceding run.
+  const spreadCell = cells[15];
+  const spreadTarget = floor.grid[spreadCell.cy][spreadCell.cx];
+  Object.assign(spreadTarget, {
+    fire: true,
+    fireSource: 'spread',
+    fireIntensity: 0.7,
+    fireAgeSec: 22,
+    hrrKw: 900,
+    temperatureC: 300,
+    heatFluxKwM2: 12,
+    heat: 12,
+    walkable: false,
+    wall: false
+  });
+  document.getElementById('btnReset').click();
+  await sleep(80);
+  const resetManual = floor.grid[fireCell.cy][fireCell.cx];
+  const resetSpread = floor.grid[spreadCell.cy][spreadCell.cx];
+  const resetFireState = {
+    manual: {
+      fire: resetManual.fire,
+      fireSource: resetManual.fireSource,
+      fireIntensity: resetManual.fireIntensity,
+      fireAgeSec: resetManual.fireAgeSec,
+      hrrKw: resetManual.hrrKw,
+      temperatureC: resetManual.temperatureC,
+      heatFluxKwM2: resetManual.heatFluxKwM2,
+      walkable: resetManual.walkable,
+      wall: resetManual.wall
+    },
+    spread: {
+      fire: resetSpread.fire,
+      fireSource: resetSpread.fireSource ?? null,
+      fireAgeSec: resetSpread.fireAgeSec,
+      hrrKw: resetSpread.hrrKw,
+      temperatureC: resetSpread.temperatureC,
+      heatFluxKwM2: resetSpread.heatFluxKwM2,
+      walkable: resetSpread.walkable,
+      wall: resetSpread.wall
+    },
+    simTime: state.sim.time,
+    agents: state.agents.length
+  };
   return {
     floorCount: state.map.floorStates.length,
     floorIndex: floor.floorIndex,
@@ -160,15 +298,27 @@ const result = await evaluate(`(async () => {
     spawns: floor.spawns.length,
     exits: floor.exits.length,
     fires: floor.grid.flat().filter(cell => cell.fire).length,
-    fdsActive: state.hazards.fds.active,
-    agents: state.agents.length,
+    fdsActive,
+    fdsAfterActiveReset,
+    fdsAfterFailedStart,
+    fdsAtSuccessfulStart,
+    fdsDuring,
+    fdsAfter,
+    fireDuring,
+    fireAfter,
+    temperatureOnlyDuring,
+    temperatureOnlyAfter,
+    resetFireState,
+    agents: agentCountDuring,
     firstAgent: firstAgent && {
       floorIndex: firstAgent.floorIndex,
       worldX: firstAgent.worldX,
       worldY: firstAgent.worldY,
       worldZ: firstAgent.worldZ,
       behaviorState: firstAgent.behaviorState,
-      type: firstAgent.type
+      type: firstAgent.type,
+      temperatureDoseCSeconds: firstAgent.temperatureDoseCSeconds,
+      heatDose: firstAgent.heatDose
     },
     smokeMax,
     viewMode: state.render.viewMode,
@@ -195,6 +345,69 @@ assert.equal(result.spawns, 1);
 assert.equal(result.exits, 1);
 assert.ok(result.fires >= 1);
 assert.equal(result.fdsActive, true);
+assert.equal(result.fdsAfterActiveReset.active, true);
+assert.equal(result.fdsAfterActiveReset.heatFluxKwM2, 6.5);
+assert.equal(result.fdsAfterActiveReset.temperatureC, 88);
+assert.equal(result.fdsAfterActiveReset.hazardDataSource, 'fds_csv');
+assert.equal(result.fdsAfterFailedStart.active, true);
+assert.equal(result.fdsAfterFailedStart.running, false);
+assert.equal(result.fdsAfterFailedStart.heatFluxKwM2, 6.5);
+assert.equal(result.fdsAfterFailedStart.temperatureC, 88);
+assert.equal(result.fdsAfterFailedStart.hazardDataSource, 'fds_csv');
+assert.equal(result.fdsAtSuccessfulStart.heatFluxKwM2, 6.5);
+assert.equal(result.fdsAtSuccessfulStart.temperatureC, 88);
+assert.equal(result.fdsAtSuccessfulStart.hazardDataSource, 'fds_csv');
+assert.equal(result.fdsDuring.heatFluxKwM2, 6.5);
+assert.equal(result.fdsDuring.temperatureC, 88);
+assert.equal(result.fdsDuring.eyeLevelTemperatureC, 88);
+assert.equal(result.fdsDuring.extinctionCoefficientM1, 0.4);
+assert.equal(result.fdsDuring.coPpm, 350);
+assert.equal(result.fdsDuring.hazardDataSource, 'fds_csv');
+assert.equal(result.fdsDuring.fireDataSource, 'fds_csv');
+assert.equal(result.fdsAfter.heatFluxKwM2, 0);
+assert.equal(result.fdsAfter.temperatureC, 20);
+assert.notEqual(result.fdsAfter.eyeLevelTemperatureC, 88);
+assert.equal(result.fdsAfter.extinctionCoefficientM1, 0);
+assert.equal(result.fdsAfter.coPpm, 0);
+assert.notEqual(result.fdsAfter.hazardDataSource, 'fds_csv');
+assert.notEqual(result.fdsAfter.fireDataSource, 'fds_csv');
+assert.equal(result.fireDuring.heatFluxKwM2, 9);
+assert.equal(result.fireDuring.temperatureC, 100);
+assert.equal(result.fireDuring.eyeLevelTemperatureC, 100);
+assert.equal(result.fireDuring.fireDataSource, 'fds_csv');
+assert.ok(result.fireAfter.heatFluxKwM2 > 0);
+assert.ok(result.fireAfter.heatFluxKwM2 < 9);
+assert.notEqual(result.fireAfter.temperatureC, 100);
+assert.notEqual(result.fireAfter.eyeLevelTemperatureC, 100);
+assert.equal(result.fireAfter.fireDataSource, 'fallback_t2');
+assert.equal(result.temperatureOnlyDuring.temperatureC, 500);
+assert.equal(result.temperatureOnlyDuring.eyeLevelTemperatureC, 500);
+assert.equal(result.temperatureOnlyDuring.heatFluxKwM2, 0);
+assert.equal(result.temperatureOnlyDuring.fireDataSource, 'fds_csv');
+assert.ok(result.temperatureOnlyDuring.temperatureDoseCSeconds > 0);
+assert.ok(result.temperatureOnlyDuring.heatDose > 0);
+assert.equal(result.temperatureOnlyAfter.temperatureC, 20);
+assert.notEqual(result.temperatureOnlyAfter.eyeLevelTemperatureC, 500);
+assert.notEqual(result.temperatureOnlyAfter.fireDataSource, 'fds_csv');
+assert.equal(result.resetFireState.manual.fire, true);
+assert.equal(result.resetFireState.manual.fireSource, 'manual');
+assert.equal(result.resetFireState.manual.fireIntensity, 0.05);
+assert.equal(result.resetFireState.manual.fireAgeSec, 0);
+assert.equal(result.resetFireState.manual.hrrKw, 0);
+assert.equal(result.resetFireState.manual.temperatureC, 20);
+assert.equal(result.resetFireState.manual.heatFluxKwM2, 0);
+assert.equal(result.resetFireState.manual.walkable, false);
+assert.equal(result.resetFireState.manual.wall, false);
+assert.equal(result.resetFireState.spread.fire, false);
+assert.equal(result.resetFireState.spread.fireSource, null);
+assert.equal(result.resetFireState.spread.fireAgeSec, 0);
+assert.equal(result.resetFireState.spread.hrrKw, 0);
+assert.equal(result.resetFireState.spread.temperatureC, 20);
+assert.equal(result.resetFireState.spread.heatFluxKwM2, 0);
+assert.equal(result.resetFireState.spread.walkable, true);
+assert.equal(result.resetFireState.spread.wall, false);
+assert.equal(result.resetFireState.simTime, 0);
+assert.equal(result.resetFireState.agents, 0);
 assert.ok(result.agents > 0);
 assert.equal(result.firstAgent.floorIndex, 2);
 assert.ok(Number.isFinite(result.firstAgent.worldX));
@@ -408,7 +621,10 @@ const multiFloor = await evaluate(`(async () => {
   document.getElementById('btnStart').click();
   lower.smokeMap[endpoint.cy][endpoint.cx] = 3;
   lower.grid[endpoint.cy][endpoint.cx].smokeDensity = 3;
-  await sleep(5200);
+  for (let i = 0; i < 90; i++) {
+    if (state.agents.length === 3 && state.agents.every(agent => agent.finished)) break;
+    await sleep(100);
+  }
   const congestion = state.sim.stairCongestion[0] || null;
   return {
     links: state.map.stairLinks.length,
@@ -432,6 +648,7 @@ assert.equal(multiFloor.link.congestionCapacity, 1);
 assert.equal(multiFloor.congestion.completed, 3);
 assert.ok(multiFloor.congestion.maxQueue >= 2);
 assert.deepEqual(errors, []);
-assert.deepEqual(dialogs, []);
+assert.equal(dialogs.length, 1);
+assert.match(dialogs[0], /開始位置と出口/);
 
 socket.close();

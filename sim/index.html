@@ -48,7 +48,7 @@
       </div>
       <div id="fdsCsvStatus" class="hint">
         未読込。列:
-        time_s,floor,cx,cy,heat_flux_kw_m2,optical_density_m_1,co_ppm,visibility_m,temperature_c
+        time_s,floor,cx,cy,heat_flux_kw_m2,extinction_coefficient_m_1,co_ppm,visibility_m,temperature_c
       </div>
       <div class="hint">
         FDS等のCFD結果をCSV化して読み込むと、熱流束・煙濃度・CO濃度・視界距離を経路選択と危険度へ反映します。
@@ -60,33 +60,55 @@
           <option value="none" selected>通常</option>
           <option value="total">総合火災危険度</option>
           <option value="heat_flux">Heat Flux</option>
-          <option value="optical_density">Optical Density</option>
+          <option value="optical_density">減光係数 K</option>
           <option value="co">CO濃度</option>
           <option value="visibility">視界距離</option>
         </select>
       </div>
       <div class="row">
-        <label>煙発生量</label>
-        <input type="number" id="smokeSourceRate" min="0" max="20" step="0.1" value="3.8">
+        <label for="smokeSourceRate">発煙源倍率 [-]</label>
+        <input type="number" id="smokeSourceRate" min="0" max="5" step="0.05" value="1">
       </div>
       <div class="row">
-        <label>煙拡散速度</label>
-        <input type="number" id="smokeDiffusionRate" min="0" max="20" step="0.1" value="2.8">
+        <label for="smokeDiffusionRate">乱流拡散係数 D [m²/s]</label>
+        <input type="number" id="smokeDiffusionRate" min="0" max="2" step="0.01" value="0.06">
       </div>
       <div class="row">
-        <label>煙分岐混合</label>
-        <input type="number" id="smokeSpreadMix" min="0.1" max="1.2" step="0.05" value="0.65">
+        <label for="smokeSpreadMix">天井ジェット倍率 [-]</label>
+        <input type="number" id="smokeSpreadMix" min="0.05" max="2" step="0.05" value="1">
       </div>
       <div class="row">
-        <label>斜め回り込み</label>
-        <input type="number" id="smokeDiagonalMix" min="0" max="0.8" step="0.05" value="0.25">
+        <label for="smokeDiagonalMix">隅角部混合係数 [-]</label>
+        <input type="number" id="smokeDiagonalMix" min="0" max="1" step="0.05" value="0.15">
       </div>
       <div class="row">
-        <label>煙自然減衰</label>
-        <input type="number" id="smokeDecayRate" min="0" max="0.2" step="0.001" value="0.006">
+        <label for="smokeDecayRate">一様漏気率 [1/s]</label>
+        <input type="number" id="smokeDecayRate" min="0" max="0.2" step="0.001" value="0">
+      </div>
+      <div class="row">
+        <label for="smokeSootYield">すす収率 [kg/kg]</label>
+        <input type="number" id="smokeSootYield" min="0" max="0.2" step="0.001" value="0.015">
+      </div>
+      <div class="row">
+        <label for="smokeCoYield">CO収率 [kg/kg]</label>
+        <input type="number" id="smokeCoYield" min="0" max="0.2" step="0.001" value="0.008">
+      </div>
+      <div class="row">
+        <label for="smokeHeatOfCombustion">燃焼熱 [kJ/kg]</label>
+        <input type="number" id="smokeHeatOfCombustion" min="1000" max="100000" step="500" value="44500">
+      </div>
+      <div class="row">
+        <label for="smokeExitVent">黄色出口を開放換気口にする</label>
+        <input type="checkbox" id="smokeExitVent">
       </div>
       <div class="hint">
-        T字・曲がり角で煙が止まる場合は、煙分岐混合と斜め回り込みを少し上げてください。
+        すす収率 0.015、CO収率 0.008、燃焼熱 44,500 kJ/kg は n-ヘプタンのデモシナリオ値です。実際の燃料・燃焼条件に対応する根拠ある値を入力してください。
+      </div>
+      <div class="hint">
+        黄色出口は通常、避難先を示すだけです。外気へ常時開放された開口を表す場合に限り、開放換気口を有効にしてください。
+      </div>
+      <div class="hint">
+        このフォールバックはFDS/CFASTを参考にした低次元モデルであり、CFDではありません。詳細な火災安全評価では、より高忠実度のFDS CSVを優先してください。
       </div>
     </div>
     <div class="block">

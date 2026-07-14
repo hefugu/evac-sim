@@ -16,7 +16,12 @@ import {
   stepFire3D,
   applyFire3DResultToLegacyFloors
 } from "./fire3d.js";
-import { transferLegacySmokeThroughStairs } from "./smoke3d.js";
+import {
+  clearLegacySmokePhysicsCell,
+  markLegacySmokeCellForDerivation,
+  resetLegacySmokePhysicsState,
+  stepLegacySmokePhysicsInPlace
+} from "./smoke3d.js";
 import {
   createStairTrafficState,
   enqueueStairTransition,
@@ -97,6 +102,10 @@ export function initSimulation() {
   const smokeSpreadMixInput = ui.smokeSpreadMixInput;
   const smokeDiagonalMixInput = ui.smokeDiagonalMixInput;
   const smokeDecayRateInput = ui.smokeDecayRateInput;
+  const smokeSootYieldInput = ui.smokeSootYieldInput;
+  const smokeCoYieldInput = ui.smokeCoYieldInput;
+  const smokeHeatOfCombustionInput = ui.smokeHeatOfCombustionInput;
+  const smokeExitVentInput = ui.smokeExitVentInput;
   const stairTypeInput = ui.stairTypeInput;
   const stairTravelCostInput = ui.stairTravelCostInput;
   const stairSmokeTransferInput = ui.stairSmokeTransferInput;
@@ -206,6 +215,12 @@ export function initSimulation() {
   let lastFireStepAt = 0;
   let activeFireCount = 0;
   let totalFireHrrKw = 0;
+  let simulationAccumulatorSec = 0;
+  let smokeAccumulatorSec = 0;
+  const SMOKE_FIXED_STEP_SEC = 0.1;
+  const MAX_SMOKE_WORK_PER_FRAME_SEC = 0.5;
+  const MAX_SIMULATION_ADVANCE_PER_FRAME_SEC = 0.5;
+  const MAX_SIMULATION_SUBSTEP_SEC = 0.1;
   const PRESET_STORAGE_KEY = "evac_presets_v1";
 
   let smokeMap = null; 
@@ -217,7 +232,12 @@ export function initSimulation() {
     frames: [],
     times: [],
     stats: null
-  }; 
+  };
+  let lastAppliedFdsFrameTime = null;
+  const lastAppliedFdsCells = new Map();
+  let cachedFdsDataset = null;
+  let cachedFdsQueryTime = null;
+  let cachedFdsFrame = null;
   const FAR_FIRST_MAX_DELAY_SEC = 8.0;
   const MAX_OCCUPANCY_PER_CELL = 2;
   const DENSITY_RADIUS = 1;
@@ -249,10 +269,13 @@ export function initSimulation() {
   const FDS_CO_HARD_PPM = 1200;
   const FDS_OPTICAL_DENSITY_SOFT = 0.15;
   const FDS_OPTICAL_DENSITY_HARD = 1.0;
+  const FDS_TEMPERATURE_SOFT_C = 60;
+  const FDS_TEMPERATURE_HARD_C = 120;
   const FDS_ROUTE_HEAT_WEIGHT = 13.0;
   const FDS_ROUTE_OD_WEIGHT = 18.0;
   const FDS_ROUTE_CO_WEIGHT = 0.035;
   const FDS_ROUTE_VISIBILITY_WEIGHT = 18.0;
+  const FDS_ROUTE_TEMPERATURE_WEIGHT = 0.4;
   const CO_DOSE_FATAL_PPM_MIN = 30000;
   const HEAT_FLUX_DOSE_FATAL = 120;
   const T2_FIRE_ALPHA = 0.0469; // medium t-squared fire growth, kW/s^2
@@ -275,8 +298,6 @@ export function initSimulation() {
   const LETHAL_SMOKE_LEVEL = 2.7;
   const FIRE_LETHAL_RADIUS = 1.1;
   const FIRE_DANGER_RADIUS = 3.0;
-  const BUOYANCY_PER_SEC = 0.55;
-  const VENT_DECAY_BONUS = 0.08;
   const FALL_SMOKE_THRESHOLD = 0.9;
   const FALL_RATE_PER_SEC = 0.015;
   const HELPERS_NEEDED = 2;
@@ -1065,16 +1086,30 @@ export function initSimulation() {
       const cy = Math.floor(csvNumber(row, ["cy", "cell_y", "grid_y", "y"], NaN));
       if (!Number.isFinite(cx) || !Number.isFinite(cy)) continue;
 
+      const extinctionCoefficient = csvNumber(row, [
+        "extinction_coefficient_m_1", "extinction_coefficient", "k_m_1"
+      ], NaN);
+      const base10OpticalDensityPerMeter = csvNumber(row, [
+        "optical_density_base10_m_1", "od_base10_m_1"
+      ], NaN);
+      const legacyOpticalDensityM1 = csvNumber(row, ["optical_density_m_1"], NaN);
       const record = {
         floor,
         cx,
         cy,
-        heatFluxKwM2: csvNumber(row, ["heat_flux_kw_m2", "heat_flux", "q_rad", "q_total", "flux_kw_m2"], 0),
-        opticalDensityM1: csvNumber(row, ["optical_density_m_1", "optical_density", "od", "extinction_coefficient", "k_m_1"], 0),
-        coPpm: csvNumber(row, ["co_ppm", "carbon_monoxide_ppm", "co"], 0),
+        heatFluxKwM2: csvNumber(row, ["heat_flux_kw_m2", "heat_flux", "q_rad", "q_total", "flux_kw_m2"], NaN),
+        opticalDensityM1: Number.isFinite(extinctionCoefficient)
+          ? extinctionCoefficient
+          : (Number.isFinite(base10OpticalDensityPerMeter)
+              ? base10OpticalDensityPerMeter * Math.LN10
+              : legacyOpticalDensityM1),
+        coPpm: csvNumber(row, ["co_ppm", "carbon_monoxide_ppm", "co"], NaN),
         visibilityM: csvNumber(row, ["visibility_m", "visibility", "vis_m"], NaN),
         temperatureC: csvNumber(row, ["temperature_c", "temp_c", "temperature"], NaN)
       };
+
+      if (![record.heatFluxKwM2, record.opticalDensityM1, record.coPpm,
+        record.visibilityM, record.temperatureC].some(Number.isFinite)) continue;
 
       if (!frames.has(time)) frames.set(time, new Map());
       frames.get(time).set(`${floor}:${cx}:${cy}`, record);
@@ -1084,13 +1119,40 @@ export function initSimulation() {
     const times = [...frames.keys()].sort((a, b) => a - b);
     if (!times.length || rows === 0) throw new Error("有効なFDS行がありません。");
 
+    // Treat CSV rows as time-stamped updates. A sparse sensor/export file often
+    // omits unchanged cells and fields; sample-and-hold them causally until a
+    // later row explicitly supplies a replacement (including an explicit 0).
+    const heldCells = new Map();
+    const heldFrames = times.map(time => {
+      frames.get(time).forEach((record, key) => {
+        const previous = heldCells.get(key);
+        const merged = previous
+          ? { ...previous, floor: record.floor, cx: record.cx, cy: record.cy }
+          : { ...record };
+        [
+          "heatFluxKwM2", "opticalDensityM1", "coPpm", "visibilityM", "temperatureC"
+        ].forEach(field => {
+          if (Number.isFinite(record[field])) merged[field] = record[field];
+        });
+        heldCells.set(key, merged);
+      });
+      return { time, cells: new Map(heldCells) };
+    });
+
     const parsed = {
       active: true,
       name: fileName,
       rows,
       times,
-      frames: times.map(time => ({ time, cells: frames.get(time) }))
+      frames: heldFrames
     };
+    parsed.warnings = [];
+    if (headers.includes("optical_density_m_1")) {
+      parsed.warnings.push(
+        "optical_density_m_1 は旧互換として自然対数の減光係数 K [1/m] と解釈しました。" +
+        "base-10値は optical_density_base10_m_1 を使用してください。"
+      );
+    }
     parsed.stats = summarizeFdsRiskCsv(parsed);
     return parsed;
   }
@@ -1108,9 +1170,13 @@ export function initSimulation() {
     if (!risk?.frames?.length) return stats;
     risk.frames.forEach(frame => {
       frame.cells.forEach(rec => {
-        stats.maxHeatFluxKwM2 = Math.max(stats.maxHeatFluxKwM2, rec.heatFluxKwM2 || 0);
-        stats.maxOpticalDensityM1 = Math.max(stats.maxOpticalDensityM1, rec.opticalDensityM1 || 0);
-        stats.maxCoPpm = Math.max(stats.maxCoPpm, rec.coPpm || 0);
+        if (Number.isFinite(rec.heatFluxKwM2)) {
+          stats.maxHeatFluxKwM2 = Math.max(stats.maxHeatFluxKwM2, rec.heatFluxKwM2);
+        }
+        if (Number.isFinite(rec.opticalDensityM1)) {
+          stats.maxOpticalDensityM1 = Math.max(stats.maxOpticalDensityM1, rec.opticalDensityM1);
+        }
+        if (Number.isFinite(rec.coPpm)) stats.maxCoPpm = Math.max(stats.maxCoPpm, rec.coPpm);
         if (Number.isFinite(rec.visibilityM)) stats.minVisibilityM = Math.min(stats.minVisibilityM, rec.visibilityM);
         if (Number.isFinite(rec.temperatureC)) stats.maxTemperatureC = Math.max(stats.maxTemperatureC, rec.temperatureC);
       });
@@ -1127,7 +1193,7 @@ export function initSimulation() {
     return (
       `FDS統計: rows=${stats.rows}, times=${stats.timeCount}, ` +
       `max HeatFlux=${stats.maxHeatFluxKwM2.toFixed(1)}kW/m², ` +
-      `max OD=${stats.maxOpticalDensityM1.toFixed(2)}1/m, ` +
+      `max K=${stats.maxOpticalDensityM1.toFixed(2)}1/m, ` +
       `max CO=${stats.maxCoPpm.toFixed(0)}ppm, ` +
       `min Visibility=${vis}, max Temp=${temp}`
     );
@@ -1135,17 +1201,29 @@ export function initSimulation() {
 
   function getNearestFdsFrame(time) {
     if (!importedFdsRisk.active || !importedFdsRisk.frames.length) return null;
-    let best = importedFdsRisk.frames[0];
-    let bestDt = Math.abs((best.time || 0) - time);
-    for (let i = 1; i < importedFdsRisk.frames.length; i++) {
-      const frame = importedFdsRisk.frames[i];
-      const dt = Math.abs((frame.time || 0) - time);
-      if (dt < bestDt) {
-        best = frame;
-        bestDt = dt;
+    // Sample-and-hold is causal: a future FDS frame must never leak into the
+    // current evacuation time merely because it is numerically closer.
+    const target = Math.max(0, Number(time) || 0);
+    if (cachedFdsDataset === importedFdsRisk && cachedFdsQueryTime === target) {
+      return cachedFdsFrame;
+    }
+    let low = 0;
+    let high = importedFdsRisk.frames.length - 1;
+    let bestIndex = -1;
+    while (low <= high) {
+      const middle = (low + high) >> 1;
+      const frameTime = Number(importedFdsRisk.frames[middle].time) || 0;
+      if (frameTime <= target + 1e-9) {
+        bestIndex = middle;
+        low = middle + 1;
+      } else {
+        high = middle - 1;
       }
     }
-    return best;
+    cachedFdsDataset = importedFdsRisk;
+    cachedFdsQueryTime = target;
+    cachedFdsFrame = bestIndex >= 0 ? importedFdsRisk.frames[bestIndex] : null;
+    return cachedFdsFrame;
   }
 
   function getFdsRiskAt(floor, cx, cy, time = simTime) {
@@ -1154,44 +1232,256 @@ export function initSimulation() {
     return frame.cells.get(`${Math.max(0, floor)}:${cx}:${cy}`) || null;
   }
 
+  function restoreLastAppliedFdsCells() {
+    if (!lastAppliedFdsCells.size) {
+      lastAppliedFdsFrameTime = null;
+      return 0;
+    }
+    // Restore non-smoke baseline values before asking the reduced-order model
+    // to redraw its underlying smoke fields. In particular, a temperature-only
+    // FDS record does not carry smokeDataSource="fds_csv", so waiting for the
+    // smoke derivation to clear eyeLevelTemperatureC would leave a stale value.
+    lastAppliedFdsCells.forEach(entry => {
+      const record = entry.record;
+      const cell = floorStates[record.floor]?.grid?.[record.cy]?.[record.cx];
+      if (!cell) return;
+      const baseline = entry.baseline || {};
+      cell.heatFluxKwM2 = Math.max(0, Number(baseline.heatFluxKwM2) || 0);
+      cell.heat = Math.max(0, Number(baseline.heat) || 0);
+      cell.temperatureC = Number.isFinite(baseline.temperatureC)
+        ? baseline.temperatureC
+        : 20;
+      if (baseline.hasEyeLevelTemperatureC) {
+        cell.eyeLevelTemperatureC = baseline.eyeLevelTemperatureC;
+      } else {
+        delete cell.eyeLevelTemperatureC;
+      }
+      if (baseline.hasFireDataSource) cell.fireDataSource = baseline.fireDataSource;
+      else delete cell.fireDataSource;
+    });
+
+    let queued = 0;
+    lastAppliedFdsCells.forEach(entry => {
+      const record = entry.record;
+      const floor = floorStates[record.floor];
+      if (markLegacySmokeCellForDerivation(floor, record.cx, record.cy)) queued++;
+    });
+    if (queued > 0) {
+      stepLegacySmokePhysicsInPlace(
+        floorStates,
+        stairLinks,
+        0,
+        currentSmokeModelOptions(simTime)
+      );
+    }
+    lastAppliedFdsCells.forEach(entry => {
+      const record = entry.record;
+      const floor = floorStates[record.floor];
+      const cell = floorStates[record.floor]?.grid?.[record.cy]?.[record.cx];
+      if (!cell) return;
+      const baseline = entry.baseline || {};
+      const hasPhysicalSmoke = Math.max(
+        0,
+        Number(floor?.smokeMap?.[record.cy]?.[record.cx]) || 0,
+        Number(cell.smokeLayerDepthMeters) || 0
+      ) > 0;
+      if (!hasPhysicalSmoke) {
+        if (baseline.hasHazardDataSource) cell.hazardDataSource = baseline.hazardDataSource;
+        else delete cell.hazardDataSource;
+        if (baseline.hasSmokeDataSource) cell.smokeDataSource = baseline.smokeDataSource;
+        else delete cell.smokeDataSource;
+      } else {
+        if (cell.hazardDataSource === "fds_csv") cell.hazardDataSource = "reduced_order_nist";
+        if (cell.smokeDataSource === "fds_csv") cell.smokeDataSource = "reduced_order_nist";
+      }
+    });
+    lastAppliedFdsCells.clear();
+    lastAppliedFdsFrameTime = null;
+    return queued;
+  }
+
   function applyCurrentFdsToSharedHazards(time = simTime) {
     const frame = getNearestFdsFrame(time);
-    if (!frame?.cells) return 0;
+    if (!frame?.cells) {
+      restoreLastAppliedFdsCells();
+      return 0;
+    }
+    if (lastAppliedFdsFrameTime != null && frame.time !== lastAppliedFdsFrameTime) {
+      restoreLastAppliedFdsCells();
+    }
     let applied = 0;
     frame.cells.forEach(record => {
       const floor = floorStates[record.floor];
       const cell = floor?.grid?.[record.cy]?.[record.cx];
       if (!cell) return;
-      const opticalDensity = Math.max(0, Number(record.opticalDensityM1) || 0);
-      const smokeDensity = opticalDensity > 0 ? opticalDensity / 0.32 : (floor.smokeMap?.[record.cy]?.[record.cx] || 0);
-      const coPpm = Math.max(0, Number(record.coPpm) || 0);
+      const fdsKey = `${record.floor}:${record.cx}:${record.cy}`;
+      let overlayEntry = lastAppliedFdsCells.get(fdsKey);
+      if (!overlayEntry) {
+        overlayEntry = {
+          record,
+          baseline: {
+            heatFluxKwM2: Math.max(0, Number(cell.heatFluxKwM2) || 0),
+            heat: Math.max(0, Number(cell.heat) || 0),
+            temperatureC: Number.isFinite(Number(cell.temperatureC))
+              ? Number(cell.temperatureC)
+              : 20,
+            hasEyeLevelTemperatureC: Object.prototype.hasOwnProperty.call(
+              cell,
+              "eyeLevelTemperatureC"
+            ),
+            eyeLevelTemperatureC: Number.isFinite(Number(cell.eyeLevelTemperatureC))
+              ? Number(cell.eyeLevelTemperatureC)
+              : 20,
+            hasFireDataSource: Object.prototype.hasOwnProperty.call(cell, "fireDataSource"),
+            fireDataSource: cell.fireDataSource,
+            hasHazardDataSource: Object.prototype.hasOwnProperty.call(cell, "hazardDataSource"),
+            hazardDataSource: cell.hazardDataSource,
+            hasSmokeDataSource: Object.prototype.hasOwnProperty.call(cell, "smokeDataSource"),
+            smokeDataSource: cell.smokeDataSource
+          }
+        };
+      }
+      overlayEntry.record = record;
+      const hasExtinction = Number.isFinite(record.opticalDensityM1);
+      const hasCo = Number.isFinite(record.coPpm);
+      const hasHeatFlux = Number.isFinite(record.heatFluxKwM2);
+      const hasTemperature = Number.isFinite(record.temperatureC);
+      const opticalDensity = hasExtinction
+        ? Math.max(0, record.opticalDensityM1)
+        : Math.max(0, Number(
+          cell.eyeLevelExtinctionCoefficientM1 ?? cell.extinctionCoefficientM1 ??
+          cell.opticalDensityM1 ?? cell.opticalDensity
+        ) || 0);
+      const smokeDensity = hasExtinction
+        ? opticalDensity * 3.125
+        : Math.max(0, Number(cell.eyeLevelSmokeDensity ?? cell.smokeDensity) || 0);
+      const coPpm = hasCo
+        ? Math.max(0, record.coPpm)
+        : Math.max(0, Number(cell.eyeLevelCoPpm ?? cell.coPpm) || 0);
       const visibilityMeters = Number.isFinite(record.visibilityM)
         ? Math.max(0, record.visibilityM)
-        : (opticalDensity > 0.001 ? Math.min(30, 3 / opticalDensity) : 30);
-      if (floor.smokeMap?.[record.cy]) floor.smokeMap[record.cy][record.cx] = smokeDensity;
-      Object.assign(cell, {
-        smokeDensity,
-        smoke: smokeDensity,
-        opticalDensity,
-        opticalDensityM1: opticalDensity,
-        coPpm,
-        co: coPpm,
-        visibilityMeters,
-        visibilityM: visibilityMeters,
-        visibility: clamp(visibilityMeters / 30, 0, 1),
-        heatFluxKwM2: Math.max(0, Number(record.heatFluxKwM2) || 0),
-        heat: Math.max(0, Number(record.heatFluxKwM2) || 0),
-        temperatureC: Number.isFinite(record.temperatureC) ? record.temperatureC : (cell.temperatureC || 20),
-        hazardDataSource: "fds_csv"
-      });
+        : (hasExtinction
+          ? (opticalDensity > 0.001 ? Math.min(30, 3 / opticalDensity) : 30)
+          : Math.max(0, Number(cell.visibilityMeters ?? cell.visibilityM) || 30));
+      const fields = { hazardDataSource: "fds_csv" };
+      if (hasExtinction) {
+        if (floor.smokeMap?.[record.cy]) floor.smokeMap[record.cy][record.cx] = smokeDensity;
+        Object.assign(fields, {
+          smokeDensity,
+          eyeLevelSmokeDensity: smokeDensity,
+          smoke: smokeDensity,
+          extinctionCoefficientM1: opticalDensity,
+          upperLayerExtinctionCoefficientM1: opticalDensity,
+          eyeLevelExtinctionCoefficientM1: opticalDensity,
+          opticalDensity,
+          opticalDensityM1: opticalDensity,
+          opticalDensityBase10M1: opticalDensity / Math.LN10
+        });
+      }
+      if (hasCo) {
+        Object.assign(fields, {
+          coPpm,
+          upperLayerCoPpm: coPpm,
+          eyeLevelCoPpm: coPpm,
+          co: coPpm
+        });
+      }
+      if (Number.isFinite(record.visibilityM) || hasExtinction) {
+        Object.assign(fields, {
+          visibilityMeters,
+          upperLayerVisibilityMeters: visibilityMeters,
+          visibilityM: visibilityMeters,
+          visibility: clamp(visibilityMeters / 30, 0, 1)
+        });
+      }
+      if (hasHeatFlux) {
+        fields.heatFluxKwM2 = Math.max(0, record.heatFluxKwM2);
+        fields.heat = Math.max(0, record.heatFluxKwM2);
+      }
+      if (hasTemperature) {
+        fields.temperatureC = record.temperatureC;
+        fields.eyeLevelTemperatureC = record.temperatureC;
+      }
+      if (hasHeatFlux || hasTemperature) fields.fireDataSource = "fds_csv";
+      if (hasExtinction || hasCo || Number.isFinite(record.visibilityM)) {
+        fields.smokeDataSource = "fds_csv";
+      }
+      Object.assign(cell, fields);
+      lastAppliedFdsCells.set(fdsKey, overlayEntry);
       applied++;
     });
+    lastAppliedFdsFrameTime = frame.time;
     return applied;
   }
 
   function t2FireHrrKw(timeSec) {
     const t = Math.max(0, Number(timeSec) || 0);
     return Math.min(T2_FIRE_MAX_HRR_KW, T2_FIRE_ALPHA * t * t);
+  }
+
+  function currentSmokeModelOptions(timeSec = simTime) {
+    return {
+      timeSec,
+      floorHeightMeters: state.spatial.floorHeightMeters || 3.5,
+      sourceMultiplier: Math.max(0, parseNum(smokeSourceRateInput, 1)),
+      turbulentDiffusivityM2Sec: Math.max(0, parseNum(smokeDiffusionRateInput, 0.06)),
+      ceilingJetVelocityMultiplier: clamp(parseNum(smokeSpreadMixInput, 1), 0.05, 2),
+      diagonalMix: clamp(parseNum(smokeDiagonalMixInput, 0.15), 0, 1),
+      leakageRatePerSec: Math.max(0, parseNum(smokeDecayRateInput, 0)),
+      sootYieldKgPerKg: Math.max(0, parseNum(smokeSootYieldInput, 0.015)),
+      coYieldKgPerKg: Math.max(0, parseNum(smokeCoYieldInput, 0.008)),
+      heatOfCombustionKJPerKg: Math.max(1, parseNum(smokeHeatOfCombustionInput, 44500)),
+      exitActsAsOpenVent: !!smokeExitVentInput?.checked
+    };
+  }
+
+  function reducedSmokeMetricsAt(floorIndex, cx, cy) {
+    const floor = floorStates[floorIndex];
+    const cell = floor?.grid?.[cy]?.[cx];
+    const legacyDensity = Math.max(0, Number(floor?.smokeMap?.[cy]?.[cx]) || 0);
+    const eyeLevelSmokeDensity = Math.max(0, Number(
+      cell?.eyeLevelSmokeDensity ?? cell?.smokeDensity ?? legacyDensity
+    ) || 0);
+    const rawExtinction = Number(
+      cell?.eyeLevelExtinctionCoefficientM1 ?? cell?.extinctionCoefficientM1 ??
+      cell?.opticalDensityM1 ?? cell?.opticalDensity
+    );
+    const extinctionCoefficientM1 = Number.isFinite(rawExtinction)
+      ? Math.max(0, rawExtinction)
+      : eyeLevelSmokeDensity / 3.125;
+    const rawCoPpm = Number(
+      cell?.eyeLevelCoPpm ?? cell?.coPpm ?? cell?.co
+    );
+    const coPpm = Number.isFinite(rawCoPpm)
+      ? Math.max(0, rawCoPpm)
+      : eyeLevelSmokeDensity * 260;
+    const visibilityM = Number.isFinite(cell?.visibilityMeters ?? cell?.visibilityM)
+      ? Math.max(0, Number(cell.visibilityMeters ?? cell.visibilityM))
+      : (extinctionCoefficientM1 > 0.001
+        ? Math.min(30, 3 / extinctionCoefficientM1)
+        : 30);
+    const temperatureC = Number(
+      cell?.eyeLevelTemperatureC ?? cell?.temperatureC ?? 20
+    );
+    return {
+      eyeLevelSmokeDensity,
+      extinctionCoefficientM1,
+      coPpm,
+      visibilityM,
+      temperatureC: Number.isFinite(temperatureC) ? temperatureC : 20,
+      source: cell?.smokeDataSource || "reduced_order_nist"
+    };
+  }
+
+  function mergeFdsRiskRecord(fallback, record) {
+    if (!record) return fallback;
+    const merged = { ...fallback, source: "fds_csv" };
+    for (const field of [
+      "heatFluxKwM2", "opticalDensityM1", "coPpm", "visibilityM", "temperatureC"
+    ]) {
+      if (Number.isFinite(record[field])) merged[field] = record[field];
+    }
+    return merged;
   }
 
   // ==== Map Loading and Grid Build ====
@@ -1262,12 +1552,18 @@ export function initSimulation() {
 
     try {
       const text = await file.text();
-      importedFdsRisk = parseFdsRiskCsv(text, file.name);
+      const parsedFdsRisk = parseFdsRiskCsv(text, file.name);
+      restoreLastAppliedFdsCells();
+      importedFdsRisk = parsedFdsRisk;
+      applyCurrentFdsToSharedHazards(simTime);
+      syncPublicState();
+      drawScene();
       const msg = `FDS CSV読込: ${file.name} / ${importedFdsRisk.rows}行 / ${importedFdsRisk.times.length}時刻`;
       if (fdsCsvStatus) fdsCsvStatus.textContent = msg;
       if (fdsCsvStats) fdsCsvStats.textContent = formatFdsStats(importedFdsRisk.stats);
       log(msg);
       log(formatFdsStats(importedFdsRisk.stats));
+      importedFdsRisk.warnings?.forEach(warning => log(`FDS CSV注意: ${warning}`));
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       alert(`FDS CSVの読込に失敗しました: ${reason}`);
@@ -1278,8 +1574,17 @@ export function initSimulation() {
 
   btnClearFdsCsv?.addEventListener("click", () => {
     importedFdsRisk = { active: false, name: null, rows: 0, frames: [], times: [], stats: null };
+    // Restore exactly the externally overlaid cells before removing their FDS
+    // tags, so imported density cannot be re-ingested as physical smoke.
+    restoreLastAppliedFdsCells();
+    floorStates.forEach(floor => floor?.grid?.forEach(row => row?.forEach(cell => {
+      if (cell?.hazardDataSource === "fds_csv") cell.hazardDataSource = "reduced_order_nist";
+      if (cell?.smokeDataSource === "fds_csv") cell.smokeDataSource = "reduced_order_nist";
+    })));
+    syncPublicState();
+    drawScene();
     if (fdsCsvStatus) {
-      fdsCsvStatus.textContent = "未読込。FDS/CFD値は使わず、簡易t²火災フォールバックを使います。";
+      fdsCsvStatus.textContent = "未読込。FDS値は使わず、研究式ベースの軽量煙モデルを使います。";
     }
     if (fdsCsvStats) fdsCsvStats.textContent = "FDS統計: 未読込";
     log("FDS CSVを解除しました。");
@@ -1367,6 +1672,7 @@ export function initSimulation() {
     fs.heatmap = makeScalarGrid(0);
     fs.smokeMap = makeScalarGrid(0);
     fs.smokeCeil = makeScalarGrid(false);
+    resetLegacySmokePhysicsState(fs, { clearDerivedFields: true });
     fs.flowField = makeFlowGrid();
     fs.potentialByExit = [];
     fs.combinedPotential = null;
@@ -1554,8 +1860,11 @@ export function initSimulation() {
       }
     } else if (mode === "fire") {
       cellObj.fire = true;
-      cellObj.fireIntensity = Math.max(0.05, Number(cellObj.fireIntensity) || 0);
+      cellObj.fireSource = "manual";
+      cellObj.fireInitialIntensity = Math.max(0.05, Number(cellObj.fireInitialIntensity) || 0);
+      cellObj.fireIntensity = cellObj.fireInitialIntensity;
       cellObj.fireAgeSec = 0;
+      cellObj.hrrKw = 0;
       cellObj.temperatureC = Math.max(20, Number(cellObj.temperatureC) || 20);
       cellObj.heatFluxKwM2 = Math.max(0, Number(cellObj.heatFluxKwM2) || 0);
       cellObj.stair = false;
@@ -1576,16 +1885,22 @@ export function initSimulation() {
       cellObj.fire = false;
       cellObj.fireIntensity = 0;
       cellObj.fireAgeSec = 0;
+      cellObj.hrrKw = 0;
       cellObj.temperatureC = 20;
       cellObj.heatFluxKwM2 = 0;
       cellObj.heat = 0;
+      delete cellObj.fireSource;
+      delete cellObj.fireInitialIntensity;
+      delete cellObj.fireDataSource;
       cellObj.stair = false;
       cellObj.stairType = null;
       removeStairLinksByCell(currentFloor, cx, cy);
       // Keep as walkable until map is rebuilt
       cellObj.walkable = !!baseWalkableTemplate?.[cy]?.[cx];
       cellObj.wall = !cellObj.walkable;
-      if (smokeMap) smokeMap[cy][cx] = 0;
+      clearLegacySmokePhysicsCell(floorStates[currentFloor], cx, cy, {
+        clearDerivedFields: true
+      });
       log(`セルを消去: ${currentFloor + 1}F (${cx},${cy})`);
     }
 
@@ -1668,6 +1983,47 @@ export function initSimulation() {
     };
   }
 
+  function resetFireScenarioState() {
+    floorStates.forEach(floor => {
+      floor?.grid?.forEach((row, cy) => row?.forEach((cell, cx) => {
+        if (!cell) return;
+        const isScenarioSource = !!cell.fire && cell.fireSource !== "spread";
+        if (isScenarioSource) {
+          cell.fire = true;
+          cell.fireSource = cell.fireSource || "manual";
+          cell.fireInitialIntensity = clamp(
+            Number(cell.fireInitialIntensity) || 0.05,
+            0.01,
+            1
+          );
+          cell.fireIntensity = cell.fireInitialIntensity;
+          cell.fireAgeSec = 0;
+          cell.hrrKw = 0;
+          cell.temperatureC = 20;
+          cell.heatFluxKwM2 = 0;
+          cell.heat = 0;
+          delete cell.fireDataSource;
+          cell.walkable = false;
+          cell.wall = false;
+          return;
+        }
+        if (cell.fireSource !== "spread") return;
+        cell.fire = false;
+        cell.fireIntensity = 0;
+        cell.fireAgeSec = 0;
+        cell.hrrKw = 0;
+        cell.temperatureC = 20;
+        cell.heatFluxKwM2 = 0;
+        cell.heat = 0;
+        delete cell.fireSource;
+        delete cell.fireDataSource;
+        const baseWalkable = !!floor.walkableTemplate?.[cy]?.[cx];
+        cell.walkable = baseWalkable || !!cell.stair;
+        cell.wall = !cell.walkable;
+      }));
+    });
+  }
+
   // ==== Agent Spawn ====
   function spawnAgents() {
     agents = [];
@@ -1675,12 +2031,24 @@ export function initSimulation() {
       alert("マップが読み込まれていません。");
       return false;
     }
+    restoreLastAppliedFdsCells();
+    resetFireScenarioState();
     syncActiveFloorState();
+    const abortSpawn = message => {
+      // spawnAgents temporarily removes the external overlay so routing and
+      // fire reset can use the reduced-order baseline. If validation fails,
+      // put the current FDS frame back immediately; otherwise a stopped view
+      // would claim that FDS is active while displaying fallback values.
+      applyCurrentFdsToSharedHazards(simTime);
+      syncPublicState();
+      drawScene();
+      alert(message);
+      return false;
+    };
     allSpawnPoints = collectAllSpawns();
     allExitPoints = collectAllExits();
     if (allSpawnPoints.length === 0 || allExitPoints.length === 0) {
-      alert("開始位置と出口を少なくとも1つずつ配置してください。");
-      return false;
+      return abortSpawn("開始位置と出口を少なくとも1つずつ配置してください。");
     }
     const n = Math.max(1, Math.floor(parseInt(numAgentsInput.value, 10) || 1));
     const baseSpeed = parseFloat(speedInput.value) || 1.0;
@@ -1688,8 +2056,7 @@ export function initSimulation() {
     const cellMeters = parseFloat(cellSizeMetersInput.value) || 0.5;
     const typeRatios = getTypeRatios();
     if (!rebuildPotentialCache()) {
-      alert("経路ポテンシャルを計算できませんでした。");
-      return false;
+      return abortSpawn("経路ポテンシャルを計算できませんでした。");
     }
 
     const walkableCells = [];
@@ -1701,8 +2068,7 @@ export function initSimulation() {
       }
     }
     if (walkableCells.length === 0) {
-      alert("通行可能セルがありません。しきい値やマップを確認してください。");
-      return false;
+      return abortSpawn("通行可能セルがありません。しきい値やマップを確認してください。");
     }
 
     const exitLoad = new Array(allExitPoints.length).fill(0);
@@ -1788,8 +2154,7 @@ export function initSimulation() {
       });
     }
     if (!agents.length) {
-      alert("エージェント生成に失敗しました。配置条件を確認してください。");
-      return false;
+      return abortSpawn("エージェント生成に失敗しました。配置条件を確認してください。");
     }
 
     const leaders = agents.filter(a => a.type === "leader" || a.type === "teacher");
@@ -1830,6 +2195,7 @@ export function initSimulation() {
       floorStates[f].heatmap = makeScalarGrid(0);
       floorStates[f].smokeMap = makeScalarGrid(0);
       floorStates[f].smokeCeil = makeScalarGrid(false);
+      resetLegacySmokePhysicsState(floorStates[f], { clearDerivedFields: true });
       floorStates[f].flowField = makeFlowGrid();
     }
     loadFloorState(currentFloor, false);
@@ -1845,6 +2211,13 @@ export function initSimulation() {
     lastFireStepAt = 0;
     activeFireCount = 0;
     totalFireHrrKw = 0;
+    simulationAccumulatorSec = 0;
+    smokeAccumulatorSec = 0;
+    lastAppliedFdsFrameTime = null;
+    lastAppliedFdsCells.clear();
+    // A successful start is also visible before the first 0.1 s physics tick.
+    // Apply t=0 explicitly instead of leaving a one-tick fallback-only gap.
+    applyCurrentFdsToSharedHazards(0);
     const startRuleLabel = (startRuleInput?.value === "far_first") ? "far_first" : "simultaneous";
     const typeCounts = agents.reduce((acc, a) => {
       acc[a.type] = (acc[a.type] || 0) + 1;
@@ -1873,6 +2246,8 @@ export function initSimulation() {
     simRunning = false;
     syncPublicState();
     syncActiveFloorState();
+    restoreLastAppliedFdsCells();
+    resetFireScenarioState();
 
     //timereset
     simTime = 0;
@@ -1892,6 +2267,10 @@ export function initSimulation() {
     lastFireStepAt = 0;
     activeFireCount = 0;
     totalFireHrrKw = 0;
+    simulationAccumulatorSec = 0;
+    smokeAccumulatorSec = 0;
+    lastAppliedFdsFrameTime = null;
+    lastAppliedFdsCells.clear();
 
     //HUDreset
     hudTime.textContent = "0.0 s";
@@ -1905,10 +2284,15 @@ export function initSimulation() {
         floorStates[f].heatmap = makeScalarGrid(0);
         floorStates[f].smokeMap = makeScalarGrid(0);
         floorStates[f].smokeCeil = makeScalarGrid(false);
+        resetLegacySmokePhysicsState(floorStates[f], { clearDerivedFields: true });
         floorStates[f].flowField = makeFlowGrid();
       }
       loadFloorState(currentFloor, false);
     }
+
+    // Reset is a stopped, fully rendered state. Keep the public FDS-active flag
+    // and the displayed cell values consistent at the reset time origin.
+    applyCurrentFdsToSharedHazards(0);
 
     maxHeatCell = null;
     maxHeatValue = 0;
@@ -1930,9 +2314,13 @@ export function initSimulation() {
         grid[y][x].fire = false;
         grid[y][x].fireIntensity = 0;
         grid[y][x].fireAgeSec = 0;
+        grid[y][x].hrrKw = 0;
         grid[y][x].temperatureC = 20;
         grid[y][x].heatFluxKwM2 = 0;
         grid[y][x].heat = 0;
+        delete grid[y][x].fireSource;
+        delete grid[y][x].fireInitialIntensity;
+        delete grid[y][x].fireDataSource;
         grid[y][x].stair = !!floorStates[currentFloor]?.stairTemplate?.[y]?.[x];
         grid[y][x].stairType = grid[y][x].stair ? (grid[y][x].stairType || "indoor") : null;
         grid[y][x].walkable = !!baseWalkableTemplate?.[y]?.[x] || grid[y][x].stair;
@@ -2047,15 +2435,53 @@ export function initSimulation() {
   function loop(now) {
     if (!simRunning) return;
     if (!lastFrameTime) lastFrameTime = now;
-    const dt = (now - lastFrameTime) / 1000; // sec
+    const wallDt = Math.max(0, (now - lastFrameTime) / 1000);
     lastFrameTime = now;
-    simTime += dt;
-    syncPublicState();
-
-    stepSimulation(dt);
+    // A suspended/background tab pauses excess wall time instead of advancing
+    // agents/fire ahead of the fixed-step smoke clock. Process the retained
+    // interval on one shared 0.1 s clock so fire growth, FDS sampling, routing,
+    // exposure and smoke transport are refresh-rate independent.
+    verticalSmokeTransfers = [];
+    simulationAccumulatorSec += Math.min(wallDt, MAX_SIMULATION_ADVANCE_PER_FRAME_SEC);
+    while (
+      simulationAccumulatorSec + 1e-9 >= MAX_SIMULATION_SUBSTEP_SEC &&
+      simRunning
+    ) {
+      simTime += MAX_SIMULATION_SUBSTEP_SEC;
+      stepSimulation(MAX_SIMULATION_SUBSTEP_SEC);
+      simulationAccumulatorSec -= MAX_SIMULATION_SUBSTEP_SEC;
+    }
     syncPublicState();
     drawScene();
     requestAnimationFrame(loop);
+  }
+
+  function mergeVerticalSmokeTransferBatch(batch) {
+    if (!Array.isArray(batch) || !batch.length) return;
+    const keyFor = item =>
+      `${item.stairId}:${item.from?.floorIndex}:${item.from?.cx}:${item.from?.cy}:` +
+      `${item.to?.floorIndex}:${item.to?.cx}:${item.to?.cy}`;
+    const merged = new Map(verticalSmokeTransfers.map(item => [keyFor(item), item]));
+    for (const item of batch) {
+      const key = keyFor(item);
+      const current = merged.get(key);
+      if (!current) {
+        const copy = { ...item };
+        verticalSmokeTransfers.push(copy);
+        merged.set(key, copy);
+        continue;
+      }
+      [
+        "amount", "volumeM3", "sootMassKg", "coMassKg", "heatKJ",
+        "ventedVolumeM3", "ventedSootKg", "ventedCoKg"
+      ].forEach(name => {
+        current[name] = Math.max(0, Number(current[name]) || 0) +
+          Math.max(0, Number(item[name]) || 0);
+      });
+      const previousFraction = clamp(Number(current.fraction) || 0, 0, 1);
+      const nextFraction = clamp(Number(item.fraction) || 0, 0, 1);
+      current.fraction = 1 - (1 - previousFraction) * (1 - nextFraction);
+    }
   }
 
   function stepSimulation(dt) {
@@ -2065,13 +2491,16 @@ export function initSimulation() {
     // === Smoke generation and diffusion (per-floor) ===
     const cellMeters = parseFloat(cellSizeMetersInput.value) || 0.5;
     if (simTime >= nextFireStepAt) {
+      // Remove the external overlay before growing the fallback t-squared fire.
+      // This keeps the saved baseline current; the selected FDS frame is
+      // re-applied once all reduced-order hazards have advanced below.
+      restoreLastAppliedFdsCells();
       const fireDt = Math.max(dt, Math.min(1, simTime - lastFireStepAt || dt));
       const fireResult = stepFire3D(floorStates, fireDt, {
         timeSec: simTime,
         cellSizeMeters: cellMeters,
         floorHeightMeters: state.spatial.floorHeightMeters || 3.5,
-        stairLinks,
-        fdsLookup: getFdsRiskAt
+        stairLinks
       });
       const applied = applyFire3DResultToLegacyFloors(floorStates, fireResult, {
         blockIgnitedCells: false
@@ -2094,149 +2523,26 @@ export function initSimulation() {
     const inBounds = (x, y) => x >= 0 && y >= 0 && x < gridW && y < gridH;
     const floorInBounds = f => f >= 0 && f < floorCount;
 
-    const MAX_SMOKE = 4.5;
-    const FIRE_SOURCE_PER_SEC = Math.max(0, parseNum(smokeSourceRateInput, 3.8));
-    const DIFFUSE_PER_SEC = Math.max(0, parseNum(smokeDiffusionRateInput, 2.8)) / cellMeters;
-    const BASE_DECAY_PER_SEC = Math.max(0, parseNum(smokeDecayRateInput, 0.006));
-    const SMOKE_SPREAD_MIX = clamp(parseNum(smokeSpreadMixInput, 0.65), 0.05, 1.2);
-    const SMOKE_DIAGONAL_MIX = clamp(parseNum(smokeDiagonalMixInput, 0.25), 0, 0.8);
-    const upTransferRatio = Math.min(0.55, BUOYANCY_PER_SEC * dt);
-    const diffuseRatio = Math.min(0.92, DIFFUSE_PER_SEC * dt * SMOKE_SPREAD_MIX);
-
-    for (let f = 0; f < floorCount; f++) {
-      const fs = floorStates[f];
-      const fGrid = fs.grid;
-      if (!fGrid || !fs.smokeMap || !fs.smokeCeil) continue;
-
-      const vent = makeScalarGrid(0);
-      fs.exits.forEach(({cx, cy}) => {
-        for (let dy = -2; dy <= 2; dy++) {
-          for (let dx = -2; dx <= 2; dx++) {
-            const nx = cx + dx;
-            const ny = cy + dy;
-            if (!inBounds(nx, ny)) continue;
-            if (Math.hypot(dx, dy) <= 2.2) vent[ny][nx] = 1;
-          }
-        }
-      });
-
-      const nextSmoke = makeScalarGrid(0);
-      const nextCeil = fs.smokeCeil.map(row => row.slice());
-      const smokePassable = (x, y) => {
-        const c = fGrid[y][x];
-        return c.walkable || c.fire || c.stair;
-      };
-
-      function collectSmokeTargets(x, y) {
-        const targets = [];
-        const add = (nx, ny, weight) => {
-          if (!inBounds(nx, ny)) return;
-          if (!smokePassable(nx, ny)) return;
-          targets.push({ x: nx, y: ny, weight });
-        };
-        for (const d of dirs4) add(x + d.dx, y + d.dy, 1.0);
-        if (SMOKE_DIAGONAL_MIX > 0) {
-          const diagonals = [
-            { dx: 1, dy: 1 }, { dx: -1, dy: 1 },
-            { dx: 1, dy: -1 }, { dx: -1, dy: -1 }
-          ];
-          for (const d of diagonals) {
-            const nx = x + d.dx;
-            const ny = y + d.dy;
-            if (!inBounds(nx, ny) || !smokePassable(nx, ny)) continue;
-            const sideA = inBounds(x + d.dx, y) && smokePassable(x + d.dx, y);
-            const sideB = inBounds(x, y + d.dy) && smokePassable(x, y + d.dy);
-            if (sideA || sideB) add(nx, ny, SMOKE_DIAGONAL_MIX);
-          }
-        }
-        return targets;
-      }
-
-      for (let y = 0; y < gridH; y++) {
-        for (let x = 0; x < gridW; x++) {
-          if (!smokePassable(x, y)) continue;
-          let sm = fs.smokeMap[y][x];
-          if (fGrid[y][x].fire) {
-            sm += FIRE_SOURCE_PER_SEC * dt;
-            nextCeil[y][x] = true;
-          }
-          if (sm <= 0.0001) continue;
-
-          let remain = sm;
-          const upY = y - 1;
-          if (upY >= 0 && smokePassable(x, upY)) {
-            const up = remain * upTransferRatio;
-            nextSmoke[upY][x] += up;
-            remain -= up;
-            nextCeil[y][x] = true;
-          } else if (upY < 0 || !smokePassable(x, upY)) {
-            nextCeil[y][x] = true;
-          }
-
-          const targets = collectSmokeTargets(x, y);
-          if (targets.length > 0) {
-            const move = remain * diffuseRatio;
-            const weightSum = targets.reduce((sum, t) => sum + Math.max(0, t.weight || 0), 0) || targets.length;
-            remain -= move;
-            for (const t of targets) {
-              const share = move * (Math.max(0, t.weight || 0) / weightSum);
-              nextSmoke[t.y][t.x] += share;
-            }
-          }
-          nextSmoke[y][x] += remain;
-        }
-      }
-
-      for (let y = 0; y < gridH; y++) {
-        for (let x = 0; x < gridW; x++) {
-          if (!smokePassable(x, y)) {
-            nextSmoke[y][x] = 0;
-            Object.assign(fGrid[y][x], {
-              smokeDensity: 0,
-              opticalDensity: 0,
-              opticalDensityM1: 0,
-              coPpm: 0,
-              visibilityMeters: 30,
-              visibilityM: 30,
-              smoke: 0,
-              co: 0,
-              visibility: 1
-            });
-            continue;
-          }
-          const decay = Math.max(0, 1 - (BASE_DECAY_PER_SEC + (vent[y][x] ? VENT_DECAY_BONUS : 0)) * dt);
-          const density = Math.max(0, Math.min(MAX_SMOKE, nextSmoke[y][x] * decay));
-          const opticalDensity = density * 0.32;
-          const coPpm = density * 260;
-          const visibilityMeters = opticalDensity > 0.001 ? Math.min(30, 3 / opticalDensity) : 30;
-          nextSmoke[y][x] = density;
-          Object.assign(fGrid[y][x], {
-            smokeDensity: density,
-            opticalDensity,
-            opticalDensityM1: opticalDensity,
-            coPpm,
-            visibilityMeters,
-            visibilityM: visibilityMeters,
-            smoke: density,
-            co: coPpm,
-            visibility: clamp(visibilityMeters / 30, 0, 1)
-          });
-        }
-      }
-
-      fs.smokeMap = nextSmoke;
-      fs.smokeCeil = nextCeil;
+    // FDS/CFAST-informed reduced-order smoke transport. It advances on a fixed
+    // 0.1 s clock so results do not depend on monitor refresh rate. The module
+    // keeps soot, CO, hot-layer volume and heat as conservative quantities;
+    // smokeMap remains a derived compatibility field for the old 2D renderer.
+    smokeAccumulatorSec += Math.max(0, dt);
+    let smokeWorkThisFrameSec = 0;
+    while (
+      smokeAccumulatorSec + 1e-9 >= SMOKE_FIXED_STEP_SEC &&
+      smokeWorkThisFrameSec + SMOKE_FIXED_STEP_SEC <= MAX_SMOKE_WORK_PER_FRAME_SEC + 1e-9
+    ) {
+      const smokeResult = stepLegacySmokePhysicsInPlace(
+        floorStates,
+        stairLinks,
+        SMOKE_FIXED_STEP_SEC,
+        currentSmokeModelOptions(simTime - smokeAccumulatorSec + SMOKE_FIXED_STEP_SEC)
+      );
+      mergeVerticalSmokeTransferBatch(smokeResult.verticalTransfers);
+      smokeAccumulatorSec -= SMOKE_FIXED_STEP_SEC;
+      smokeWorkThisFrameSec += SMOKE_FIXED_STEP_SEC;
     }
-
-    verticalSmokeTransfers = transferLegacySmokeThroughStairs(
-      floorStates,
-      stairLinks,
-      dt,
-      {
-        floorHeightMeters: state.spatial.floorHeightMeters || 3.5,
-        syncCellFields: true
-      }
-    );
     applyCurrentFdsToSharedHazards(simTime);
 
     if (!agents || agents.length === 0) {
@@ -2255,7 +2561,7 @@ export function initSimulation() {
 
     const smokeAt = (floor, x, y) =>
       (floorInBounds(floor) && inBounds(x, y))
-        ? (floorStates[floor].smokeMap?.[y]?.[x] || 0)
+        ? reducedSmokeMetricsAt(floor, x, y).eyeLevelSmokeDensity
         : 0;
 
     function fireRiskAt(floor, cx, cy) {
@@ -2294,31 +2600,28 @@ export function initSimulation() {
     }
 
     function fallbackEngineeringRisk(floor, cx, cy) {
-      const smoke = smokeAt(floor, cx, cy);
+      const smoke = reducedSmokeMetricsAt(floor, cx, cy);
       const fire = fireRiskAt(floor, cx, cy);
       const hrrScale = Math.min(1, t2FireHrrKw(simTime) / Math.max(1, T2_FIRE_MAX_HRR_KW));
       const heatFluxKwM2 = Math.max(
         fire.heatFluxKwM2 || 0,
         fire.heat * 8.0 * (0.35 + 0.65 * hrrScale)
       );
-      const opticalDensityM1 = Math.max(0, smoke * 0.32);
-      const coPpm = Math.max(0, smoke * 260 * (0.4 + 0.6 * hrrScale));
-      const visibilityM = opticalDensityM1 > 0.001 ? Math.min(30, 3.0 / opticalDensityM1) : 30;
 
       return {
         heatFluxKwM2,
-        opticalDensityM1,
-        coPpm,
-        visibilityM,
-        temperatureC: fire.temperatureC,
-        source: "fallback_t2"
+        opticalDensityM1: smoke.extinctionCoefficientM1,
+        coPpm: smoke.coPpm,
+        visibilityM: smoke.visibilityM,
+        temperatureC: Math.max(fire.temperatureC, smoke.temperatureC),
+        source: smoke.source
       };
     }
 
     function engineeringRiskAt(floor, cx, cy) {
+      const fallback = fallbackEngineeringRisk(floor, cx, cy);
       const fds = getFdsRiskAt(floor, cx, cy, simTime);
-      if (fds) return { ...fds, source: "fds_csv" };
-      return fallbackEngineeringRisk(floor, cx, cy);
+      return mergeFdsRiskRecord(fallback, fds);
     }
 
     function routeRiskAt(floor, cx, cy) {
@@ -2348,6 +2651,7 @@ export function initSimulation() {
       const od = Math.max(0, er.opticalDensityM1 || 0);
       const co = Math.max(0, er.coPpm || 0);
       const hf = Math.max(0, er.heatFluxKwM2 || 0);
+      const temperatureC = Math.max(20, Number(er.temperatureC) || 20);
       const vis = Number.isFinite(er.visibilityM) ? Math.max(0, er.visibilityM) : 30;
       const visibilityFactor = Math.max(0, Math.min(1, vis / 10));
 
@@ -2355,7 +2659,8 @@ export function initSimulation() {
         smoke >= SMOKE_HARD_AVOID_LEVEL ||
         od >= FDS_OPTICAL_DENSITY_HARD ||
         co >= FDS_CO_HARD_PPM ||
-        hf >= FDS_HEAT_FLUX_HARD_KW_M2;
+        hf >= FDS_HEAT_FLUX_HARD_KW_M2 ||
+        temperatureC >= FDS_TEMPERATURE_HARD_C;
 
       const penalty =
         smoke * SMOKE_ROUTE_WEIGHT +
@@ -2364,6 +2669,8 @@ export function initSimulation() {
         Math.max(0, hf - FDS_HEAT_FLUX_SOFT_KW_M2) * FDS_ROUTE_HEAT_WEIGHT +
         Math.max(0, od - FDS_OPTICAL_DENSITY_SOFT) * FDS_ROUTE_OD_WEIGHT +
         Math.max(0, co - FDS_CO_SOFT_PPM) * FDS_ROUTE_CO_WEIGHT +
+        Math.max(0, temperatureC - FDS_TEMPERATURE_SOFT_C) *
+          FDS_ROUTE_TEMPERATURE_WEIGHT +
         Math.max(0, 1 - visibilityFactor) * FDS_ROUTE_VISIBILITY_WEIGHT +
         (hard ? HIGH_SMOKE_BLOCK_SCORE : 0);
 
@@ -2484,7 +2791,15 @@ export function initSimulation() {
         : 1;
       a.visibility = Math.min(riskVisibilityFactor, Math.max(MIN_VISIBILITY, 1 - smoke * VISIBILITY_SMOKE_COEF));
       a.smokeDose += Math.max(0, smoke - 0.2) * Math.max(0, smoke - 0.2) * dt;
-      a.heatDose += fire.heat * dt;
+      const localTemperatureC = Math.max(20, Number(localEngineeringRisk.temperatureC) || 20);
+      const temperatureHeatRate = Math.max(
+        0,
+        (localTemperatureC - FDS_TEMPERATURE_SOFT_C) /
+          (FDS_TEMPERATURE_HARD_C - FDS_TEMPERATURE_SOFT_C)
+      );
+      a.heatDose += (fire.heat + temperatureHeatRate) * dt;
+      a.temperatureDoseCSeconds = (a.temperatureDoseCSeconds || 0) +
+        Math.max(0, localTemperatureC - FDS_TEMPERATURE_SOFT_C) * dt;
       a.coDosePpmMin = (a.coDosePpmMin || 0) + Math.max(0, localEngineeringRisk.coPpm || 0) * (dt / 60);
       a.coDose = a.coDosePpmMin;
       a.heatFluxDose = (a.heatFluxDose || 0) +
@@ -3295,19 +3610,18 @@ export function initSimulation() {
   }
 
   function riskRecordForOverlay(floor, cx, cy) {
-    const fds = getFdsRiskAt(floor, cx, cy, simTime);
-    if (fds) return fds;
-    const smoke = floorStates[floor]?.smokeMap?.[cy]?.[cx] || 0;
+    const smoke = reducedSmokeMetricsAt(floor, cx, cy);
     const fireHeat = fireHeatForOverlay(floor, cx, cy);
     const hrrScale = Math.min(1, t2FireHrrKw(simTime) / Math.max(1, T2_FIRE_MAX_HRR_KW));
-    const opticalDensityM1 = Math.max(0, smoke * 0.32);
-    return {
+    const fallback = {
       heatFluxKwM2: Math.max(0, fireHeat * 8.0 * (0.35 + 0.65 * hrrScale)),
-      opticalDensityM1,
-      coPpm: Math.max(0, smoke * 260 * (0.4 + 0.6 * hrrScale)),
-      visibilityM: opticalDensityM1 > 0.001 ? Math.min(30, 3.0 / opticalDensityM1) : 30,
-      source: 'overlay_fallback'
+      opticalDensityM1: smoke.extinctionCoefficientM1,
+      coPpm: smoke.coPpm,
+      visibilityM: smoke.visibilityM,
+      temperatureC: smoke.temperatureC,
+      source: smoke.source
     };
+    return mergeFdsRiskRecord(fallback, getFdsRiskAt(floor, cx, cy, simTime));
   }
 
   function buildRiskOverlayGrid(mode) {
@@ -3322,7 +3636,7 @@ export function initSimulation() {
       source: importedFdsRisk.active ? 'fds_csv' : 'fallback_t2'
     };
     if (mode === 'heat_flux') { overlay.label = 'Heat Flux'; overlay.unit = 'kW/m²'; }
-    else if (mode === 'optical_density') { overlay.label = 'Optical Density'; overlay.unit = '1/m'; }
+    else if (mode === 'optical_density') { overlay.label = 'Extinction coefficient K'; overlay.unit = '1/m'; }
     else if (mode === 'co') { overlay.label = 'CO'; overlay.unit = 'ppm'; }
     else if (mode === 'visibility') { overlay.label = 'Visibility risk'; overlay.unit = 'm'; }
     else { overlay.label = 'Total fire risk'; overlay.unit = 'risk'; }

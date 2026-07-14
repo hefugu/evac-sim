@@ -50,6 +50,8 @@ const DEFAULT_OPTIONS = Object.freeze({
   maxDevicePixelRatio: 2,
   maxSmokeSamples: 2400,
   smokeThreshold: 0.025,
+  legacyExtinctionPerSmokeDensity: 0.32,
+  maxSmokeOpacity: 0.86,
   fireThreshold: 0.001,
   background: "#07121a",
   floorColor: "#d4d9dc",
@@ -80,6 +82,62 @@ function finiteNumber(value, fallback = 0) {
 function positiveNumber(value, fallback) {
   const number = finiteNumber(value, fallback);
   return number > 0 ? number : fallback;
+}
+
+function optionalFiniteNumber(value) {
+  if (value == null || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function firstOptionalFinite(values) {
+  for (const value of values) {
+    const number = optionalFiniteNumber(value);
+    if (number != null) return number;
+  }
+  return null;
+}
+
+function smokeExtinctionPerMeter(cell) {
+  if (!cell || typeof cell !== "object") return null;
+  const value = firstOptionalFinite([
+    cell.extinctionCoefficientPerM,
+    cell.upperLayerExtinctionCoefficientPerM,
+    cell.upperLayerExtinctionCoefficientM1,
+    cell.extinctionCoefficientM1,
+    cell.opticalDensityM1,
+    cell.opticalDensity
+  ]);
+  return value == null ? null : Math.max(0, value);
+}
+
+function smokeLayerProfile(cell, roomHeightMeters) {
+  if (!cell || typeof cell !== "object") return null;
+  const roomHeight = positiveNumber(roomHeightMeters, DEFAULT_OPTIONS.wallHeightMeters);
+  const explicitInterface = firstOptionalFinite([
+    cell.layerInterfaceHeightM,
+    cell.smokeLayerInterfaceHeightMeters,
+    cell.layerInterfaceHeightMeters,
+    cell.smokeLayerInterfaceHeightM
+  ]);
+  const explicitDepth = firstOptionalFinite([
+    cell.smokeLayerDepthMeters,
+    cell.upperLayerDepthMeters,
+    cell.smokeLayerDepthM
+  ]);
+
+  let interfaceHeight = explicitInterface == null
+    ? null
+    : clamp(explicitInterface, 0, roomHeight);
+  let depth = explicitDepth == null ? null : clamp(explicitDepth, 0, roomHeight);
+  if (interfaceHeight != null) depth = roomHeight - interfaceHeight;
+  else if (depth != null) interfaceHeight = roomHeight - depth;
+  if (!(depth > 0) || interfaceHeight == null) return null;
+  return {
+    depthMeters: depth,
+    interfaceHeightMeters: interfaceHeight,
+    midpointHeightMeters: (roomHeight + interfaceHeight) * 0.5
+  };
 }
 
 function clamp(value, minimum, maximum) {
@@ -286,6 +344,15 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
   config.wallHeightMeters = positiveNumber(config.wallHeightMeters, DEFAULT_OPTIONS.wallHeightMeters);
   config.fovDegrees = clamp(finiteNumber(config.fovDegrees, DEFAULT_OPTIONS.fovDegrees), 20, 100);
   config.maxSmokeSamples = Math.max(64, Math.floor(finiteNumber(config.maxSmokeSamples, DEFAULT_OPTIONS.maxSmokeSamples)));
+  config.legacyExtinctionPerSmokeDensity = positiveNumber(
+    config.legacyExtinctionPerSmokeDensity,
+    DEFAULT_OPTIONS.legacyExtinctionPerSmokeDensity
+  );
+  config.maxSmokeOpacity = clamp(
+    finiteNumber(config.maxSmokeOpacity, DEFAULT_OPTIONS.maxSmokeOpacity),
+    0.05,
+    1
+  );
 
   const layerVisibility = {
     ...DEFAULT_LAYERS,
@@ -715,7 +782,12 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
     const smokeStride = Math.max(1, Math.floor(positiveNumber(config.smokeStride, automaticStride)));
     const smokeColumns = Math.ceil(floor.width / smokeStride);
     const smokeRows = Math.ceil(floor.height / smokeStride);
-    const smokeMaxima = needSmoke ? new Float32Array(smokeColumns * smokeRows) : null;
+    const smokeSampleCount = smokeColumns * smokeRows;
+    const smokeMaxima = needSmoke ? new Float32Array(smokeSampleCount) : null;
+    const smokeExtinctions = needSmoke ? new Float32Array(smokeSampleCount) : null;
+    const smokeLayerMidpoints = needSmoke ? new Float32Array(smokeSampleCount) : null;
+    smokeExtinctions?.fill(Number.NaN);
+    smokeLayerMidpoints?.fill(Number.NaN);
     for (let cy = 0; cy < floor.height; cy += 1) {
       for (let cx = 0; cx < floor.width; cx += 1) {
         const cell = rawCellAt(floor, cx, cy);
@@ -738,8 +810,28 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
             finiteNumber(floor.smokeMap?.[cy]?.[cx], 0),
             finiteNumber(cell?.smoke, 0)
           );
+          const physicalExtinction = smokeExtinctionPerMeter(cell);
+          // A zero physical value paired with positive legacy smoke is treated
+          // as legacy data. This preserves callers that only update smokeDensity
+          // on cells initialized with zero-valued physical fields.
+          const usePhysicalExtinction = physicalExtinction != null &&
+            (physicalExtinction > 0 || !(density > 0));
+          const effectiveExtinction = usePhysicalExtinction
+            ? physicalExtinction
+            : density * config.legacyExtinctionPerSmokeDensity;
+          const equivalentDensity = Math.max(
+            density,
+            effectiveExtinction / config.legacyExtinctionPerSmokeDensity
+          );
           const bucket = Math.floor(cy / smokeStride) * smokeColumns + Math.floor(cx / smokeStride);
-          if (density > smokeMaxima[bucket]) smokeMaxima[bucket] = density;
+          if (equivalentDensity > smokeMaxima[bucket]) {
+            const layer = smokeLayerProfile(cell, floor.wallHeight);
+            smokeMaxima[bucket] = equivalentDensity;
+            smokeExtinctions[bucket] = usePhysicalExtinction
+              ? effectiveExtinction
+              : Number.NaN;
+            smokeLayerMidpoints[bucket] = layer?.midpointHeightMeters ?? Number.NaN;
+          }
         }
       }
     }
@@ -752,7 +844,11 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
             cx: Math.min(floor.width - 1, column * smokeStride + (smokeStride - 1) * 0.5),
             cy: Math.min(floor.height - 1, row * smokeStride + (smokeStride - 1) * 0.5),
             density,
-            stride: smokeStride
+            stride: smokeStride,
+            extinctionCoefficientPerM: Number.isFinite(smokeExtinctions[row * smokeColumns + column])
+              ? smokeExtinctions[row * smokeColumns + column]
+              : null,
+            layerMidpointHeightMeters: smokeLayerMidpoints[row * smokeColumns + column]
           });
         }
       }
@@ -1007,9 +1103,12 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
     if (layerVisibility.smoke) {
       dynamic.smoke.forEach(sample => {
         const density = clamp(sample.density, 0, 2.5);
+        const layerMidpoint = Number.isFinite(sample.layerMidpointHeightMeters)
+          ? clamp(sample.layerMidpointHeightMeters, 0, floor.wallHeight)
+          : floor.wallHeight * 0.67;
         const world = {
           x: sample.cx * cell,
-          y: floor.elevation + floor.wallHeight * 0.67,
+          y: floor.elevation + layerMidpoint,
           z: sample.cy * cell
         };
         const projected = project(world, basis);
@@ -1021,6 +1120,10 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
           order: 5,
           radius: Math.max(cell * sample.stride * 0.58, 0.28),
           density,
+          extinctionCoefficientPerM: sample.extinctionCoefficientPerM,
+          // The sampled block width is a cheap representative optical path.
+          // It also compensates opacity when large maps use a coarser stride.
+          opticalPathLengthMeters: Math.max(0.05, cell * sample.stride),
           phase: ((sample.cx * 17 + sample.cy * 31 + floor.floorIndex * 13) % 97) / 97,
           timestamp
         });
@@ -1189,11 +1292,18 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
 
   function drawSmoke(primitive, focal) {
     const density = clamp(primitive.density / 1.8, 0, 1);
+    const extinction = optionalFiniteNumber(primitive.extinctionCoefficientPerM);
+    const opticalPath = positiveNumber(primitive.opticalPathLengthMeters, 0.5);
+    const beerLambertOpacity = extinction == null
+      ? null
+      : 1 - Math.exp(-Math.min(50, Math.max(0, extinction) * opticalPath));
     const pulse = 0.94 + Math.sin(primitive.timestamp * 0.00045 + primitive.phase * TAU) * 0.06;
     const radius = clamp(primitive.radius * focal / primitive.center.depth * pulse, 2.5, 54);
     const gray = Math.round(174 - density * 116);
     context.save();
-    context.globalAlpha = 0.1 + density * 0.38;
+    context.globalAlpha = beerLambertOpacity == null
+      ? 0.1 + density * 0.38
+      : clamp(beerLambertOpacity, 0, config.maxSmokeOpacity);
     context.fillStyle = `rgb(${gray}, ${gray + 4}, ${gray + 8})`;
     context.beginPath();
     context.ellipse(primitive.center.x - radius * 0.28, primitive.center.y, radius * 0.68, radius * 0.42, 0, 0, TAU);
