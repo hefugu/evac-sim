@@ -1,11 +1,17 @@
 import { getFloorByIndex, normalizeFloors3D } from "./floors3d.js";
+import { fdsSampleHeight, isFdsSampleAtHeight } from "./fds-csv.js";
 import {
   normalizeStairLink,
   stairSmokeTransferFactor,
   STAIR_TYPE_META
 } from "./stairs3d.js";
+import {
+  DEFAULT_CORRIDOR_OPTIONS,
+  computeCorridorSmokeTransport
+} from "./corridor-smoke.js";
 
 export const DEFAULT_SMOKE3D_OPTIONS = Object.freeze({
+  ...DEFAULT_CORRIDOR_OPTIONS,
   model: "nist_reduced_order",
   fuelPreset: "n_heptane_demo",
   // Fire/product inputs. CFAST and FDS require HRR and species yields to be
@@ -15,6 +21,11 @@ export const DEFAULT_SMOKE3D_OPTIONS = Object.freeze({
   coYieldKgPerKg: 0.008,
   heatOfCombustionKJPerKg: 44500,
   radiativeFraction: 0.35,
+  // Geometric source defaults, visible to scenario authors. A = 1 m² is a
+  // demonstration assumption, not a conservative bound for all real fires.
+  fireAreaM2: 1,
+  fireDiameterMeters: null, // null => equivalent circular diameter sqrt(4 A/pi)
+  virtualOriginMeters: null, // null => recalculate z0 from current t² HRR
   massExtinctionCoefficientM2PerKg: 8700,
   visibilityFactor: 3,
   // Reduced-order upper-layer / ceiling-jet transport inputs.
@@ -26,12 +37,15 @@ export const DEFAULT_SMOKE3D_OPTIONS = Object.freeze({
   maxCeilingJetVelocityMps: 10,
   turbulentDiffusivityM2Sec: 0.06,
   leakageRatePerSec: 0,
+  naturalVentilationEnabled: true,
+  windVelocityMps: 0,
+  mechanicalVentilationM3Sec: 0, // floor total extraction, allocated once
   sootDepositionRatePerSec: 0,
   heatLossRatePerSec: 0.012,
   exitDischargeCoefficient: 0.7,
   exitOpeningHeightMeters: 2,
   defaultExitWidthMeters: 0.9,
-  minimumVentVelocityMps: 0.05,
+  minimumVentVelocityMps: 0, // deprecated/ignored; no unforced minimum flow
   exitActsAsOpenVent: false,
   stairOpeningDepthMeters: 0.8,
   stairVentFraction: 0.45,
@@ -43,7 +57,7 @@ export const DEFAULT_SMOKE3D_OPTIONS = Object.freeze({
   minimumFireHrrKw: 0.02,
   maxExtinctionCoefficientM1: 12,
   legacyDensityPerExtinctionM1: 3.125,
-  physicsStateVersion: 3,
+  physicsStateVersion: 4,
 
   // Compatibility options retained for existing FDS adapters and callers.
   maxSmokeDensity: 37.5,
@@ -122,6 +136,8 @@ function normalizedOptions(options = {}) {
     "maxCeilingJetVelocityMps",
     "turbulentDiffusivityM2Sec",
     "leakageRatePerSec",
+    "windVelocityMps",
+    "mechanicalVentilationM3Sec",
     "sootDepositionRatePerSec",
     "heatLossRatePerSec",
     "exitDischargeCoefficient",
@@ -144,6 +160,11 @@ function normalizedOptions(options = {}) {
     DEFAULT_SMOKE3D_OPTIONS.ambientTemperatureC
   );
   config.radiativeFraction = clamp(config.radiativeFraction, 0, 0.95);
+  config.fireAreaM2 = Math.max(0.0001, finiteNumber(options.fireAreaM2, DEFAULT_SMOKE3D_OPTIONS.fireAreaM2));
+  config.fireDiameterMeters = options.fireDiameterMeters != null && Number(options.fireDiameterMeters) > 0
+    ? Number(options.fireDiameterMeters) : null;
+  config.virtualOriginMeters = options.virtualOriginMeters != null && Number.isFinite(Number(options.virtualOriginMeters))
+    ? Number(options.virtualOriginMeters) : null;
   config.cflNumber = clamp(config.cflNumber, 0.05, 0.8);
   config.diagonalMix = clamp(config.diagonalMix, 0, 1);
   config.physicsStateVersion = Math.max(1, Math.floor(finiteNumber(
@@ -209,7 +230,10 @@ export function normalizeFdsSmokeRecord(record, options = {}) {
         : null);
   return {
     smokeDensity: density,
-    opticalDensity: Number.isFinite(opticalDensity) ? Math.max(0, opticalDensity) : null,
+    sampleHeightMeters: fdsSampleHeight(record),
+    sampleHeightAssumed: record.sampleHeightMeters == null && record.sample_height_m == null,
+    opticalDensity: Number.isFinite(opticalDensity) ? Math.max(0, opticalDensity)
+      : (Number.isFinite(explicitSmokeDensity) ? density * config.opticalDensityPerSmokeDensity : null),
     coPpm: Number.isFinite(coPpm) ? Math.max(0, coPpm) : null,
     visibilityMeters: Number.isFinite(visibilityMeters) ? Math.max(0, visibilityMeters) : null,
     source: "fds_csv"
@@ -236,6 +260,7 @@ export function deriveSmokeMetrics(smokeDensity, options = {}) {
 /** FDS values replace only fields actually present in the CSV record. */
 export function applyFdsSmokeRecord(metrics, record, options = {}) {
   const config = normalizedOptions(options);
+  if (!isFdsSampleAtHeight(record, config.eyeHeightMeters)) return { ...metrics };
   const fds = normalizeFdsSmokeRecord(record, config);
   if (!fds) return { ...metrics };
   const smokeDensity = fds.smokeDensity == null ? metrics.smokeDensity : fds.smokeDensity;
@@ -244,11 +269,12 @@ export function applyFdsSmokeRecord(metrics, record, options = {}) {
     : fds.opticalDensity;
   const coPpm = fds.coPpm == null ? metrics.coPpm : fds.coPpm;
   const visibilityMeters = fds.visibilityMeters == null
-    ? (opticalDensity > 0.001
+    ? (fds.opticalDensity == null && fds.smokeDensity == null ? metrics.visibilityMeters : (opticalDensity > 0.001
         ? Math.min(config.maxVisibilityMeters, config.visibilityNumerator / opticalDensity)
-        : config.maxVisibilityMeters)
+        : config.maxVisibilityMeters))
     : fds.visibilityMeters;
   return {
+    ...metrics,
     smokeDensity: clamp(smokeDensity, 0, config.maxSmokeDensity),
     opticalDensity: Math.max(0, opticalDensity),
     coPpm: Math.max(0, coPpm),
@@ -260,13 +286,14 @@ export function applyFdsSmokeRecord(metrics, record, options = {}) {
 
 function fdsRecordAt(options, floorIndex, cx, cy, timeSec) {
   const lookup = options.fdsLookup || options.fdsProvider?.lookup;
-  return typeof lookup === "function" ? lookup(floorIndex, cx, cy, timeSec) : null;
+  const record = typeof lookup === "function" ? lookup(floorIndex, cx, cy, timeSec, options.eyeHeightMeters) : null;
+  return isFdsSampleAtHeight(record, options.eyeHeightMeters) ? record : null;
 }
 
 function smokePassable(cell) {
-  return !!cell && (cell.fire || (!cell.wall && !!(
+  return !!cell && !cell.wall && !(cell.door && (cell.doorOpen === false || cell.doorClosed === true || cell.doorState === "closed")) && (cell.fire || !!(
     cell.walkable || cell.stair || cell.door || cell.atrium
-  )));
+  ));
 }
 
 function makeNumberGrid(width, height, fill = 0) {
@@ -328,6 +355,7 @@ function emptyPhysicsState(floor, config) {
     deltaSoot: arrays(),
     deltaCo: arrays(),
     deltaHeat: arrays(),
+    deltaOutgoingVolume: arrays(),
     deltaTouchedMask: new Uint8Array(size),
     deltaTouchedIndices: [],
     fireDistanceCells: new Float64Array(size),
@@ -343,9 +371,35 @@ function emptyPhysicsState(floor, config) {
     generatedSootKg: 0,
     generatedCoKg: 0,
     generatedHotGasVolumeM3: 0,
+    generatedHeatKJ: 0,
+    initialSootKg: 0,
+    initialCoKg: 0,
+    initialHotGasVolumeM3: 0,
+    initialHeatKJ: 0,
     suppressedEntrainmentVolumeM3: 0,
     ventedSootKg: 0,
     ventedCoKg: 0,
+    ventedHotGasVolumeM3: 0,
+    ventedHeatKJ: 0,
+    leakedSootKg: 0,
+    leakedCoKg: 0,
+    naturalVentedSootKg: 0,
+    naturalVentedCoKg: 0,
+    mechanicalVentedSootKg: 0,
+    mechanicalVentedCoKg: 0,
+    transferredInSootKg: 0,
+    transferredOutSootKg: 0,
+    transferredInCoKg: 0,
+    transferredOutCoKg: 0,
+    transferredInVolumeM3: 0,
+    transferredOutVolumeM3: 0,
+    transferredInHeatKJ: 0,
+    transferredOutHeatKJ: 0,
+    removedSootKg: 0,
+    removedCoKg: 0,
+    removedHotGasVolumeM3: 0,
+    removedHeatKJ: 0,
+    lostHeatKJ: 0,
     depositedSootKg: 0,
     elapsedSec: 0
   };
@@ -359,6 +413,7 @@ function physicsStateMatches(state, floor, config) {
     state.sootMassKg?.length === size &&
     state.coMassKg?.length === size &&
     state.excessHeatKJ?.length === size &&
+    state.deltaOutgoingVolume?.length === size &&
     state.activeMask?.length === size &&
     state.passableMask?.length === size &&
     state.potentialVentilationMask?.length === size &&
@@ -440,6 +495,7 @@ function seedPhysicsCellFromLegacy(state, floor, cx, cy, legacyDensity, config, 
   const heat = config.airDensityKgM3 * volume * config.airSpecificHeatKJKgK *
     (temperatureC - config.ambientTemperatureC);
 
+  const before = [state.hotGasVolumeM3[index], state.sootMassKg[index], state.coMassKg[index], state.excessHeatKJ[index]];
   state.hotGasVolumeM3[index] = Math.max(state.hotGasVolumeM3[index], volume);
   if (replace) {
     state.sootMassKg[index] = sootMass;
@@ -450,6 +506,12 @@ function seedPhysicsCellFromLegacy(state, floor, cx, cy, legacyDensity, config, 
     state.coMassKg[index] = Math.max(state.coMassKg[index], coMass);
     state.excessHeatKJ[index] = Math.max(state.excessHeatKJ[index], heat);
   }
+  // Legacy painting / initial conditions are explicit inventory inputs, not
+  // HRR-generated products. FDS overlays never enter this balance.
+  state.initialHotGasVolumeM3 += state.hotGasVolumeM3[index] - before[0];
+  state.initialSootKg += state.sootMassKg[index] - before[1];
+  state.initialCoKg += state.coMassKg[index] - before[2];
+  state.initialHeatKJ += state.excessHeatKJ[index] - before[3];
   activatePhysicalIndex(state, index);
   return true;
 }
@@ -500,7 +562,7 @@ function clonePhysicsState(state) {
   const copy = { ...state };
   [
     "hotGasVolumeM3", "sootMassKg", "coMassKg", "excessHeatKJ",
-    "lastLegacyDensity", "deltaVolume", "deltaSoot", "deltaCo", "deltaHeat",
+    "lastLegacyDensity", "deltaVolume", "deltaSoot", "deltaCo", "deltaHeat", "deltaOutgoingVolume",
     "activeMask", "passableMask", "potentialVentilationMask", "openExitVentMask",
     "cardinalNeighborIndices", "diagonalNeighborIndices", "renderedMask",
     "deltaTouchedMask", "fireDistanceCells", "fireSourceIndex",
@@ -523,6 +585,7 @@ export function resetLegacySmokePhysicsState(floorsOrFloor, options = {}) {
   const config = clearDerivedFields ? normalizedOptions(options) : null;
   floors.filter(Boolean).forEach(floor => {
     floor.smokePhysics = null;
+    floor.corridorSmoke = null;
     if (!clearDerivedFields) return;
     floor.smokeMap?.forEach(row => row?.fill?.(0));
     floor.smokeCeil?.forEach(row => row?.fill?.(false));
@@ -540,6 +603,7 @@ export function clearLegacySmokePhysicsCell(floor, cxInput, cyInput, options = {
   if (cx < 0 || cy < 0 || cx >= width || cy >= height) return false;
   const index = flatIndex(width, cx, cy);
   if (state?.hotGasVolumeM3?.length === width * height) {
+    accountRemovedPhysicsCell(state, index);
     state.hotGasVolumeM3[index] = 0;
     state.sootMassKg[index] = 0;
     state.coMassKg[index] = 0;
@@ -581,17 +645,50 @@ export function markLegacySmokeCellForDerivation(floor, cxInput, cyInput) {
 }
 
 /**
- * Heskestad plume entrainment correlation in its common engineering form.
- * Q is convective HRR [kW], z is height above the source [m], result [kg/s].
+ * NIST CFAST technical reference (TN 1889v1), Heskestad plume geometry:
+ * D = sqrt(4 A/pi) [m], z0 = -1.02 D + 0.083 Q_total^(2/5) [m].
+ * Q_total is in kW. A diameter override takes precedence over area, and a
+ * virtual-origin override is optional; normally z0 follows the existing t² HRR.
+ */
+export function firePlumeGeometry(hrrKw, options = {}) {
+  const config = normalizedOptions(options);
+  const totalHrr = Math.max(0, finiteNumber(hrrKw, 0));
+  const diameter = config.fireDiameterMeters ?? Math.sqrt(4 * config.fireAreaM2 / Math.PI);
+  return {
+    fireAreaM2: Math.PI * diameter * diameter / 4,
+    fireDiameterMeters: diameter,
+    virtualOriginMeters: config.virtualOriginMeters ?? (-1.02 * diameter + 0.083 * Math.pow(totalHrr, 0.4)),
+    meanFlameHeightMeters: Math.max(0, -1.02 * diameter + 0.235 * Math.pow(totalHrr, 0.4))
+  };
+}
+
+function accountRemovedPhysicsCell(state, index) {
+  state.removedHotGasVolumeM3 += state.hotGasVolumeM3[index];
+  state.removedSootKg += state.sootMassKg[index];
+  state.removedCoKg += state.coMassKg[index];
+  state.removedHeatKJ += state.excessHeatKJ[index];
+}
+
+/**
+ * Heskestad entrainment: m_dot = 0.071 Qc^(1/3) (z-z0)^(5/3)
+ * + 0.0018 Qc [kg/s], Qc=(1-chi_r) Q_total [kW], z [m above fire].
+ * Below mean flame height L, use m_dot(L) * z/L (CFAST near-flame
+ * interpolation). This prevents applying the above-flame fit where z-z0
+ * may be negative. These correlations describe an unobstructed plume; local
+ * cell injection and fixed-density hot volume are reduced-order approximations.
+ * Source: https://nvlpubs.nist.gov/nistpubs/TechnicalNotes/NIST.TN.1889v1.pdf
  */
 export function plumeEntrainmentRateKgPerSec(hrrKw, heightMeters, options = {}) {
   const config = normalizedOptions(options);
   const totalHrr = Math.max(0, finiteNumber(hrrKw, 0));
   if (!(totalHrr > 0)) return 0;
   const convectiveHrr = totalHrr * (1 - config.radiativeFraction);
-  const height = Math.max(0.1, finiteNumber(heightMeters, 2.8));
-  return 0.071 * Math.cbrt(convectiveHrr) * Math.pow(height, 5 / 3) +
-    0.0018 * convectiveHrr;
+  const height = Math.max(0, finiteNumber(heightMeters, 2.8));
+  const geometry = firePlumeGeometry(totalHrr, config);
+  const evaluationHeight = Math.max(height, geometry.meanFlameHeightMeters);
+  const effectiveHeight = Math.max(0.01, evaluationHeight - geometry.virtualOriginMeters);
+  const rate = 0.071 * Math.cbrt(convectiveHrr) * Math.pow(effectiveHeight, 5 / 3) + 0.0018 * convectiveHrr;
+  return rate * (height < geometry.meanFlameHeightMeters ? height / geometry.meanFlameHeightMeters : 1);
 }
 
 /** Alpert/Heskestad ceiling-jet velocity correlation used by CFAST. */
@@ -719,9 +816,11 @@ function buildFireDistanceField(floor, state, config) {
         seedPhysicsCellFromLegacy(state, floor, cx, cy, legacy, config, false);
       }
       const isOpenExitVent = !!exitKeys?.has(`${cx}:${cy}`);
-      const hasPotentialVentilation = isOpenExitVent ||
+      const hasPotentialVentilation = passable && (isOpenExitVent ||
         (!!cell?.stair && cell?.stairType === "outdoor") ||
-        Math.max(0, finiteNumber(cell?.ventilation, 0)) > 0;
+        Math.max(0, finiteNumber(cell?.leakageRatePerSec ?? cell?.ventilation, 0)) > 0 ||
+        Math.max(0, finiteNumber(cell?.mechanicalVentilationM3Sec, 0)) > 0 ||
+        Math.max(0, finiteNumber(cell?.naturalVentAreaM2, 0)) > 0);
       state.openExitVentMask[index] = isOpenExitVent ? 1 : 0;
       state.potentialVentilationMask[index] = hasPotentialVentilation ? 1 : 0;
       if (hasPotentialVentilation) potentialVentilationCount++;
@@ -774,6 +873,7 @@ function clearDeltas(state) {
     state.deltaSoot[index] = 0;
     state.deltaCo[index] = 0;
     state.deltaHeat[index] = 0;
+    state.deltaOutgoingVolume[index] = 0;
     state.deltaTouchedMask[index] = 0;
   }
   state.deltaTouchedIndices.length = 0;
@@ -787,7 +887,9 @@ function touchDelta(state, index) {
 
 function addExtensiveDelta(state, fromIndex, toIndex, volumeM3, captureComponents = false) {
   const sourceVolume = Math.max(0, state.hotGasVolumeM3[fromIndex]);
-  const available = Math.max(0, sourceVolume + state.deltaVolume[fromIndex]);
+  // Only the inventory present at the start of this flux pass may leave.
+  // Simultaneously incoming volume must not mask a donor's exhausted budget.
+  const available = Math.max(0, sourceVolume - state.deltaOutgoingVolume[fromIndex]);
   const cellCapacity = state.cellSizeMeters * state.cellSizeMeters * state.roomHeightMeters;
   const receiverCapacity = toIndex >= 0
     ? Math.max(0, cellCapacity - state.hotGasVolumeM3[toIndex] - state.deltaVolume[toIndex])
@@ -803,6 +905,7 @@ function addExtensiveDelta(state, fromIndex, toIndex, volumeM3, captureComponent
   const co = Math.max(0, state.coMassKg[fromIndex]) * fraction;
   const heat = Math.max(0, state.excessHeatKJ[fromIndex]) * fraction;
   state.deltaVolume[fromIndex] -= volume;
+  state.deltaOutgoingVolume[fromIndex] += volume;
   state.deltaSoot[fromIndex] -= soot;
   state.deltaCo[fromIndex] -= co;
   state.deltaHeat[fromIndex] -= heat;
@@ -827,6 +930,7 @@ function applyDeltas(state) {
     state.deltaSoot[index] = 0;
     state.deltaCo[index] = 0;
     state.deltaHeat[index] = 0;
+    state.deltaOutgoingVolume[index] = 0;
     state.deltaTouchedMask[index] = 0;
   }
   state.deltaTouchedIndices.length = 0;
@@ -841,7 +945,17 @@ function injectFireSources(floor, state, dt, config) {
     const fuelRate = hrrKw / Math.max(1, config.heatOfCombustionKJPerKg);
     const soot = fuelRate * config.sootYieldKgPerKg * dt;
     const co = fuelRate * config.coYieldKgPerKg * dt;
-    const plumeMassRate = plumeEntrainmentRateKgPerSec(hrrKw, ceilingHeight, config);
+    const sourceCell = floor.grid[Math.floor(index / state.width)][index % state.width];
+    const plumeOptions = sourceCell.fireAreaM2 != null || sourceCell.fireDiameterMeters != null || sourceCell.virtualOriginMeters != null
+      ? { ...config, fireAreaM2: sourceCell.fireAreaM2 ?? config.fireAreaM2,
+          fireDiameterMeters: sourceCell.fireDiameterMeters ?? config.fireDiameterMeters,
+          virtualOriginMeters: sourceCell.virtualOriginMeters ?? config.virtualOriginMeters }
+      : config;
+    const geometry = firePlumeGeometry(hrrKw, plumeOptions);
+    sourceCell.resolvedFireAreaM2 = geometry.fireAreaM2;
+    sourceCell.resolvedFireDiameterMeters = geometry.fireDiameterMeters;
+    sourceCell.plumeVirtualOriginMeters = geometry.virtualOriginMeters;
+    const plumeMassRate = plumeEntrainmentRateKgPerSec(hrrKw, ceilingHeight, plumeOptions);
     const hotVolume = plumeMassRate / Math.max(0.1, config.airDensityKgM3) * dt;
     const heat = hrrKw * (1 - config.radiativeFraction) * dt;
     state.hotGasVolumeM3[index] += hotVolume;
@@ -851,6 +965,7 @@ function injectFireSources(floor, state, dt, config) {
     state.generatedSootKg += soot;
     state.generatedCoKg += co;
     state.generatedHotGasVolumeM3 += hotVolume;
+    state.generatedHeatKJ += heat;
   }
 }
 
@@ -927,6 +1042,7 @@ function cellLayerTemperatureC(state, index, config) {
 
 function advectCeilingLayer(floor, state, dt, config) {
   clearDeltas(state);
+  const corridor = computeCorridorSmokeTransport(floor, state, dt, config);
   const ambientK = config.ambientTemperatureC + 273.15;
   const height = state.roomHeightMeters;
   const cell = state.cellSizeMeters;
@@ -935,6 +1051,9 @@ function advectCeilingLayer(floor, state, dt, config) {
   const targetWeights = new Float64Array(CARDINAL_DIRECTIONS.length);
   for (let donorOffset = 0; donorOffset < donorCount; donorOffset++) {
       const index = state.activeIndices[donorOffset];
+      // Straight corridor donors use the gravity-current/front closure. Rooms,
+      // junctions, short passages and unsupported layouts retain this model.
+      if (corridor.membership[index]) continue;
       const volume = state.hotGasVolumeM3[index];
       if (!(volume > 1e-12) || !state.passableMask[index]) continue;
       const currentDepth = cellLayerDepth(state, index);
@@ -994,6 +1113,9 @@ function advectCeilingLayer(floor, state, dt, config) {
           : movedVolume * targetWeights[targetOffset] / weightSum;
         assigned += addExtensiveDelta(state, index, targetIndices[targetOffset], share);
       }
+  }
+  for (const transfer of corridor.transfers) {
+    addExtensiveDelta(state, transfer.fromIndex, transfer.toIndex, transfer.volumeM3);
   }
   applyDeltas(state);
 }
@@ -1057,19 +1179,35 @@ function exitCellKeys(floor) {
   return keys;
 }
 
+/** Natural stack/wind exhaust [m³/s]. No pressure/thermal/wind forcing => 0.
+ * Boussinesq stack approximation v = Cd sqrt(2 g H ΔT/Tambient + wind²).
+ * H is an effective pressure-head height, not a solved neutral plane. This is
+ * an exhaust-only reduced-order closure with implicit clean-air replacement.
+ */
+export function naturalVentilationFlowM3Sec(openingAreaM2, heightDifferenceMeters, temperatureC, options = {}) {
+  const config = normalizedOptions(options);
+  if (!config.naturalVentilationEnabled) return 0;
+  const ambientK = Math.max(1, config.ambientTemperatureC + 273.15);
+  const deltaTemperature = Math.max(0, finiteNumber(temperatureC, config.ambientTemperatureC) - config.ambientTemperatureC);
+  const velocity = config.exitDischargeCoefficient * Math.sqrt(
+    2 * config.gravityMps2 * Math.max(0, finiteNumber(heightDifferenceMeters, 0)) * deltaTemperature / ambientK +
+    config.windVelocityMps * config.windVelocityMps
+  );
+  return Math.max(0, finiteNumber(openingAreaM2, 0)) * velocity;
+}
+
 function applyVentilationAndLosses(floor, state, dt, config) {
-  const ambientK = config.ambientTemperatureC + 273.15;
   let ventedSootKg = 0;
   let ventedCoKg = 0;
   let ventedVolumeM3 = 0;
   clearDeltas(state);
   const activeCount = state.activeIndices.length;
-  const leakageFraction = clamp(1 - Math.exp(-config.leakageRatePerSec * dt), 0, 0.2);
-  const hasGlobalLeakage = leakageFraction > 0;
-  const needsVentilationPass = hasGlobalLeakage || state.potentialVentilationCount > 0;
+  const floorMechanicalFlow = Math.max(0, finiteNumber(floor.mechanicalVentilationM3Sec, config.mechanicalVentilationM3Sec));
+  const hasGlobalLeakage = config.leakageRatePerSec > 0;
+  const needsVentilationPass = hasGlobalLeakage || floorMechanicalFlow > 0 || state.potentialVentilationCount > 0;
   for (let activeOffset = 0; needsVentilationPass && activeOffset < activeCount; activeOffset++) {
       const index = state.activeIndices[activeOffset];
-      if (!hasGlobalLeakage && !state.potentialVentilationMask[index]) continue;
+      if (!hasGlobalLeakage && !(floorMechanicalFlow > 0) && !state.potentialVentilationMask[index]) continue;
       const cx = index % state.width;
       const cy = Math.floor(index / state.width);
       const volume = state.hotGasVolumeM3[index];
@@ -1081,48 +1219,52 @@ function applyVentilationAndLosses(floor, state, dt, config) {
       // vents (outdoor stairs / explicitly opened exits) are calculated in
       // m3/s below. Keeping the two representations separate avoids treating a
       // single value once as a dimensionless multiplier and again as velocity.
-      const explicitVentRatePerSec = Math.max(0, finiteNumber(cell?.ventilation, 0));
-      let outflowM3Sec = 0;
-      if (isExit || outdoorStair) {
+      const leakageRate = config.leakageRatePerSec + Math.max(0, finiteNumber(cell?.leakageRatePerSec ?? cell?.ventilation, 0));
+      // A specified floor total is allocated once over exhaust locations. With
+      // no marked locations, uniform extraction over passable cells is assumed.
+      const floorFlowShare = state.potentialVentilationCount > 0
+        ? (state.potentialVentilationMask[index] ? floorMechanicalFlow / state.potentialVentilationCount : 0)
+        : floorMechanicalFlow / Math.max(1, state.topologyPassableCount);
+      const mechanicalFlow = Math.max(0, finiteNumber(cell?.mechanicalVentilationM3Sec, 0)) + floorFlowShare;
+      let naturalFlow = 0;
+      if (isExit || outdoorStair || Number(cell?.naturalVentAreaM2) > 0) {
         const depth = cellLayerDepth(state, index);
         const temperatureC = cellLayerTemperatureC(state, index, config);
-        const deltaTemperature = Math.max(0, temperatureC - config.ambientTemperatureC);
         const openingWidth = isExit
           ? Math.max(state.cellSizeMeters, finiteNumber(cell?.exitWidthMeters, config.defaultExitWidthMeters))
           : Math.max(state.cellSizeMeters, finiteNumber(cell?.stairWidthMeters, state.cellSizeMeters));
         const openingHeight = Math.min(
           state.roomHeightMeters,
-          isExit ? config.exitOpeningHeightMeters : Math.max(1, depth)
+          isExit ? config.exitOpeningHeightMeters : state.roomHeightMeters
         );
-        const openingArea = openingWidth * openingHeight;
-        const buoyantVelocity = config.exitDischargeCoefficient * Math.sqrt(
-          2 * config.gravityMps2 * Math.max(0.05, depth) *
-            deltaTemperature / Math.max(1, ambientK)
-        );
-        outflowM3Sec = openingArea * Math.max(
-          config.minimumVentVelocityMps,
-          buoyantVelocity
-        );
+        // Only the part of an opening intersecting the upper layer exhausts
+        // smoke. A door below a thin ceiling layer cannot remove that layer.
+        // Explicit naturalVentAreaM2 instead specifies an effective exposed area.
+        const exposedHeight = Math.max(0, openingHeight - (state.roomHeightMeters - depth));
+        const openingArea = Math.max(0, finiteNumber(cell?.naturalVentAreaM2, openingWidth * exposedHeight));
+        const stackHeight = Math.max(0, finiteNumber(cell?.naturalVentHeightMeters, depth));
+        naturalFlow = naturalVentilationFlowM3Sec(openingArea, stackHeight, temperatureC, config);
       }
-      const ventFraction = outflowM3Sec > 0
-        ? clamp(1 - Math.exp(-outflowM3Sec * dt / Math.max(1e-9, volume)), 0, 0.92)
-        : 0;
-      const explicitVentFraction = clamp(
-        1 - Math.exp(-explicitVentRatePerSec * dt),
-        0,
-        0.92
-      );
-      const removalFraction = clamp(
-        1 - (1 - ventFraction) * (1 - leakageFraction) * (1 - explicitVentFraction),
-        0,
-        0.95
-      );
+      // Combined well-mixed first-order removal: rates [1/s] add, each physical
+      // mechanism receives its share of the exactly integrated loss. No floor
+      // or per-cell m³/s value is also interpreted as a leakage multiplier.
+      const naturalRate = naturalFlow / volume;
+      const mechanicalRate = mechanicalFlow / volume;
+      const totalRate = leakageRate + naturalRate + mechanicalRate;
+      const removalFraction = 1 - Math.exp(-totalRate * dt);
       if (removalFraction > 0) {
         const removed = addExtensiveDelta(state, index, -1, volume * removalFraction, true);
         if (removed) {
           ventedSootKg += removed.sootMassKg;
           ventedCoKg += removed.coMassKg;
           ventedVolumeM3 += removed.volumeM3;
+          state.ventedHeatKJ += removed.heatKJ;
+          state.leakedSootKg += removed.sootMassKg * leakageRate / totalRate;
+          state.leakedCoKg += removed.coMassKg * leakageRate / totalRate;
+          state.naturalVentedSootKg += removed.sootMassKg * naturalRate / totalRate;
+          state.naturalVentedCoKg += removed.coMassKg * naturalRate / totalRate;
+          state.mechanicalVentedSootKg += removed.sootMassKg * mechanicalRate / totalRate;
+          state.mechanicalVentedCoKg += removed.coMassKg * mechanicalRate / totalRate;
         }
       }
   }
@@ -1131,6 +1273,7 @@ function applyVentilationAndLosses(floor, state, dt, config) {
   const heatFactor = Math.exp(-config.heatLossRatePerSec * dt);
   const depositionFactor = Math.exp(-config.sootDepositionRatePerSec * dt);
   for (const index of state.activeIndices) {
+    state.lostHeatKJ += state.excessHeatKJ[index] * (1 - heatFactor);
     state.excessHeatKJ[index] *= heatFactor;
     const beforeSoot = state.sootMassKg[index];
     state.sootMassKg[index] *= depositionFactor;
@@ -1139,6 +1282,7 @@ function applyVentilationAndLosses(floor, state, dt, config) {
   compactActiveIndices(state);
   state.ventedSootKg += ventedSootKg;
   state.ventedCoKg += ventedCoKg;
+  state.ventedHotGasVolumeM3 += ventedVolumeM3;
   return { ventedSootKg, ventedCoKg, ventedVolumeM3 };
 }
 
@@ -1186,13 +1330,9 @@ function physicalStairTransfers(floors, statesByFloor, links, dt, config) {
     if (!(sourceVolume > 1e-12)) return;
     const temperatureC = cellLayerTemperatureC(lowerState, lowerIndex, config);
     const deltaTemperature = Math.max(0, temperatureC - config.ambientTemperatureC);
-    const floorRise = Math.max(0.5, Math.abs(toElevation - fromElevation));
-    const ambientK = config.ambientTemperatureC + 273.15;
-    const stackVelocity = config.exitDischargeCoefficient * Math.sqrt(
-      2 * config.gravityMps2 * floorRise * deltaTemperature / Math.max(1, ambientK)
-    );
+    const floorRise = Math.abs(toElevation - fromElevation);
     const openingArea = link.widthMeters * Math.max(0.1, config.stairOpeningDepthMeters);
-    const baseVolume = openingArea * Math.max(config.minimumVentVelocityMps, stackVelocity) * dt;
+    const baseVolume = naturalVentilationFlowM3Sec(openingArea, floorRise, temperatureC, config) * dt;
     const typeMeta = STAIR_TYPE_META[link.type] || STAIR_TYPE_META.indoor;
     const riseRequest = Math.min(
       sourceVolume,
@@ -1267,6 +1407,18 @@ function physicalStairTransfers(floors, statesByFloor, links, dt, config) {
     const ventedCoKg = coRemoved * (1 - riseFractionOfRemoval);
     request.lowerState.ventedSootKg += ventedSootKg;
     request.lowerState.ventedCoKg += ventedCoKg;
+    request.lowerState.ventedHotGasVolumeM3 += ventVolume;
+    request.lowerState.ventedHeatKJ += heatRemoved * (1 - riseFractionOfRemoval);
+    request.lowerState.naturalVentedSootKg += ventedSootKg;
+    request.lowerState.naturalVentedCoKg += ventedCoKg;
+    request.lowerState.transferredOutSootKg += sootRemoved * riseFractionOfRemoval;
+    request.upperState.transferredInSootKg += sootRemoved * riseFractionOfRemoval;
+    request.lowerState.transferredOutCoKg += coRemoved * riseFractionOfRemoval;
+    request.upperState.transferredInCoKg += coRemoved * riseFractionOfRemoval;
+    request.lowerState.transferredOutVolumeM3 += riseVolume;
+    request.upperState.transferredInVolumeM3 += riseVolume;
+    request.lowerState.transferredOutHeatKJ += heatRemoved * riseFractionOfRemoval;
+    request.upperState.transferredInHeatKJ += heatRemoved * riseFractionOfRemoval;
     transfers.push({
       stairId: request.link.id,
       type: request.link.type,
@@ -1301,6 +1453,8 @@ function eyeLayerFraction(interfaceHeightMeters, config) {
 }
 
 function setClearSmokeFields(cell, config) {
+  delete cell.fdsSampleHeightMeters;
+  delete cell.fdsFields;
   Object.assign(cell, {
     smokeDensity: 0,
     eyeLevelSmokeDensity: 0,
@@ -1325,6 +1479,8 @@ function setClearSmokeFields(cell, config) {
     upperLayerTemperatureC: config.ambientTemperatureC,
     eyeLevelTemperatureC: config.ambientTemperatureC,
     sootConcentrationKgM3: 0,
+    eyeLevelDataSource: "reduced_order_nist",
+    upperLayerDataSource: "reduced_order_nist",
     smokeDataSource: "reduced_order_nist",
     hazardDataSource: "reduced_order_nist"
   });
@@ -1367,7 +1523,9 @@ function applyFdsMetricsToCell(floor, cell, cx, cy, timeSec, config) {
   };
   const fields = {
     smokeDataSource: "fds_csv",
-    hazardDataSource: "fds_csv"
+    hazardDataSource: "fds_csv",
+    eyeLevelDataSource: "fds_csv",
+    fdsSampleHeightMeters: fds.sampleHeightMeters
   };
   if (hasSmokeDensity) {
     fields.smokeDensity = smokeDensity;
@@ -1378,7 +1536,6 @@ function applyFdsMetricsToCell(floor, cell, cx, cy, timeSec, config) {
   if (hasExtinction) {
     Object.assign(fields, {
       extinctionCoefficientM1: extinction,
-      upperLayerExtinctionCoefficientM1: extinction,
       eyeLevelExtinctionCoefficientM1: eyeExtinction,
       opticalDensity: extinction,
       opticalDensityM1: extinction,
@@ -1388,7 +1545,6 @@ function applyFdsMetricsToCell(floor, cell, cx, cy, timeSec, config) {
   if (hasCo) {
     Object.assign(fields, {
       coPpm,
-      upperLayerCoPpm: coPpm,
       eyeLevelCoPpm: coPpm,
       co: coPpm
     });
@@ -1396,7 +1552,6 @@ function applyFdsMetricsToCell(floor, cell, cx, cy, timeSec, config) {
   if (hasVisibility || hasExtinction || hasSmokeDensity) {
     Object.assign(fields, {
       visibilityMeters,
-      upperLayerVisibilityMeters: visibilityMeters,
       visibilityM: visibilityMeters,
       visibility: metrics.visibility
     });
@@ -1445,6 +1600,10 @@ function derivePhysicalSmokeFields(floor, state, timeSec, config) {
     const cx = index % state.width;
     const cy = Math.floor(index / state.width);
     const cell = floor.grid?.[cy]?.[cx];
+    if (cell) {
+      delete cell.fdsSampleHeightMeters;
+      delete cell.fdsFields;
+    }
     if (!cell || !smokePassable(cell)) {
       const needsClear = hasPhysicalSmokeState(state, index) ||
         state.lastLegacyDensity[index] > 0 || floor.smokeMap[cy][cx] > 0 ||
@@ -1452,6 +1611,7 @@ function derivePhysicalSmokeFields(floor, state, timeSec, config) {
         finiteNumber(cell?.smokeLayerDepthMeters, 0) > 0 ||
         cell?.smokeDataSource === "fds_csv";
       if (needsClear) {
+        accountRemovedPhysicsCell(state, index);
         state.hotGasVolumeM3[index] = 0;
         state.sootMassKg[index] = 0;
         state.coMassKg[index] = 0;
@@ -1550,6 +1710,8 @@ function derivePhysicalSmokeFields(floor, state, timeSec, config) {
       upperLayerTemperatureC: upperTemperatureC,
       eyeLevelTemperatureC: eyeTemperatureC,
       sootConcentrationKgM3: sootMass / Math.max(1e-12, volume),
+      eyeLevelDataSource: "reduced_order_nist",
+      upperLayerDataSource: "reduced_order_nist",
       smokeDataSource: "reduced_order_nist",
       hazardDataSource: "reduced_order_nist"
     });
@@ -1565,6 +1727,42 @@ function derivePhysicalSmokeFields(floor, state, timeSec, config) {
   }
   compactActiveIndices(state);
   return { maxSmokeDensity, totalSmoke, totalSootKg, totalCoKg, totalHotGasVolumeM3 };
+}
+
+/** Inspect cumulative extensive-quantity budgets without using capped display
+ * concentrations. Error = initial + generated + stair-in - remaining - losses
+ * - stair-out. For all floors together stair transfers cancel. Hot-layer volume
+ * is an entrainment bookkeeping variable, not compressible air mass; capacity
+ * suppression is reported explicitly. Editing cells is a separate removal.
+ */
+export function smokeConservationBalance(floorsOrFloor) {
+  const floors = Array.isArray(floorsOrFloor) ? floorsOrFloor : [floorsOrFloor];
+  const totals = { soot: {}, co: {}, volume: {}, heat: {} };
+  const specs = [
+    ["soot", "sootMassKg", "initialSootKg", "generatedSootKg", "ventedSootKg", "depositedSootKg", "removedSootKg", "transferredInSootKg", "transferredOutSootKg"],
+    ["co", "coMassKg", "initialCoKg", "generatedCoKg", "ventedCoKg", null, "removedCoKg", "transferredInCoKg", "transferredOutCoKg"],
+    ["volume", "hotGasVolumeM3", "initialHotGasVolumeM3", "generatedHotGasVolumeM3", "ventedHotGasVolumeM3", "suppressedEntrainmentVolumeM3", "removedHotGasVolumeM3", "transferredInVolumeM3", "transferredOutVolumeM3"],
+    ["heat", "excessHeatKJ", "initialHeatKJ", "generatedHeatKJ", "ventedHeatKJ", "lostHeatKJ", "removedHeatKJ", "transferredInHeatKJ", "transferredOutHeatKJ"]
+  ];
+  for (const [quantity, inventory, initial, generated, vented, loss, removed, incoming, outgoing] of specs) {
+    const total = { initial: 0, generated: 0, remaining: 0, vented: 0, otherLoss: 0, removedByEdit: 0, stairIn: 0, stairOut: 0 };
+    for (const floor of floors) {
+      const state = floor?.smokePhysics;
+      if (!state) continue;
+      total.initial += finiteNumber(state[initial], 0);
+      total.generated += finiteNumber(state[generated], 0);
+      total.remaining += state[inventory].reduce((sum, value) => sum + value, 0);
+      total.vented += finiteNumber(state[vented], 0);
+      total.otherLoss += finiteNumber(state[loss], 0);
+      total.removedByEdit += finiteNumber(state[removed], 0);
+      total.stairIn += finiteNumber(state[incoming], 0);
+      total.stairOut += finiteNumber(state[outgoing], 0);
+    }
+    total.error = total.initial + total.generated + total.stairIn - total.remaining - total.vented - total.otherLoss - total.removedByEdit - total.stairOut;
+    total.relativeError = total.error / Math.max(1e-15, total.initial + total.generated + total.stairIn);
+    totals[quantity] = total;
+  }
+  return totals;
 }
 
 function aggregateVerticalTransfers(target, additions) {
@@ -1691,6 +1889,15 @@ export function stepLegacySmokePhysicsInPlace(
     const state = statesByFloor.get(floor);
     state.elapsedSec += dt;
     const metrics = derivePhysicalSmokeFields(floor, state, timeSec, config);
+    // Fronts are diagnostics of the final shared physical state, including
+    // stair input, ventilation and zero-duration redraw/reset requests. The
+    // diagnostic call moves no volume and does not advance a second model.
+    const corridor = computeCorridorSmokeTransport(floor, state, 0, config);
+    floor.corridorSmoke = {
+      model: "gravity_current_reduced_order",
+      segments: corridor.segments,
+      maxFrontVelocityMps: corridor.maxFrontVelocityMps
+    };
     maxSmokeDensity = Math.max(maxSmokeDensity, metrics.maxSmokeDensity);
     totalSmoke += metrics.totalSmoke;
     totalSootKg += metrics.totalSootKg;

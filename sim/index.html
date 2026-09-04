@@ -48,7 +48,7 @@
       </div>
       <div id="fdsCsvStatus" class="hint">
         未読込。列:
-        time_s,floor,cx,cy,heat_flux_kw_m2,extinction_coefficient_m_1,co_ppm,visibility_m,temperature_c
+        time_s,floor,cx,cy,sample_height_m,heat_flux_kw_m2,extinction_coefficient_m_1,co_ppm,visibility_m,temperature_c
       </div>
       <div class="hint">
         FDS等のCFD結果をCSV化して読み込むと、熱流束・煙濃度・CO濃度・視界距離を経路選択と危険度へ反映します。
@@ -64,6 +64,15 @@
           <option value="co">CO濃度</option>
           <option value="visibility">視界距離</option>
         </select>
+      </div>
+      <div class="row">
+        <label for="fireAreaM2">火源面積 [m²]（各火災セル）</label>
+        <input type="number" id="fireAreaM2" min="0.01" step="0.1" value="1">
+      </div>
+      <div class="hint">等価直径 D=√(4A/π)。仮想原点 z₀=−1.02D+0.083Q^0.4 [m] はt²発熱速度から更新。既定A=1 m²、D≈1.13 m。</div>
+      <div class="row">
+        <label for="mechanicalVentilationM3Sec">機械排煙流量（各階合計）[m³/s]</label>
+        <input type="number" id="mechanicalVentilationM3Sec" min="0" step="0.1" value="0">
       </div>
       <div class="row">
         <label for="smokeSourceRate">発煙源倍率 [-]</label>
@@ -181,6 +190,11 @@
         <button id="btnReset">リセット</button>
         <button id="btnClearMap">クリア</button>
       </div>
+      <div class="row">
+        <label for="maxObservationTimeSec">観測時間上限 [s]</label>
+        <input id="maxObservationTimeSec" type="number" min="0.1" step="1" value="600">
+      </div>
+      <div class="hint">上限時に未避難の人は未完了として記録します。tenable / degraded / critical は比較用の耐容状態です。死亡・完全なFEDの推定ではありません。</div>
       <div id="statusBar">待機中 - マップを読み込んでください。</div>
     </div>
 
@@ -296,6 +310,8 @@
       <span class="viewToolbarSpacer"></span>
       <label><input id="view3dFire" type="checkbox" checked> 火災</label>
       <label><input id="view3dSmoke" type="checkbox" checked> 煙</label>
+      <label>煙表示 <select id="view3dSmokeMode" aria-label="3D煙表示モード"><option value="extinction">消光係数 [1/m]</option><option value="co">CO [ppm]</option><option value="temperature">温度 [°C]</option><option value="source">データ源</option></select></label>
+      <label><input id="view3dSmokeBounds" type="checkbox" checked> 層境界・厚さ</label>
       <label><input id="view3dAgents" type="checkbox" checked> 人</label>
       <label><input id="view3dWalls" type="checkbox" checked> 壁</label>
       <button id="btnReset3DCamera" type="button">視点リセット</button>
@@ -305,7 +321,7 @@
         <canvas id="simCanvas"></canvas>
         <div id="overlayHUD">
           <div>時間: <strong id="hudTime">0.0 s</strong></div>
-          <div>避難: <strong id="hudEvac">0 避難 / 0 死亡 / 0</strong></div>
+          <div>避難: <strong id="hudEvac">0 避難 / critical経験 0 / 0</strong></div>
           <div>平均: <strong id="hudAvg">--</strong>  最大: <strong id="hudMax">--</strong></div>
         </div>
       </div>

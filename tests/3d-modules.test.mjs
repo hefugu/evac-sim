@@ -1,4 +1,9 @@
 import test from "node:test";
+import "./fds-height.test.mjs";
+import "./exposure.test.mjs";
+import "./smoke-physics.test.mjs";
+import "./corridor-smoke.test.mjs";
+import "./renderer-modes.test.mjs";
 import assert from "node:assert/strict";
 
 import {
@@ -576,6 +581,9 @@ test("linked outdoor stair does not count the same vent twice", () => {
     sootDepositionRatePerSec: 0,
     heatLossRatePerSec: 0,
     gravityMps2: 0,
+    // Explicit wind forcing keeps this fixture about duplicate vent accounting.
+    // A deprecated minimum velocity no longer moves gas in still/cold air.
+    windVelocityMps: 0.05,
     maxSubstepSec: 1
   };
   const seeded = stepSmoke3D([makeStairFloor(0, true), makeStairFloor(1, false)], [], 0, options);

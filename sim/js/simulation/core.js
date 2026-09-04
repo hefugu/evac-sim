@@ -1,9 +1,16 @@
+import { parseFdsRiskCsv, eyeHeightFdsFrame } from "./fds-csv.js";
 import { bindCoreControls, getUIRefs } from "../ui.js";
 import { state, syncLegacyState } from "../state.js";
 import { createRenderer } from "../renderer.js";
 import { computePotentialFieldFromSeedsModule } from "./potential.js";
 import { clamp, parseNum} from "../utils/helpers.js";
 import { downloadCsvReport } from "../export/csv.js";
+import {
+  createAgentExposure,
+  accumulateAgentExposure,
+  resolveTenabilityOptions,
+  simulationObservationComplete
+} from "./exposure.js";
 import { loadImageFromFile } from "../mapLoader.js";
 import { loadPresetStore, savePresetStore } from "../storage/presets.js";
 import { pushParamHistoryEntry, showParamHistoryLog } from "../storage/history.js";
@@ -106,6 +113,15 @@ export function initSimulation() {
   const smokeCoYieldInput = ui.smokeCoYieldInput;
   const smokeHeatOfCombustionInput = ui.smokeHeatOfCombustionInput;
   const smokeExitVentInput = ui.smokeExitVentInput;
+  const fireAreaInput = ui.fireAreaInput;
+  const mechanicalVentInput = ui.mechanicalVentInput;
+  const maxObservationTimeInput = ui.maxObservationTimeInput;
+  maxObservationTimeInput?.addEventListener("change", () => {
+    state.hazards.tenabilityOptions = resolveTenabilityOptions({
+      ...state.hazards.tenabilityOptions,
+      maxSimulationTimeSec: parseNum(maxObservationTimeInput, 600)
+    });
+  });
   const stairTypeInput = ui.stairTypeInput;
   const stairTravelCostInput = ui.stairTravelCostInput;
   const stairSmokeTransferInput = ui.stairSmokeTransferInput;
@@ -197,6 +213,7 @@ export function initSimulation() {
   let simRunning = state.simRunning = false;
   let simTime = state.simTime = 0;
   let lastFrameTime = 0;
+  let simulationAnimationFrameId = null;
   let heatmap = null;     // Cell pass count
 
   let maxHeatCell = null;
@@ -276,8 +293,6 @@ export function initSimulation() {
   const FDS_ROUTE_CO_WEIGHT = 0.035;
   const FDS_ROUTE_VISIBILITY_WEIGHT = 18.0;
   const FDS_ROUTE_TEMPERATURE_WEIGHT = 0.4;
-  const CO_DOSE_FATAL_PPM_MIN = 30000;
-  const HEAT_FLUX_DOSE_FATAL = 120;
   const T2_FIRE_ALPHA = 0.0469; // medium t-squared fire growth, kW/s^2
   const T2_FIRE_MAX_HRR_KW = 3000;
   const STAY_PENALTY = 0.2;
@@ -293,9 +308,6 @@ export function initSimulation() {
   const MIN_VISIBILITY = 0.1;
   const VISIBILITY_NOISE = 0.9;
   const LOW_VISIBILITY_THRESHOLD = 0.35;
-  const SMOKE_DEATH_DOSE = 17.0;
-  const HEAT_DEATH_DOSE = 10.0;
-  const LETHAL_SMOKE_LEVEL = 2.7;
   const FIRE_LETHAL_RADIUS = 1.1;
   const FIRE_DANGER_RADIUS = 3.0;
   const FALL_SMOKE_THRESHOLD = 0.9;
@@ -369,9 +381,14 @@ export function initSimulation() {
     state.sim.fireStats = { activeFireCount, totalHrrKw: totalFireHrrKw };
     state.spatial.cellSizeMeters = Math.max(0.05, parseNum(cellSizeMetersInput, state.spatial.cellSizeMeters || 0.5));
     state.hazards.fds = importedFdsRisk;
+    state.hazards.smokeModelOptions = currentSmokeModelOptions();
     state.render.revision = (state.render.revision || 0) + 1;
 
     const liveMetrics = summarizeAgentMetrics(agents);
+    state.hazards.tenabilityOptions = resolveTenabilityOptions(state.hazards.tenabilityOptions);
+    state.evaluation.tenabilityCounts = liveMetrics.tenabilityCounts;
+    state.evaluation.worstTenabilityCounts = liveMetrics.worstTenabilityCounts;
+    state.evaluation.exposureTotals = liveMetrics.exposureTotals;
     state.evaluation.floorOccupancy = liveMetrics.floorOccupancy;
     state.evaluation.stairCongestion = Object.fromEntries(
       stairCongestion.map(item => [item.id || item.stairId, item])
@@ -875,6 +892,8 @@ export function initSimulation() {
     return {
       floorCount,
       currentFloor,
+      smokeModel: currentSmokeModelOptions(),
+      tenabilityOptions: resolveTenabilityOptions(state.hazards.tenabilityOptions),
       numAgents: parseNum(numAgentsInput, 80),
       speed: parseNum(speedInput, 1.2),
       speedVar: parseNum(speedVarInput, 25),
@@ -896,6 +915,21 @@ export function initSimulation() {
 
   function restoreSettingsSnapshot(snap) {
     if (!snap) return;
+    if (snap.tenabilityOptions) {
+      state.hazards.tenabilityOptions = resolveTenabilityOptions(snap.tenabilityOptions);
+      if (maxObservationTimeInput) maxObservationTimeInput.value = state.hazards.tenabilityOptions.maxSimulationTimeSec;
+    }
+    if (snap.smokeModel) {
+      const fields = { fireAreaM2: fireAreaInput, mechanicalVentilationM3Sec: mechanicalVentInput,
+        sourceMultiplier: smokeSourceRateInput, turbulentDiffusivityM2Sec: smokeDiffusionRateInput,
+        ceilingJetVelocityMultiplier: smokeSpreadMixInput, diagonalMix: smokeDiagonalMixInput,
+        leakageRatePerSec: smokeDecayRateInput, sootYieldKgPerKg: smokeSootYieldInput,
+        coYieldKgPerKg: smokeCoYieldInput, heatOfCombustionKJPerKg: smokeHeatOfCombustionInput };
+      Object.entries(fields).forEach(([key, input]) => {
+        if (input && Number.isFinite(snap.smokeModel[key])) input.value = snap.smokeModel[key];
+      });
+      if (smokeExitVentInput) smokeExitVentInput.checked = !!snap.smokeModel.exitActsAsOpenVent;
+    }
     if (Number.isFinite(snap.numAgents)) numAgentsInput.value = snap.numAgents;
     if (Number.isFinite(snap.speed)) speedInput.value = snap.speed;
     if (Number.isFinite(snap.speedVar)) speedVarInput.value = snap.speedVar;
@@ -988,7 +1022,7 @@ export function initSimulation() {
         initializeAllFloors: false,
         clearMarkers: true
       });
-      if (ok) resetSimulationCore(true);
+      if (ok) resetSimulationCore();
     }
     log(`プリセット読込: ${name}`);
   }
@@ -1017,173 +1051,6 @@ export function initSimulation() {
       paramHistory,
       log
     });
-  }
-
-  function splitCsvLine(line) {
-    const out = [];
-    let cur = "";
-    let quoted = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') {
-        if (quoted && line[i + 1] === '"') {
-          cur += '"';
-          i++;
-        } else {
-          quoted = !quoted;
-        }
-      } else if (ch === "," && !quoted) {
-        out.push(cur.trim());
-        cur = "";
-      } else {
-        cur += ch;
-      }
-    }
-    out.push(cur.trim());
-    return out;
-  }
-
-  function normalizeCsvKey(key) {
-    return String(key || "")
-      .trim()
-      .toLowerCase()
-      .replace(/[\s\-]+/g, "_")
-      .replace(/[()\[\]/]/g, "");
-  }
-
-  function csvNumber(row, names, fallback = 0) {
-    for (const name of names) {
-      const v = row[name];
-      if (v == null || v === "") continue;
-      const n = Number(v);
-      if (Number.isFinite(n)) return n;
-    }
-    return fallback;
-  }
-
-  function parseFdsRiskCsv(text, fileName = "fds.csv") {
-    const rawLines = String(text || "")
-      .split(/\r?\n/)
-      .map(line => line.trim())
-      .filter(line => line && !line.startsWith("#"));
-    if (rawLines.length < 2) throw new Error("CSVにヘッダーとデータ行が必要です。");
-
-    const headers = splitCsvLine(rawLines[0]).map(normalizeCsvKey);
-    const frames = new Map();
-    let rows = 0;
-
-    for (let i = 1; i < rawLines.length; i++) {
-      const cols = splitCsvLine(rawLines[i]);
-      const row = {};
-      headers.forEach((h, idx) => {
-        row[h] = cols[idx] ?? "";
-      });
-
-      const time = csvNumber(row, ["time_s", "time", "t", "sec", "seconds"], 0);
-      const rawFloor = csvNumber(row, ["floor", "floor_index", "f"], 1);
-      const floor = Math.max(0, Math.floor(rawFloor) - 1);
-      const cx = Math.floor(csvNumber(row, ["cx", "cell_x", "grid_x", "x"], NaN));
-      const cy = Math.floor(csvNumber(row, ["cy", "cell_y", "grid_y", "y"], NaN));
-      if (!Number.isFinite(cx) || !Number.isFinite(cy)) continue;
-
-      const extinctionCoefficient = csvNumber(row, [
-        "extinction_coefficient_m_1", "extinction_coefficient", "k_m_1"
-      ], NaN);
-      const base10OpticalDensityPerMeter = csvNumber(row, [
-        "optical_density_base10_m_1", "od_base10_m_1"
-      ], NaN);
-      const legacyOpticalDensityM1 = csvNumber(row, ["optical_density_m_1"], NaN);
-      const record = {
-        floor,
-        cx,
-        cy,
-        heatFluxKwM2: csvNumber(row, ["heat_flux_kw_m2", "heat_flux", "q_rad", "q_total", "flux_kw_m2"], NaN),
-        opticalDensityM1: Number.isFinite(extinctionCoefficient)
-          ? extinctionCoefficient
-          : (Number.isFinite(base10OpticalDensityPerMeter)
-              ? base10OpticalDensityPerMeter * Math.LN10
-              : legacyOpticalDensityM1),
-        coPpm: csvNumber(row, ["co_ppm", "carbon_monoxide_ppm", "co"], NaN),
-        visibilityM: csvNumber(row, ["visibility_m", "visibility", "vis_m"], NaN),
-        temperatureC: csvNumber(row, ["temperature_c", "temp_c", "temperature"], NaN)
-      };
-
-      if (![record.heatFluxKwM2, record.opticalDensityM1, record.coPpm,
-        record.visibilityM, record.temperatureC].some(Number.isFinite)) continue;
-
-      if (!frames.has(time)) frames.set(time, new Map());
-      frames.get(time).set(`${floor}:${cx}:${cy}`, record);
-      rows++;
-    }
-
-    const times = [...frames.keys()].sort((a, b) => a - b);
-    if (!times.length || rows === 0) throw new Error("有効なFDS行がありません。");
-
-    // Treat CSV rows as time-stamped updates. A sparse sensor/export file often
-    // omits unchanged cells and fields; sample-and-hold them causally until a
-    // later row explicitly supplies a replacement (including an explicit 0).
-    const heldCells = new Map();
-    const heldFrames = times.map(time => {
-      frames.get(time).forEach((record, key) => {
-        const previous = heldCells.get(key);
-        const merged = previous
-          ? { ...previous, floor: record.floor, cx: record.cx, cy: record.cy }
-          : { ...record };
-        [
-          "heatFluxKwM2", "opticalDensityM1", "coPpm", "visibilityM", "temperatureC"
-        ].forEach(field => {
-          if (Number.isFinite(record[field])) merged[field] = record[field];
-        });
-        heldCells.set(key, merged);
-      });
-      return { time, cells: new Map(heldCells) };
-    });
-
-    const parsed = {
-      active: true,
-      name: fileName,
-      rows,
-      times,
-      frames: heldFrames
-    };
-    parsed.warnings = [];
-    if (headers.includes("optical_density_m_1")) {
-      parsed.warnings.push(
-        "optical_density_m_1 は旧互換として自然対数の減光係数 K [1/m] と解釈しました。" +
-        "base-10値は optical_density_base10_m_1 を使用してください。"
-      );
-    }
-    parsed.stats = summarizeFdsRiskCsv(parsed);
-    return parsed;
-  }
-
-  function summarizeFdsRiskCsv(risk) {
-    const stats = {
-      rows: risk?.rows || 0,
-      timeCount: risk?.times?.length || 0,
-      maxHeatFluxKwM2: 0,
-      maxOpticalDensityM1: 0,
-      maxCoPpm: 0,
-      minVisibilityM: Infinity,
-      maxTemperatureC: -Infinity
-    };
-    if (!risk?.frames?.length) return stats;
-    risk.frames.forEach(frame => {
-      frame.cells.forEach(rec => {
-        if (Number.isFinite(rec.heatFluxKwM2)) {
-          stats.maxHeatFluxKwM2 = Math.max(stats.maxHeatFluxKwM2, rec.heatFluxKwM2);
-        }
-        if (Number.isFinite(rec.opticalDensityM1)) {
-          stats.maxOpticalDensityM1 = Math.max(stats.maxOpticalDensityM1, rec.opticalDensityM1);
-        }
-        if (Number.isFinite(rec.coPpm)) stats.maxCoPpm = Math.max(stats.maxCoPpm, rec.coPpm);
-        if (Number.isFinite(rec.visibilityM)) stats.minVisibilityM = Math.min(stats.minVisibilityM, rec.visibilityM);
-        if (Number.isFinite(rec.temperatureC)) stats.maxTemperatureC = Math.max(stats.maxTemperatureC, rec.temperatureC);
-      });
-    });
-    if (!Number.isFinite(stats.minVisibilityM)) stats.minVisibilityM = null;
-    if (!Number.isFinite(stats.maxTemperatureC)) stats.maxTemperatureC = null;
-    return stats;
   }
 
   function formatFdsStats(stats) {
@@ -1222,7 +1089,7 @@ export function initSimulation() {
     }
     cachedFdsDataset = importedFdsRisk;
     cachedFdsQueryTime = target;
-    cachedFdsFrame = bestIndex >= 0 ? importedFdsRisk.frames[bestIndex] : null;
+    cachedFdsFrame = bestIndex >= 0 ? eyeHeightFdsFrame(importedFdsRisk.frames[bestIndex]) : null;
     return cachedFdsFrame;
   }
 
@@ -1232,7 +1099,10 @@ export function initSimulation() {
     return frame.cells.get(`${Math.max(0, floor)}:${cx}:${cy}`) || null;
   }
 
+  const lastFdsSampleCells = new Set();
   function restoreLastAppliedFdsCells() {
+    lastFdsSampleCells.forEach(cell => { delete cell.fdsSamples; });
+    lastFdsSampleCells.clear();
     if (!lastAppliedFdsCells.size) {
       lastAppliedFdsFrameTime = null;
       return 0;
@@ -1246,6 +1116,9 @@ export function initSimulation() {
       const cell = floorStates[record.floor]?.grid?.[record.cy]?.[record.cx];
       if (!cell) return;
       const baseline = entry.baseline || {};
+      delete cell.fdsSampleHeightMeters;
+      delete cell.fdsFields;
+      cell.eyeLevelDataSource = "reduced_order_nist";
       cell.heatFluxKwM2 = Math.max(0, Number(baseline.heatFluxKwM2) || 0);
       cell.heat = Math.max(0, Number(baseline.heat) || 0);
       cell.temperatureC = Number.isFinite(baseline.temperatureC)
@@ -1310,6 +1183,11 @@ export function initSimulation() {
       restoreLastAppliedFdsCells();
     }
     let applied = 0;
+    frame.samples?.forEach(records => {
+      const first = records[0];
+      const cell = floorStates[first.floor]?.grid?.[first.cy]?.[first.cx];
+      if (cell) { cell.fdsSamples = records; lastFdsSampleCells.add(cell); }
+    });
     frame.cells.forEach(record => {
       const floor = floorStates[record.floor];
       const cell = floor?.grid?.[record.cy]?.[record.cx];
@@ -1363,7 +1241,9 @@ export function initSimulation() {
         : (hasExtinction
           ? (opticalDensity > 0.001 ? Math.min(30, 3 / opticalDensity) : 30)
           : Math.max(0, Number(cell.visibilityMeters ?? cell.visibilityM) || 30));
-      const fields = { hazardDataSource: "fds_csv" };
+      const fields = { hazardDataSource: "fds_csv", fdsSampleHeightMeters: record.sampleHeightMeters,
+        eyeLevelDataSource: "fds_csv", upperLayerDataSource: "reduced_order_nist",
+        fdsFields: ["heatFluxKwM2", "temperatureC", "opticalDensityM1", "coPpm", "visibilityM"].filter(key => Number.isFinite(record[key])) };
       if (hasExtinction) {
         if (floor.smokeMap?.[record.cy]) floor.smokeMap[record.cy][record.cx] = smokeDensity;
         Object.assign(fields, {
@@ -1371,7 +1251,6 @@ export function initSimulation() {
           eyeLevelSmokeDensity: smokeDensity,
           smoke: smokeDensity,
           extinctionCoefficientM1: opticalDensity,
-          upperLayerExtinctionCoefficientM1: opticalDensity,
           eyeLevelExtinctionCoefficientM1: opticalDensity,
           opticalDensity,
           opticalDensityM1: opticalDensity,
@@ -1381,7 +1260,6 @@ export function initSimulation() {
       if (hasCo) {
         Object.assign(fields, {
           coPpm,
-          upperLayerCoPpm: coPpm,
           eyeLevelCoPpm: coPpm,
           co: coPpm
         });
@@ -1389,7 +1267,6 @@ export function initSimulation() {
       if (Number.isFinite(record.visibilityM) || hasExtinction) {
         Object.assign(fields, {
           visibilityMeters,
-          upperLayerVisibilityMeters: visibilityMeters,
           visibilityM: visibilityMeters,
           visibility: clamp(visibilityMeters / 30, 0, 1)
         });
@@ -1399,7 +1276,6 @@ export function initSimulation() {
         fields.heat = Math.max(0, record.heatFluxKwM2);
       }
       if (hasTemperature) {
-        fields.temperatureC = record.temperatureC;
         fields.eyeLevelTemperatureC = record.temperatureC;
       }
       if (hasHeatFlux || hasTemperature) fields.fireDataSource = "fds_csv";
@@ -1423,6 +1299,12 @@ export function initSimulation() {
     return {
       timeSec,
       floorHeightMeters: state.spatial.floorHeightMeters || 3.5,
+      // Scenario-level values remain inspectable through state.hazards.smokeModelOptions.
+      fireAreaM2: Math.max(0.01, parseNum(fireAreaInput, 1)),
+      fireDiameterMeters: null, // equivalent circular diameter derived from area
+      virtualOriginMeters: null, // Heskestad origin recomputed from current t² HRR
+      mechanicalVentilationM3Sec: Math.max(0, parseNum(mechanicalVentInput, 0)),
+      eyeHeightMeters: 1.6,
       sourceMultiplier: Math.max(0, parseNum(smokeSourceRateInput, 1)),
       turbulentDiffusivityM2Sec: Math.max(0, parseNum(smokeDiffusionRateInput, 0.06)),
       ceilingJetVelocityMultiplier: clamp(parseNum(smokeSpreadMixInput, 1), 0.05, 2),
@@ -1529,7 +1411,7 @@ export function initSimulation() {
         mapProfile
       });
       if (!ok) return;
-      resetSimulationCore(true);
+      resetSimulationCore();
       log(`マップ読込: ${targetFloor + 1}F <- ${file.name} (${img.width}x${img.height}px)`);
       const stairCount = floorStates[targetFloor]?.stairs?.length || 0;
       const exitCount = floorStates[targetFloor]?.exits?.length || 0;
@@ -1559,7 +1441,7 @@ export function initSimulation() {
       syncPublicState();
       drawScene();
       const msg = `FDS CSV読込: ${file.name} / ${importedFdsRisk.rows}行 / ${importedFdsRisk.times.length}時刻`;
-      if (fdsCsvStatus) fdsCsvStatus.textContent = msg;
+      if (fdsCsvStatus) fdsCsvStatus.textContent = [msg, ...importedFdsRisk.warnings].join(" / ");
       if (fdsCsvStats) fdsCsvStats.textContent = formatFdsStats(importedFdsRisk.stats);
       log(msg);
       log(formatFdsStats(importedFdsRisk.stats));
@@ -1987,6 +1869,9 @@ export function initSimulation() {
     floorStates.forEach(floor => {
       floor?.grid?.forEach((row, cy) => row?.forEach((cell, cx) => {
         if (!cell) return;
+        delete cell.resolvedFireAreaM2;
+        delete cell.resolvedFireDiameterMeters;
+        delete cell.plumeVirtualOriginMeters;
         const isScenarioSource = !!cell.fire && cell.fireSource !== "spread";
         if (isScenarioSource) {
           cell.fire = true;
@@ -2119,6 +2004,11 @@ export function initSimulation() {
         dead: false,
         deathTime: null,
         deathCause: null,
+        exposure: createAgentExposure(),
+        tenability: "tenable",
+        worstTenability: "tenable",
+        tenabilityReasons: [],
+        firstCriticalTimeSec: null,
         smokeDose: 0,
         heatDose: 0,
         coDosePpmMin: 0,
@@ -2241,9 +2131,12 @@ export function initSimulation() {
   }
 
   // ==== Simulation Control ====
-  function resetSimulationCore() {
+  function resetSimulationCore({ preserveMonteCarlo = false } = {}) {
     //simstop
     simRunning = false;
+    if (!preserveMonteCarlo) mcRunning = false;
+    if (simulationAnimationFrameId != null) cancelAnimationFrame(simulationAnimationFrameId);
+    simulationAnimationFrameId = null;
     syncPublicState();
     syncActiveFloorState();
     restoreLastAppliedFdsCells();
@@ -2274,7 +2167,7 @@ export function initSimulation() {
 
     //HUDreset
     hudTime.textContent = "0.0 s";
-    hudEvac.textContent = "0 Evacuated / 0 Dead / 0";
+    hudEvac.textContent = "0 避難 / critical経験 0 / 0";
     hudAvg.textContent = "--";
     hudMax.textContent = "--";
 
@@ -2399,6 +2292,14 @@ export function initSimulation() {
   btnOptimizeExit.addEventListener("click", optimizeExitPlacement);
   btnAutoImprove.addEventListener("click", autoImproveSpawnPlacement);
 
+  function scheduleSimulationFrame() {
+    // Monte Carlo starts the next run inside the preceding run's callback.
+    // Retain exactly one request, including a rapid stop/reset/start sequence.
+    if (simRunning && simulationAnimationFrameId == null) {
+      simulationAnimationFrameId = requestAnimationFrame(loop);
+    }
+  }
+
   function startSimulationCore() {
     
     if (!gridW || !gridH || !floorStates.length || !floorStates.some(fs => !!fs?.baseImage)) {
@@ -2417,7 +2318,7 @@ export function initSimulation() {
     btnStart.classList.remove("pulse");
     const startRuleLabel = (startRuleInput?.value === "far_first") ? "far_first" : "simultaneous";
     setStatus(`Simulation running. start_rule=${startRuleLabel}`);
-    requestAnimationFrame(loop);
+    scheduleSimulationFrame();
 
     return true;
   };
@@ -2425,6 +2326,11 @@ export function initSimulation() {
   function stopSimulationCore() {
     if (!simRunning) return false;
     simRunning = false;
+    // Explicit UI/API Stop must not let summarize() launch another MC trial.
+    // Keep completed trial reports; summarize the partial current run normally.
+    mcRunning = false;
+    if (simulationAnimationFrameId != null) cancelAnimationFrame(simulationAnimationFrameId);
+    simulationAnimationFrameId = null;
     syncPublicState();
     summarize();
     setStatus("Simulation stopped.");
@@ -2433,6 +2339,7 @@ export function initSimulation() {
   }
   // ==== Main Loop ====
   function loop(now) {
+    simulationAnimationFrameId = null;
     if (!simRunning) return;
     if (!lastFrameTime) lastFrameTime = now;
     const wallDt = Math.max(0, (now - lastFrameTime) / 1000);
@@ -2448,12 +2355,14 @@ export function initSimulation() {
       simRunning
     ) {
       simTime += MAX_SIMULATION_SUBSTEP_SEC;
-      stepSimulation(MAX_SIMULATION_SUBSTEP_SEC);
+      // Consume the old step before summarize() can reset/start a new MC run.
+      // Subtracting afterwards would make the new run's accumulator negative.
       simulationAccumulatorSec -= MAX_SIMULATION_SUBSTEP_SEC;
+      stepSimulation(MAX_SIMULATION_SUBSTEP_SEC);
     }
     syncPublicState();
     drawScene();
-    requestAnimationFrame(loop);
+    scheduleSimulationFrame();
   }
 
   function mergeVerticalSmokeTransferBatch(batch) {
@@ -2774,6 +2683,7 @@ export function initSimulation() {
       const cx = Math.round(a.x);
       const cy = Math.round(a.y);
       if (!inBounds(cx, cy)) {
+        // Compatibility removal flag for invalid geometry, not a fire death.
         a.dead = true;
         a.deathTime = simTime;
         a.deathCause = "out_of_bounds";
@@ -2790,44 +2700,13 @@ export function initSimulation() {
         ? Math.max(MIN_VISIBILITY, Math.min(1, localEngineeringRisk.visibilityM / 10))
         : 1;
       a.visibility = Math.min(riskVisibilityFactor, Math.max(MIN_VISIBILITY, 1 - smoke * VISIBILITY_SMOKE_COEF));
-      a.smokeDose += Math.max(0, smoke - 0.2) * Math.max(0, smoke - 0.2) * dt;
-      const localTemperatureC = Math.max(20, Number(localEngineeringRisk.temperatureC) || 20);
-      const temperatureHeatRate = Math.max(
-        0,
-        (localTemperatureC - FDS_TEMPERATURE_SOFT_C) /
-          (FDS_TEMPERATURE_HARD_C - FDS_TEMPERATURE_SOFT_C)
-      );
-      a.heatDose += (fire.heat + temperatureHeatRate) * dt;
-      a.temperatureDoseCSeconds = (a.temperatureDoseCSeconds || 0) +
-        Math.max(0, localTemperatureC - FDS_TEMPERATURE_SOFT_C) * dt;
-      a.coDosePpmMin = (a.coDosePpmMin || 0) + Math.max(0, localEngineeringRisk.coPpm || 0) * (dt / 60);
-      a.coDose = a.coDosePpmMin;
-      a.heatFluxDose = (a.heatFluxDose || 0) +
-        Math.max(0, (localEngineeringRisk.heatFluxKwM2 || 0) - FDS_HEAT_FLUX_SOFT_KW_M2) * dt;
-
-      const acuteSmoke = smoke >= LETHAL_SMOKE_LEVEL &&
-        Math.random() < Math.max(0, smoke - LETHAL_SMOKE_LEVEL + 0.2) * 0.25 * dt;
-
-      if (
-        fire.lethal || acuteSmoke ||
-        a.smokeDose >= SMOKE_DEATH_DOSE ||
-        a.heatDose >= HEAT_DEATH_DOSE ||
-        a.coDosePpmMin >= CO_DOSE_FATAL_PPM_MIN ||
-        a.heatFluxDose >= HEAT_FLUX_DOSE_FATAL
-      ) {
-        a.dead = true;
-        a.deathTime = simTime;
-        a.deathCause = fire.lethal
-          ? "fire"
-          : (a.coDosePpmMin >= CO_DOSE_FATAL_PPM_MIN
-            ? "co"
-            : (acuteSmoke || a.smokeDose >= SMOKE_DEATH_DOSE
-              ? "smoke"
-              : (a.heatFluxDose >= HEAT_FLUX_DOSE_FATAL ? "heat_flux" : "heat")));
-        a.fallen = false;
-        a.rescue = null;
-        a.helpingId = null;
-      }
+      // Independent eye-height integrals replace arbitrary fatal doses.
+      // critical is a screening flag, never a death or incapacitation claim.
+      Object.assign(a, accumulateAgentExposure(a, {
+        ...localEngineeringRisk,
+        smokeDensity: smoke,
+        legacyHeat: fire.heat
+      }, dt, state.hazards.tenabilityOptions, Math.max(0, simTime - dt)));
     });
 
     agents.forEach(a => {
@@ -3296,22 +3175,25 @@ export function initSimulation() {
     }
 
     hudTime.textContent = simTime.toFixed(1) + " s";
-    hudEvac.textContent = `${evacCount} 避難 / ${deadCount} 死亡 / ${agents.length}`;
+    const exposureMetrics = summarizeAgentMetrics(agents);
+    hudEvac.textContent = `${evacCount} 避難 / critical経験 ${exposureMetrics.worstTenabilityCounts.critical} / ${agents.length}`;
 
-    const resolvedCount = evacCount + deadCount;
-    if (resolvedCount === agents.length) {
+    const completionReason = simulationObservationComplete(agents, simTime, state.hazards.tenabilityOptions);
+    if (completionReason) {
       simRunning = false;
-    syncPublicState();
-      summarize();
-      if (deadCount > 0) {
-        setStatus("シミュレーション終了（死者あり）。");
-        log("シミュレーション終了: 死者が発生しました。");
+      syncPublicState();
+      if (completionReason === "observation_window") {
+        setStatus("観測時間終了（未避難者を打切り記録）。");
+        log("観測時間終了: 未避難者は死亡とせず、未完了として記録しました。");
+      } else if (deadCount > 0) {
+        setStatus("シミュレーション終了（旧形式の除外レコードあり）。");
       } else {
         setStatus("シミュレーション終了（全員避難）。");
         log("シミュレーション終了: 全員が避難しました。");
       }
+      summarize(completionReason);
       syncPublicState();
-    drawScene();
+      drawScene();
     }
 
     loadFloorState(currentFloor, false);
@@ -3511,7 +3393,7 @@ export function initSimulation() {
   }
 
   // ==== Summary Generation ====
-  function summarize() {
+  function summarize(completionReason = "manual") {
     const evacuated = agents.filter((a) => a.finished && !a.dead);
     const dead = agents.filter((a) => a.dead);
     const times = evacuated
@@ -3521,6 +3403,8 @@ export function initSimulation() {
     const avgT = times.length ? (times.reduce((x, y) => x + y, 0) / times.length) : 0;
     const maxT = times.length ? Math.max(...times) : 0;
     const agentMetrics = summarizeAgentMetrics(agents);
+    const unresolved = agents.filter(agent => !agent.finished && !agent.dead);
+    const tenabilityOptions = resolveTenabilityOptions(state.hazards.tenabilityOptions);
     const floorPeakOccupancy = {};
     congestionHistory.forEach(sample => {
       Object.entries(sample.floorOccupancy || {}).forEach(([floor, count]) => {
@@ -3533,10 +3417,15 @@ export function initSimulation() {
     hudAvg.textContent = times.length ? `${avgT.toFixed(1)} s` : "--";
     hudMax.textContent = times.length ? `${maxT.toFixed(1)} s` : "--";
 
-    log(`Summary: agents=${agents.length}, evacuated=${evacuated.length}, dead=${dead.length}, avg=${avgT.toFixed(2)}s, max=${maxT.toFixed(2)}s`);
+    log(`Summary: agents=${agents.length}, evacuated=${evacuated.length}, unresolved=${unresolved.length}, ` +
+      `worst_tenability=${JSON.stringify(agentMetrics.worstTenabilityCounts)}, ` +
+      `completed_only_avg=${times.length ? avgT.toFixed(2) : "N/A"}s, reason=${completionReason}`);
     log(
-      `Exposure: smoke=${agentMetrics.smokeExposure.toFixed(2)}, ` +
-      `CO=${agentMetrics.coExposurePpmMin.toFixed(2)}ppm-min, heat=${agentMetrics.heatExposure.toFixed(2)}, ` +
+      `Exposure: extinction=${agentMetrics.exposureTotals.extinctionM1Seconds.toFixed(2)}m^-1 s, ` +
+      `CO=${agentMetrics.exposureTotals.coPpmMin.toFixed(2)}ppm-min, ` +
+      `flux=${agentMetrics.exposureTotals.heatFluxKwM2Seconds.toFixed(2)}kW/m² s, ` +
+      `temperature=${agentMetrics.exposureTotals.temperatureCSeconds.toFixed(2)}°C s, ` +
+      `visibility_deficit=${agentMetrics.exposureTotals.visibilityDeficitSeconds.toFixed(2)}s, ` +
       `stuck=${stuckEvents}, teacher_follow=${(agentMetrics.teacherFollowRate * 100).toFixed(1)}%, ` +
       `panic_escape=${panicEscapeEvents}`
     );
@@ -3545,6 +3434,15 @@ export function initSimulation() {
       agents: agents.length,
       evacuated: evacuated.length,
       dead: dead.length,
+      unresolved: unresolved.length,
+      censored: completionReason === "observation_window" ? unresolved.length : 0,
+      completionReason,
+      observationTimeSec: simTime,
+      evacuationTimeSampleCount: times.length,
+      tenabilityOptions,
+      tenabilityCounts: agentMetrics.tenabilityCounts,
+      worstTenabilityCounts: agentMetrics.worstTenabilityCounts,
+      exposureTotals: agentMetrics.exposureTotals,
       avgTime: avgT,
       maxTime: maxT,
       floorOccupancy: agentMetrics.floorOccupancy,
@@ -3562,6 +3460,9 @@ export function initSimulation() {
     };
     state.evaluation = {
       ...state.evaluation,
+      tenabilityCounts: agentMetrics.tenabilityCounts,
+      worstTenabilityCounts: agentMetrics.worstTenabilityCounts,
+      exposureTotals: agentMetrics.exposureTotals,
       floorOccupancy: agentMetrics.floorOccupancy,
       stairCongestion: Object.fromEntries(stairCongestion.map(item => [item.id, item])),
       stuckEvents,
@@ -3571,20 +3472,36 @@ export function initSimulation() {
     state.sim.lastSummary = lastSummary;
 
     if (mcRunning) {
-      const mcAvg = times.length ? avgT : simTime;
-      const mcMax = times.length ? maxT : simTime;
-
-      mcResults.push({ avg: mcAvg, max: mcMax });
+      // Completed-only time statistics do not turn censored observations
+      // into successful evacuation times. Preserve each run's exposure data.
+      mcResults.push({
+        avg: times.length ? avgT : null,
+        max: times.length ? maxT : null,
+        evacuated: evacuated.length,
+        unresolved: unresolved.length,
+        censored: lastSummary.censored,
+        completionReason,
+        observationTimeSec: simTime,
+        evacuationTimeSampleCount: times.length,
+        tenabilityCounts: agentMetrics.tenabilityCounts,
+        worstTenabilityCounts: agentMetrics.worstTenabilityCounts,
+        exposureTotals: agentMetrics.exposureTotals,
+        tenabilityOptions
+      });
       mcRuns++;
 
       if (mcRuns < mcTargetRuns) {
-        resetSimulationCore();
+        resetSimulationCore({ preserveMonteCarlo: true });
         startSimulationCore();
       } else {
         mcRunning = false;
-        const avgAll = mcResults.reduce((s, r) => s + r.avg, 0) / mcResults.length;
-        const maxAll = Math.max(...mcResults.map((r) => r.max));
-        log(`MC complete: avg=${avgAll.toFixed(2)}s, worst=${maxAll.toFixed(2)}s`);
+        const completedRuns = mcResults.filter(result => result.avg != null);
+        const avgAll = completedRuns.length
+          ? (completedRuns.reduce((sum, result) => sum + result.avg, 0) / completedRuns.length).toFixed(2) : "N/A";
+        const maxAll = completedRuns.length ? Math.max(...completedRuns.map(result => result.max)).toFixed(2) : "N/A";
+        const critical = mcResults.reduce((sum, result) => sum + result.worstTenabilityCounts.critical, 0);
+        const censored = mcResults.reduce((sum, result) => sum + result.censored, 0);
+        log(`MC complete: completed-only run mean=${avgAll}s, max=${maxAll}s, critical=${critical}, censored=${censored}`);
         setStatus("Monte Carlo complete.");
       }
     }

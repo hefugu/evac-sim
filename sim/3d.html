@@ -15,6 +15,8 @@
       <span class="viewToolbarSpacer"></span>
       <label><input id="standaloneFire" type="checkbox" checked> 火災</label>
       <label><input id="standaloneSmoke" type="checkbox" checked> 煙</label>
+      <label>煙表示 <select id="standaloneSmokeMode" aria-label="3D煙表示モード"><option value="extinction">消光係数 [1/m]</option><option value="co">CO [ppm]</option><option value="temperature">温度 [°C]</option><option value="source">データ源</option></select></label>
+      <label><input id="standaloneSmokeBounds" type="checkbox" checked> 層境界・厚さ</label>
       <label><input id="standaloneAgents" type="checkbox" checked> 人</label>
       <label><input id="standaloneWalls" type="checkbox" checked> 壁</label>
       <span id="standaloneConnection">2D状態を待機中</span>

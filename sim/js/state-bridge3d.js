@@ -75,6 +75,10 @@ function compactAgent(agent = {}) {
     type: agent.type || "student",
     behaviorState: agent.behaviorState || "normal",
     visibility: finiteNumber(agent.visibility, 1),
+    tenability: agent.tenability || "tenable",
+    worstTenability: agent.worstTenability || agent.tenability || "tenable",
+    tenabilityReasons: Array.isArray(agent.tenabilityReasons) ? agent.tenabilityReasons : [],
+    exposure: agent.exposure ? { ...agent.exposure } : null,
     smokeDose: finiteNumber(agent.smokeDose, 0),
     coDose: finiteNumber(agent.coDose ?? agent.coDosePpmMin, 0),
     heatDose: finiteNumber(agent.heatDose, 0),
@@ -124,15 +128,38 @@ export function createGeometrySnapshot3D(state) {
 export function createDynamicSnapshot3D(state) {
   const floors = sourceFloors(state).map((floor, arrayIndex) => {
     const fires = [];
+    const smokeCells = [];
     (floor.grid || []).forEach((row, cy) => row?.forEach((cell, cx) => {
-      if (!cell?.fire && !(finiteNumber(cell?.fireIntensity, 0) > 0)) return;
-      fires.push({
-        cx,
-        cy,
-        fire: !!cell.fire,
-        fireIntensity: finiteNumber(cell.fireIntensity, cell.fire ? 0.05 : 0),
-        temperatureC: finiteNumber(cell.temperatureC, 20),
-        heatFluxKwM2: finiteNumber(cell.heatFluxKwM2, 0)
+      if (cell?.fire || finiteNumber(cell?.fireIntensity, 0) > 0) {
+        fires.push({
+          cx,
+          cy,
+          fire: !!cell.fire,
+          fireIntensity: finiteNumber(cell.fireIntensity, cell.fire ? 0.05 : 0),
+          temperatureC: finiteNumber(cell.temperatureC, 20),
+          heatFluxKwM2: finiteNumber(cell.heatFluxKwM2, 0),
+          source: cell.fireDataSource || "fallback_t2"
+        });
+      }
+      const smokeDensity = finiteNumber(cell?.smokeDensity ?? floor.smokeMap?.[cy]?.[cx], 0);
+      const layerDepth = finiteNumber(cell?.smokeLayerDepthMeters, 0);
+      if (smokeDensity > 0 || layerDepth > 0 || cell?.fdsSamples?.length) smokeCells.push({
+        cx, cy,
+        smokeDensity,
+        smokeLayerDepthMeters: layerDepth,
+        smokeLayerInterfaceHeightMeters: finiteNumber(cell?.smokeLayerInterfaceHeightMeters ??
+          (finiteNumber(floor.wallHeightMeters, 2.8) - layerDepth),
+          finiteNumber(floor.wallHeightMeters, 2.8) - layerDepth),
+        extinctionCoefficientM1: finiteNumber(cell?.upperLayerExtinctionCoefficientM1 ?? cell?.extinctionCoefficientM1, 0),
+        eyeLevelExtinctionCoefficientM1: finiteNumber(cell?.eyeLevelExtinctionCoefficientM1, 0),
+        coPpm: finiteNumber(cell?.upperLayerCoPpm ?? cell?.coPpm, 0),
+        eyeLevelCoPpm: finiteNumber(cell?.eyeLevelCoPpm, 0),
+        temperatureC: finiteNumber(cell?.upperLayerTemperatureC ?? cell?.temperatureC, 20),
+        eyeLevelTemperatureC: finiteNumber(cell?.eyeLevelTemperatureC ?? cell?.temperatureC, 20),
+        source: cell?.upperLayerDataSource || "reduced_order_nist",
+        eyeLevelSource: cell?.eyeLevelDataSource || cell?.smokeDataSource || "reduced_order_nist",
+        stairTransferRateKgSec: finiteNumber(cell?.stairTransferRateKgSec, 0),
+        fdsSamples: Array.isArray(cell?.fdsSamples) ? cell.fdsSamples.map(sample => ({ ...sample })) : []
       });
     }));
     return {
@@ -140,6 +167,7 @@ export function createDynamicSnapshot3D(state) {
       smokeMap: Array.isArray(floor.smokeMap)
         ? floor.smokeMap.map(row => Array.isArray(row) ? row.map(value => finiteNumber(value, 0)) : [])
         : [],
+      smokeCells,
       fires,
       exits: (floor.exits || []).map(exit => ({ cx: exit.cx, cy: exit.cy })),
       spawns: (floor.spawns || []).map(spawn => ({ cx: spawn.cx, cy: spawn.cy, r: spawn.r || 0 }))
@@ -152,6 +180,10 @@ export function createDynamicSnapshot3D(state) {
     running: !!(state?.sim?.running ?? state?.simRunning),
     floors,
     agents: (state?.agents || []).map(compactAgent),
+    verticalSmokeTransfers: (state?.sim?.verticalSmokeTransfers || []).map(transfer => ({ ...transfer,
+      from: transfer.from ? { ...transfer.from } : null,
+      to: transfer.to ? { ...transfer.to } : null
+    })),
     stairLinks: (state?.map?.stairLinks || []).map(link => ({
       id: link.id,
       type: link.type || "indoor",
@@ -215,6 +247,25 @@ export function apply3DBridgeMessage(targetState, message) {
     floor.exits = update.exits || [];
     floor.spawns = update.spawns || [];
     floor._bridgeFireCells = update.fires || [];
+    for (const old of floor._bridgeSmokeCells || []) {
+      const cell = floor.grid?.[old.cy]?.[old.cx];
+      if (cell) ["smokeDensity", "smokeLayerDepthMeters", "smokeLayerInterfaceHeightMeters",
+        "extinctionCoefficientM1", "upperLayerExtinctionCoefficientM1", "eyeLevelExtinctionCoefficientM1",
+        "upperLayerCoPpm", "eyeLevelCoPpm", "upperLayerTemperatureC", "eyeLevelTemperatureC",
+        "smokeDataSource", "eyeLevelDataSource", "fdsSamples"].forEach(key => delete cell[key]);
+      if (cell) Object.assign(cell, { coPpm: 0, temperatureC: 20 });
+    }
+    floor._bridgeSmokeCells = update.smokeCells || [];
+    for (const smoke of floor._bridgeSmokeCells) {
+      const cell = floor.grid?.[smoke.cy]?.[smoke.cx];
+      if (cell) Object.assign(cell, smoke, {
+        upperLayerExtinctionCoefficientM1: smoke.extinctionCoefficientM1,
+        upperLayerCoPpm: smoke.coPpm,
+        upperLayerTemperatureC: smoke.temperatureC,
+        smokeDataSource: smoke.source,
+        eyeLevelDataSource: smoke.eyeLevelSource
+      });
+    }
     for (const fire of floor._bridgeFireCells) {
       const cell = floor.grid?.[fire.cy]?.[fire.cx];
       if (cell) Object.assign(cell, fire);
@@ -223,6 +274,7 @@ export function apply3DBridgeMessage(targetState, message) {
   targetState.agents = message.agents || [];
   targetState.map.stairLinks = message.stairLinks || [];
   targetState.sim.time = message.simTime || 0;
+  targetState.sim.verticalSmokeTransfers = message.verticalSmokeTransfers || [];
   targetState.sim.running = !!message.running;
   targetState.simTime = targetState.sim.time;
   targetState.simRunning = targetState.sim.running;

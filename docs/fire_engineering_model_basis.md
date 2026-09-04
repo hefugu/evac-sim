@@ -2,7 +2,7 @@
 
 ## 目的とモデルの位置づけ
 
-このシミュレータは、学校内の避難行動を扱うブラウザ上の避難シミュレーションである。
+このシミュレータは、**FDS/CFAST-informed reduced-order fire/smoke model と外部FDSデータを統合した動的避難シミュレータ**であり、学校内の避難行動をブラウザで比較する。
 FDS/CFASTの考え方を参考にした低次元の火災・煙フォールバックを備えるが、Navier–Stokes方程式を解くCFDソルバではない。温度成層、圧力差、開口流、燃焼反応を詳細に解くものではなく、入力シナリオ間の避難挙動を相対比較するための近似モデルとして使用する。
 
 詳細な火災安全評価では、外部のFDS等で解析した時刻別・セル別データをCSVとして読み込み、フォールバックより優先する。FDS CSVは本シミュレータ内の低次元モデルより高忠実度の入力として扱う。
@@ -52,12 +52,13 @@ UIの初期値は次のとおりである。
 以下の列を読む。
 
 ```csv
-time_s,floor,cx,cy,heat_flux_kw_m2,extinction_coefficient_m_1,co_ppm,visibility_m,temperature_c
+time_s,floor,cx,cy,sample_height_m,heat_flux_kw_m2,extinction_coefficient_m_1,co_ppm,visibility_m,temperature_c
 ```
 
 - `time_s`: 時刻 [s]
 - `floor`: フロア番号。CSVでは1始まり、内部では0始まりへ変換する。
 - `cx`, `cy`: evac-simのグリッドセル座標。
+- `sample_height_m`: 各階床面からの採取高さ [m]。旧CSVまたは空欄は1.6 m相当と仮定し、件数をUIとログに明示する。
 - `heat_flux_kw_m2`: 熱流束 [kW/m²]
 - `extinction_coefficient_m_1`: 自然対数基準の減光係数 `K` [1/m]。
 - `optical_density_base10_m_1`: base-10光学濃度の単位長さ当たり値。読み込み時に `K = OD × ln(10)` で変換する。
@@ -66,9 +67,81 @@ time_s,floor,cx,cy,heat_flux_kw_m2,extinction_coefficient_m_1,co_ppm,visibility_
 - `visibility_m`: 視認距離 [m]
 - `temperature_c`: 温度 [℃]
 
-FDS CSVが読み込まれている場合は、該当する時刻・セル・物理量についてCSV値を優先する。空欄の物理量を0とは解釈せず、フォールバックで補う。時系列は現在時刻以前の最新値をセル別・物理量別にsample-and-holdし、未来のフレームを先読みしない。したがって、ある時刻のCSV行に変更されたセルまたは物理量だけを記載しても、それ以前に与えた別セル・別物理量の値は明示的に更新されるまで保持される。明示した `0` は有効な更新値である。これはFDS結果をブラウザ内で再計算する処理ではなく、外部解析結果を同じ `floor/cell/time` 座標へ重ねる処理である。入力側で単位、座標原点、階番号、時刻基準を検証しなければならない。
+FDS CSVが読み込まれている場合は、該当する時刻・セル・物理量についてCSV値を優先する。空欄の物理量を0とは解釈せず、フォールバックで補う。時系列は現在時刻以前の最新値をセル別・高さ別・物理量別にsample-and-holdし、未来のフレームを先読みしない。したがって、ある時刻のCSV行に変更されたセルまたは物理量だけを記載しても、それ以前に与えた別セル・別物理量の値は明示的に更新されるまで保持される。明示した `0` は有効な更新値である。これはFDS結果をブラウザ内で再計算する処理ではなく、外部解析結果を同じ `floor/cell/height/time` 座標へ重ねる処理である。入力側で単位、座標原点、階番号、時刻基準を検証しなければならない。
 
-温度のみを入力したセルも、経路探索と曝露評価から除外しない。現在のスクリーニング用既定値は `60 ℃` を超えた分から経路ペナルティと温度曝露を加算し、`120 ℃` 以上を強い回避対象とする。これは完全な熱曝露・人体耐容モデルでも法令上の限界値でもなく、温度フィールドを無視しないための避難行動用しきい値である。熱流束、曝露時間、衣服、湿度等を含む設計評価では、対象基準に合わせて別途検証する必要がある。
+温度のみを入力したセルも、経路探索と曝露評価から除外しない。現在のスクリーニング用既定値は `60 ℃` を超えた分を経路ペナルティへ加算し、`120 ℃` 以上を強い回避対象とする。これは完全な熱曝露・人体耐容モデルでも法令上の限界値でもなく、温度フィールドを無視しないための避難行動用しきい値である。曝露積分そのものは閾値によらず全温度を積算する。熱流束、曝露時間、衣服、湿度等を含む設計評価では、対象基準に合わせて別途検証する必要がある。
+
+## 今回の拡張と評価方法
+
+### 人体影響: 独自死亡閾値からtenabilityへ
+
+`SMOKE_DEATH_DOSE`、`HEAT_DEATH_DOSE`、`CO_DOSE_FATAL_PPM_MIN`、`HEAT_FLUX_DOSE_FATAL`、`LETHAL_SMOKE_LEVEL` による死亡判定を削除した。研究用の主要指標は `tenability`（現在）と `worstTenability`（累積最悪状態）の `tenable / degraded / critical`、および独立した曝露積分である。`critical` を死亡・行動不能とみなさない。残した火源近傍の強い経路回避は移動のヒューリスティックであり、死亡判定ではない。旧 `dead` は範囲外座標等の互換処理に残る。
+
+| エージェントの曝露フィールド | 定義 | 単位 |
+| --- | --- | --- |
+| `visibilityMSeconds` | ∫ S dt | m·s |
+| `visibilityDeficitSeconds` | ∫ clamp(1−S/10,0,1) dt（既定参照距離） | s |
+| `lowVisibilitySeconds` | 視界10 m以下の滞在時間 | s |
+| `coPpmMin` | ∫ CO dt / 60 | ppm·min |
+| `heatFluxKwM2Seconds` | ∫ q″ dt | kW/m²·s |
+| `temperatureCSeconds` | ∫ T dt | °C·s |
+| `temperatureAboveAmbientCSeconds` | ∫ max(T−20,0) dt | °C·s |
+| `extinctionM1Seconds` | ∫ K dt | m⁻¹·s |
+| `smokeDensitySeconds` | 旧表示用煙指標の積分 | 表示指標·s |
+
+値は各ステップの共通目線高さサンプルから左矩形則で積算し、良好な空気へ移動しても過去の曝露を消さない。分類は設定可能な瞬時値のスクリーニングであり、累積量から死亡閾値を再構成していない。全設定・根拠・適用限界は [exposure-model.md](exposure-model.md)。COだけでは低酸素、HCN、CO₂、呼吸応答を評価できないため `exposure.fed = null` とし、将来の多成分モデルへ拡張できるガス別積分領域を用意した。
+
+CSVとMonte Carloは曝露量、最悪状態、未避難数、打切り数を出力する。観測時間は既定600 s、UIと `state.hazards.tenabilityOptions.maxSimulationTimeSec` で変更する。時間上限時の未避難者を死亡や避難成功とせず、完了者の避難時間統計と打切り観測を区別する。MC再開時の重複描画ループと時間累積の問題も修正し、Stop/Resetで試行を停止する。
+
+### 火源寸法とHeskestad仮想原点
+
+`fireAreaM2 = 1 m²` を各火災セルの明示的なデモ既定値とした。UI・保存プリセット・`state.hazards.smokeModelOptions` から確認でき、`fireDiameterMeters = null` は面積から導出、`virtualOriginMeters = null` は現在のt² HRRから都度導出を意味する。個別セルまたはoptionsで上書きできる。火源面積が大きいほど常に安全側になるとは限らず、既定値を建物固有の保守的入力とみなさない。
+
+```text
+D = sqrt(4 A / pi)                                      [m]
+z0 = -1.02 D + 0.083 Q^0.4                               [m], Q [kW]
+Qc = (1 - radiativeFraction) Q                          [kW]
+m_plume = 0.071 Qc^(1/3) (z-z0)^(5/3) + 0.0018 Qc      [kg/s]
+```
+
+平均火炎高さより低い評価点では火炎高さでの巻込みに `z/L` を掛け、適用域外への単純外挿を避ける。変動火源面積、酸素不足、壁面・隅角火源、多火源の相互作用は解かない。近似、定数、実効高さの数値制限は [physics-implementation.md](physics-implementation.md) に記載した。
+
+### 廊下の重力流・煙先端
+
+既存セルの保存量を共有する廊下用の移流則を追加した。`g′=g(Tu−Ta)/Tu`、`uf=Fr√(g′h)`、温度はK、層厚hはm、速度はm/s。長い直線帯の自動判別または `floor.corridorRegions` の明示指定を用い、複雑形状は通常のセル移流へ戻る。通常の天井ジェット移流を置換して二重輸送を避け、混合・階段移送・換気は従来と同じ保存量収支で扱う。
+
+`floor.corridorSmoke.segments` は先端位置、先端速度、上層煙厚、上層温度を公開する。開いた扉・廊下接続・階段からの流入は隣接関係に従い、壁・閉鎖扉を貫通しない。先端は厚さ0.01 m以上のセル端による診断で、鋭い界面やCFDの再現ではない。領域設定例、フォールバック条件、近似係数と感度について [corridor-model.md](corridor-model.md) を参照。
+
+### 自然換気・漏気・機械排煙の区分
+
+- 自然換気: 温度差と高さ差に由来する浮力、明示した風速から開口流量 [m³/s] を求める。上層に接する開口面積のみを使う排出近似であり、圧力・中性帯・双方向流は解かない。
+- 漏気: `leakageRatePerSec` [1/s]。セルの旧 `ventilation` は一次除去率の互換別名。
+- 機械排煙: `mechanicalVentilationM3Sec` [m³/s]。UIは各階合計、options/floor/cellで設定できる。各階合計と個別排気を同じ設備として二重指定しない。
+
+`minimumVentVelocityMps` は非推奨キーとして残すが無視し、既定0。浮力差・風・機械換気・漏気がすべてゼロなら排出ゼロ。既存の屋外階段・出口の開口重複除去防止を維持した。排出は各機構別に計上し、すす沈着は別勘定とする。
+
+### FDSの高さと部分上書き
+
+同じセル・時刻の複数高さを保持する。目線1.6 mに一致する値を優先し、なければその高さを挟む2点を**物理量ごとに線形補間**する。高さの外挿はしない。上層の点しかない場合はその点を3Dに表示し、目線はfallbackを維持する。許容一致誤差は0.001 mである。
+
+FDSの点測定を上層全体の平均値とみなさず、`upperLayer*` や保存soot/COを上書きしない。2D互換表示用 `smokeMap` 等と目線フィールドに限って該当値を重ね、解除時に下地の保存量から再導出する。温度だけの部分CSVも解除後に元の目線温度へ復帰する。FDS入力の妥当性は外部解析の入力、メッシュ、計測点、時刻基準に依存し、読み込むだけで避難評価が妥当になるわけではない。
+
+```csv
+time_s,floor,cx,cy,sample_height_m,heat_flux_kw_m2,extinction_coefficient_m_1,co_ppm,visibility_m,temperature_c
+0,1,5,5,1.6,0,0,0,30,20
+10,1,5,5,1.6,1.2,0.4,250,7.5,65
+10,1,5,5,2.6,2.0,0.8,500,3.75,100
+```
+
+### 2D/3D・回帰検証
+
+計算の主体は `core.js` の共通固定刻みと既存保存量モデル。埋込3Dは同じstateを読み、専用3Dページはそのスナップショットを受信する。3D独立計算はない。スナップショットに煙層下面・厚さ、上層と目線のK/CO/温度、FDS採取高さ、階段移送、tenabilityを追加した。3Dの凡例と測定点表示について [3d-display-model.md](3d-display-model.md) を参照。
+
+`node --test tests/3d-modules.test.mjs` は既存テストと新規の曝露・保存則・換気・沈着・階段分岐・対称場・廊下遮断・高さ・FDS解除・リセット・描画を実行する。指定条件で保存量の相対収支誤差を2×10⁻¹²以下、対称場の体積L1誤差を10⁻⁴以下、5秒時点のdt=0.1/0.05体積場差を5%未満とする。廊下の時間刻み試験も別に実施する。これらは実装整合性の確認であり、実験との妥当性検証を代替しない。
+
+`npm run test:browser` は実際の画像アップロード・FDS旧新形式・解除、2D/3D切替、階段移動、火災進展とReset、MC100試行とStop/Resetを検査する。GitHub Actions `.github/workflows/test.yml` は通常のpush/PRに実行し、既存patch適用workflowとは独立している。テスト用npm依存はブラウザ配信に不要で、Vercelの静的HTML/JS構成を保つ。
+
+責務分離としてCSVパーサを `simulation/fds-csv.js`、人体影響を `simulation/exposure.js` へ抽出した。空の旧モジュールと `sim/simulation.js` の扱いは [module-migration-audit.md](module-migration-audit.md)。
 
 ## 導入根拠
 

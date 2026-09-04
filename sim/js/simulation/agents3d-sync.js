@@ -4,6 +4,7 @@ import {
   simulationFloorsView
 } from "./floors3d.js";
 import { stairTransitionWorldPosition } from "./stairs3d.js";
+import { accumulateAgentExposure, summarizeExposureMetrics } from "./exposure.js";
 
 export const AGENT3D_TYPES = Object.freeze(["teacher", "student", "panic"]);
 
@@ -299,29 +300,20 @@ export function chooseClearAirStep(agent, floors, options = {}) {
   };
 }
 
-/** Accumulate exposure fields with the same units used by the existing core. */
+/** Compatibility wrapper around the same exposure integrator used by core.js. */
 export function applyAgentHazardExposure(agent, cellOrHazard, dtSeconds, options = {}) {
   const config = { ...DEFAULT_AGENT_HAZARD_OPTIONS, ...options };
-  const dt = Math.max(0, finiteNumber(dtSeconds, 0));
   const hazard = cellOrHazard?.score == null
     ? cellHazardMetrics(cellOrHazard || {}, config)
     : cellOrHazard;
-  const smokeExcess = Math.max(0, hazard.smokeDensity - config.smokeDoseThreshold);
-  const smokeDose = Math.max(0, finiteNumber(agent?.smokeDose, 0)) + smokeExcess * smokeExcess * dt;
-  const coDose = Math.max(0, finiteNumber(agent?.coDose, agent?.coDosePpmMin || 0)) + hazard.coPpm * dt / 60;
-  const heatFluxDose = Math.max(0, finiteNumber(agent?.heatFluxDose, 0)) + hazard.heatFluxKwM2 * dt;
-  const heatDose = Math.max(0, finiteNumber(agent?.heatDose, 0)) +
-    (hazard.fireIntensity + hazard.heatFluxKwM2 / Math.max(0.1, config.heatFluxReferenceKwM2)) * dt;
-  const visibility = clamp(hazard.visibilityMeters / 30, 0.1, 1);
-
   return {
-    ...agent,
-    visibility,
-    smokeDose,
-    coDose,
-    coDosePpmMin: coDose,
-    heatDose,
-    heatFluxDose
+    ...accumulateAgentExposure(agent, {
+      ...cellOrHazard,
+      ...hazard,
+      temperatureC: cellOrHazard?.eyeLevelTemperatureC ?? cellOrHazard?.temperatureC,
+      legacyHeat: hazard.fireIntensity
+    }, dtSeconds, options),
+    visibility: clamp(hazard.visibilityMeters / 30, 0.1, 1)
   };
 }
 
@@ -357,6 +349,7 @@ export function summarizeAgentMetrics(agents, options = {}) {
 
   return {
     total: list.length,
+    ...summarizeExposureMetrics(list),
     evacuated: evacuated.length,
     dead: dead.length,
     averageEvacuationTime: evacuationTimes.length

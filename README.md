@@ -5,7 +5,7 @@
 ## 現在の結論（`/sim` は静的サイトで運用可能）
 
 - 公開対象の `sim/index.html` は `sim/js/main.js` を読み込むブラウザ完結型の実装です。
-- `sim/js` 配下に `fetch` / `/api` / `localhost` 依存はありません。
+- `sim/js` の公開動作に `/api` / `localhost` 依存はありません。サンプル画像等の静的アセットだけを読み込みます。
 - 画像アップロードは `FileReader` を使用してブラウザ内で完結します（`sim/js/mapLoader.js`）。
 - CSV 出力は `Blob` + `URL.createObjectURL` でブラウザ内完結です（`sim/js/export/csv.js`）。
 - 2Dと3Dは同じ `state.agents` / floor / fire / smokeを参照し、3D側は計算を進めない表示専用です。
@@ -73,3 +73,25 @@ node --test tests/3d-modules.test.mjs
 - API: Render または Railway
 - API URL: 環境変数で切り替え（`localhost` 直書き禁止）
 - Render Start Command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+
+## 火災・煙の研究モデル
+
+本システムは「FDS/CFAST-informed reduced-order fire/smoke model と外部FDSデータを統合した動的避難シミュレータ」です。既存の2D/3D共有state、階段、Monte Carloを維持し、次を追加しています。
+
+- 独立した視界・CO・熱流束・温度・減光係数の曝露積分と `tenable / degraded / critical`。COだけを完全なFEDとは呼びません。
+- 火源面積とHeskestad仮想原点、廊下重力流、自然換気・漏気・機械排煙の区分、保存則の収支出力。
+- `sample_height_m` 付きFDS CSV。旧形式は1.6 mと仮定して通知。上層と目線を区別し、未指定項目と解除後はfallbackを使用。
+- 3Dの煙層下面・厚さ、K/CO/温度/由来の表示と階段煙移送。描画側は計算を進めません。
+- 通常のpush/PRで実行する物理テストとブラウザ統合テスト。
+
+数式、単位、設定例、近似、変更理由は [火災工学モデルの根拠](docs/fire_engineering_model_basis.md) に記載しています。fallback単体を実火災の絶対予測や法令適合判定に使用することはできません。
+
+ブラウザ統合テスト（Node 22以上、Python 3）:
+
+```sh
+npm ci
+npx playwright install chromium
+npm run test:browser
+```
+
+本番のビルド処理は追加していません。npm依存は開発・テスト専用です。

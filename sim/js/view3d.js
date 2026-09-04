@@ -66,6 +66,8 @@ export function init3DView() {
   buttons["3d"]?.addEventListener("click", () => setMode("3d"));
   buttons.split?.addEventListener("click", () => setMode("split"));
   byId("btnReset3DCamera")?.addEventListener("click", () => renderer.resetCamera());
+  byId("view3dSmokeMode")?.addEventListener("change", event => renderer.setSmokeVisualizationMode(event.target.value));
+  byId("view3dSmokeBounds")?.addEventListener("change", event => renderer.setSmokeLayerBounds(event.target.checked));
   byId("btnOpen3D")?.addEventListener("click", () => {
     publisher.publishNow(true);
     window.open(new URL("../3d.html?live=1", import.meta.url), "evac-sim-3d", "noopener=false");

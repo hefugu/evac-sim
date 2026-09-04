@@ -121,6 +121,8 @@ const receiver = create3DStateReceiver(state, {
 
 byId("btnStandaloneSample")?.addEventListener("click", loadStandaloneSample);
 byId("btnStandaloneResetCamera")?.addEventListener("click", () => renderer.resetCamera());
+byId("standaloneSmokeMode")?.addEventListener("change", event => renderer.setSmokeVisualizationMode(event.target.value));
+byId("standaloneSmokeBounds")?.addEventListener("change", event => renderer.setSmokeLayerBounds(event.target.checked));
 [
   ["standaloneFire", "fire"],
   ["standaloneSmoke", "smoke"],

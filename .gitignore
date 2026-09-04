@@ -37,3 +37,5 @@ node_modules/
 Thumbs.db
 .DS_Store
 .patch_backups/
+test-results/
+playwright-report/

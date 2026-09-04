@@ -1,0 +1,12 @@
+{
+  "name": "evac-sim",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/3d-modules.test.mjs",
+    "test:browser": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1"
+  }
+}

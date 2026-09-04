@@ -4,6 +4,7 @@ import {
   updateFloorCell
 } from "./floors3d.js";
 import { normalizeStairLink } from "./stairs3d.js";
+import { fdsSampleHeight, isFdsSampleAtHeight } from "./fds-csv.js";
 
 export const DEFAULT_FIRE3D_OPTIONS = Object.freeze({
   alphaKwPerSec2: 0.0469,
@@ -60,6 +61,7 @@ export function normalizeFdsFireRecord(record) {
   return {
     heatFluxKwM2: Number.isFinite(heatFluxKwM2) ? Math.max(0, heatFluxKwM2) : null,
     temperatureC: Number.isFinite(temperatureC) ? temperatureC : null,
+    sampleHeightMeters: fdsSampleHeight(record),
     source: "fds_csv"
   };
 }
@@ -77,7 +79,8 @@ export function deriveFireMetrics(intensity, options = {}) {
 }
 
 /** FDS values replace the corresponding fallback fields, one field at a time. */
-export function applyFdsFireRecord(metrics, record) {
+export function applyFdsFireRecord(metrics, record, options = {}) {
+  if (!isFdsSampleAtHeight(record, options.eyeHeightMeters ?? 1.6)) return { ...metrics };
   const fds = normalizeFdsFireRecord(record);
   if (!fds) return { ...metrics };
   return {
@@ -90,7 +93,8 @@ export function applyFdsFireRecord(metrics, record) {
 
 function fdsRecordAt(options, floorIndex, cx, cy, timeSec) {
   const lookup = options.fdsLookup || options.fdsProvider?.lookup;
-  return typeof lookup === "function" ? lookup(floorIndex, cx, cy, timeSec) : null;
+  const record = typeof lookup === "function" ? lookup(floorIndex, cx, cy, timeSec, options.eyeHeightMeters ?? 1.6) : null;
+  return isFdsSampleAtHeight(record, options.eyeHeightMeters ?? 1.6) ? record : null;
 }
 
 function floorArrayIndex(floors, floorIndex) {
