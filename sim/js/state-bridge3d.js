@@ -1,3 +1,12 @@
+import { INSPECTION_FIELDS } from './visualization/hazard-display.js';
+// Preserve raw numerical field names and per-field provenance. No solver runs in the receiver.
+const DISPLAY_FIELDS = [...Object.keys(INSPECTION_FIELDS), 'fire', 'eyeLevelCoPpm', 'upperLayerExtinctionCoefficientM1',
+  'upperLayerDataSource', 'eyeLevelDataSource', 'visibilityMeters', 'fdsFields', 'fireFdsFields', 'fdsSamples',
+  'fdsSampleHeightMeters', 'stairTransferRateKgSec'];
+function copyDisplayFields(cell) {
+  const out={};for(const key of DISPLAY_FIELDS) if(Object.hasOwn(cell,key)) out[key]=structuredClone(cell[key]);
+  return out;
+}
 const CHANNEL_NAME = "evac-sim-3d-view-v1";
 
 function finiteNumber(value, fallback = 0) {
@@ -112,6 +121,7 @@ export function createGeometrySnapshot3D(state) {
       gridWidth: Math.max(0, Math.floor(finiteNumber(floor.gridWidth, template[0]?.length || 0))),
       gridHeight: Math.max(0, Math.floor(finiteNumber(floor.gridHeight, template.length))),
       walkableTemplate: template,
+      displayCells: (floor.grid || []).map(row => row.map(copyDisplayFields)),
       stairs: stairCells(floor),
       exits: (floor.exits || []).map(exit => ({ cx: exit.cx, cy: exit.cy })),
       spawns: (floor.spawns || []).map(spawn => ({ cx: spawn.cx, cy: spawn.cy, r: spawn.r || 0 }))
@@ -131,36 +141,14 @@ export function createDynamicSnapshot3D(state) {
     const smokeCells = [];
     (floor.grid || []).forEach((row, cy) => row?.forEach((cell, cx) => {
       if (cell?.fire || finiteNumber(cell?.fireIntensity, 0) > 0) {
-        fires.push({
-          cx,
-          cy,
-          fire: !!cell.fire,
-          fireIntensity: finiteNumber(cell.fireIntensity, cell.fire ? 0.05 : 0),
-          temperatureC: finiteNumber(cell.temperatureC, 20),
-          heatFluxKwM2: finiteNumber(cell.heatFluxKwM2, 0),
-          source: cell.fireDataSource || "fallback_t2"
-        });
+        fires.push({cx,cy,...copyDisplayFields(cell)});
       }
       const smokeDensity = finiteNumber(cell?.smokeDensity ?? floor.smokeMap?.[cy]?.[cx], 0);
       const layerDepth = finiteNumber(cell?.smokeLayerDepthMeters, 0);
-      if (smokeDensity > 0 || layerDepth > 0 || cell?.fdsSamples?.length) smokeCells.push({
-        cx, cy,
-        smokeDensity,
-        smokeLayerDepthMeters: layerDepth,
-        smokeLayerInterfaceHeightMeters: finiteNumber(cell?.smokeLayerInterfaceHeightMeters ??
-          (finiteNumber(floor.wallHeightMeters, 2.8) - layerDepth),
-          finiteNumber(floor.wallHeightMeters, 2.8) - layerDepth),
-        extinctionCoefficientM1: finiteNumber(cell?.upperLayerExtinctionCoefficientM1 ?? cell?.extinctionCoefficientM1, 0),
-        eyeLevelExtinctionCoefficientM1: finiteNumber(cell?.eyeLevelExtinctionCoefficientM1, 0),
-        coPpm: finiteNumber(cell?.upperLayerCoPpm ?? cell?.coPpm, 0),
-        eyeLevelCoPpm: finiteNumber(cell?.eyeLevelCoPpm, 0),
-        temperatureC: finiteNumber(cell?.upperLayerTemperatureC ?? cell?.temperatureC, 20),
-        eyeLevelTemperatureC: finiteNumber(cell?.eyeLevelTemperatureC ?? cell?.temperatureC, 20),
-        source: cell?.upperLayerDataSource || "reduced_order_nist",
-        eyeLevelSource: cell?.eyeLevelDataSource || cell?.smokeDataSource || "reduced_order_nist",
-        stairTransferRateKgSec: finiteNumber(cell?.stairTransferRateKgSec, 0),
-        fdsSamples: Array.isArray(cell?.fdsSamples) ? cell.fdsSamples.map(sample => ({ ...sample })) : []
-      });
+      if (smokeDensity > 0 || layerDepth > 0 || cell?.fdsSamples?.length || cell?.fdsFields?.length ||
+          cell?.upperLayerExtinctionCoefficientM1 != null || cell?.heatFluxKwM2 > 0 || cell?.eyeLevelTemperatureC > 20) {
+        smokeCells.push({cx,cy,...copyDisplayFields(cell)});
+      }
     }));
     return {
       floorIndex: floorIndexOf(floor, arrayIndex),
@@ -210,7 +198,8 @@ function floorFromGeometry(source) {
       fire: false,
       fireIntensity: 0,
       temperatureC: 20,
-      heatFluxKwM2: 0
+      heatFluxKwM2: 0,
+      ...source.displayCells?.[cy]?.[cx]
     };
   }));
   return {
@@ -239,36 +228,18 @@ export function apply3DBridgeMessage(targetState, message) {
   (message.floors || []).forEach(update => {
     const floor = floors.find(item => floorIndexOf(item) === floorIndexOf(update));
     if (!floor) return;
-    for (const old of floor._bridgeFireCells || []) {
-      const cell = floor.grid?.[old.cy]?.[old.cx];
-      if (cell) Object.assign(cell, { fire: false, fireIntensity: 0, temperatureC: 20, heatFluxKwM2: 0 });
+    for (const old of [...(floor._bridgeFireCells || []),...(floor._bridgeSmokeCells || [])]) {
+      const cell=floor.grid?.[old.cy]?.[old.cx];
+      if(cell) { DISPLAY_FIELDS.forEach(key=>delete cell[key]); Object.assign(cell,{fire:false,fireIntensity:0,temperatureC:20,heatFluxKwM2:0}); }
     }
     floor.smokeMap = update.smokeMap || floor.smokeMap;
     floor.exits = update.exits || [];
     floor.spawns = update.spawns || [];
     floor._bridgeFireCells = update.fires || [];
-    for (const old of floor._bridgeSmokeCells || []) {
-      const cell = floor.grid?.[old.cy]?.[old.cx];
-      if (cell) ["smokeDensity", "smokeLayerDepthMeters", "smokeLayerInterfaceHeightMeters",
-        "extinctionCoefficientM1", "upperLayerExtinctionCoefficientM1", "eyeLevelExtinctionCoefficientM1",
-        "upperLayerCoPpm", "eyeLevelCoPpm", "upperLayerTemperatureC", "eyeLevelTemperatureC",
-        "smokeDataSource", "eyeLevelDataSource", "fdsSamples"].forEach(key => delete cell[key]);
-      if (cell) Object.assign(cell, { coPpm: 0, temperatureC: 20 });
-    }
     floor._bridgeSmokeCells = update.smokeCells || [];
-    for (const smoke of floor._bridgeSmokeCells) {
-      const cell = floor.grid?.[smoke.cy]?.[smoke.cx];
-      if (cell) Object.assign(cell, smoke, {
-        upperLayerExtinctionCoefficientM1: smoke.extinctionCoefficientM1,
-        upperLayerCoPpm: smoke.coPpm,
-        upperLayerTemperatureC: smoke.temperatureC,
-        smokeDataSource: smoke.source,
-        eyeLevelDataSource: smoke.eyeLevelSource
-      });
-    }
-    for (const fire of floor._bridgeFireCells) {
-      const cell = floor.grid?.[fire.cy]?.[fire.cx];
-      if (cell) Object.assign(cell, fire);
+    for(const record of [...floor._bridgeSmokeCells,...floor._bridgeFireCells]) {
+      const cell=floor.grid?.[record.cy]?.[record.cx];
+      if(cell) { DISPLAY_FIELDS.forEach(key=>delete cell[key]); Object.assign(cell,copyDisplayFields(record)); }
     }
   });
   targetState.agents = message.agents || [];

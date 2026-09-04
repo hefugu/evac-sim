@@ -143,6 +143,18 @@ time_s,floor,cx,cy,sample_height_m,heat_flux_kw_m2,extinction_coefficient_m_1,co
 
 責務分離としてCSVパーサを `simulation/fds-csv.js`、人体影響を `simulation/exposure.js` へ抽出した。空の旧モジュールと `sim/simulation.js` の扱いは [module-migration-audit.md](module-migration-audit.md)。
 
+### 物理表示・解析表示と地点分析
+
+煙の描画を共通純粋関数のBeer–Lambert式 `alpha=1-exp(-K L)` に統一した。Kは [m⁻¹]、Lは [m]。2Dは目線Kとセル幅、3Dは上層Kと煙層直方体の視線方向中心弦長を使う。Physicalはこのalpha、Analysisは `alpha^0.55` の表示専用強調とし、保存量、曝露、tenabilityへ逆流させない。K=0または煙層厚0で煙体積を演出生成しない。FDSの目線観測がある2Dセルではその値を優先するが、上層体積は生成しない。
+
+火炎寸法はHRRに対する単調なグリフで、選択したfireIntensity/HRR/fireAge/heatFluxを色と強度に反映する。予測火炎長ではなく、decayの未実装を表示側で補わない。既存の着火処理へ `ignitionTime` と最初の寄与元 `spreadSourceCell` を記録するメタデータのみ追加した。延焼前線表示は現在燃焼するセルと未燃焼の四近傍との境界で、独自の延焼計算を行わない。
+
+2D定量マップは現在のcellのK/CO/視界/温度/熱流束/層厚などを読む。従来の表示だけの距離依存熱流束再計算を除き、地点分析と定量マップを同じ値に揃えた。表示範囲は固定の比較スケールであり、人体影響の閾値ではない。凍結state、opacityの単調性・ゼロ、上層とFDSの区別、火災グリフ、階段矢印、転送欠測・解除をテストする。
+
+2D/3Dクリックの分析パネルは値・単位・項目別由来を表示する。FDSの部分入力を `fdsFields` / `fireFdsFields` で区別し、集約sourceだけで全項目をFDSと表示しない。専用3DページはHRR・年齢・着火由来・目線と上層の生のフィールドを転送する。新しい可視化モジュールは [hazard-display-math.md](hazard-display-math.md)、各画面は [2d-display-model.md](2d-display-model.md)、[3d-display-model.md](3d-display-model.md) に記載した。
+
+この可視化は解析支援・研究発表支援用であり、法的評価や厳密な安全認証は FDS などの高忠実度結果および数値指標を優先する。入力条件・適用範囲・検証の確認を伴う評価が必要であり、Physicalという名称も光輸送や火炎形状の厳密な再現を保証しない。
+
 ## 導入根拠
 
 - [NIST Fire Dynamics Simulator (FDS) manuals](https://pages.nist.gov/fds/manuals.html): FDSは火災による煙・熱輸送を扱う低速流向けLESコードで、Technical Reference、Verification、Validation等の文書が公開されている。

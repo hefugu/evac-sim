@@ -5,6 +5,9 @@
 | モジュール | 責務と今回の扱い |
 | --- | --- |
 | `sim/js/simulation/core.js` | 共通時計、UIと共有state、避難経路・移動、階段、Monte Carloの統合を継続 |
+| `visualization/hazard-display.js` | 共通の煙透明度、火災グリフ、項目別由来、地点分析値の純粋関数 |
+| `visualization/analysis-overlay.js` | coreの表示用危険度グリッドを分離。現在のstate量の定量マップを構築し、物理計算は行わない |
+| `visualization/inspection-panel.js` | 2D/3D共通の地点分析DOM、UI表示設定のみを管理 |
 | `simulation/exposure.js` | 新規: 単位付き曝露積分、tenability分類、観測窓と集計。coreと3D互換ヘルパが同じ関数を使用 |
 | `simulation/fds-csv.js` | coreから抽出: 旧CSV互換、時刻・高さ・物理量別保持、高さ補間 |
 | `simulation/smoke3d.js` | 既存保存量モデルを拡張。部屋・廊下・階段を同じ保存量と収支で計算 |

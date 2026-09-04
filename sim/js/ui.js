@@ -79,6 +79,7 @@ export function getUIRefs() {
       stair: byId("modeStair"),
       stairLink: byId("modeStairLink"),
       fire: byId("modeFire"),
+      inspect: byId("modeInspect"),
       erase: byId("modeErase")
     }
   };

@@ -4,6 +4,8 @@ import "./exposure.test.mjs";
 import "./smoke-physics.test.mjs";
 import "./corridor-smoke.test.mjs";
 import "./renderer-modes.test.mjs";
+import "./hazard-display.test.mjs";
+import "./renderer-2d.test.mjs";
 import assert from "node:assert/strict";
 
 import {
@@ -677,6 +679,9 @@ test("fire grows, spreads deterministically and applies in place", () => {
   assert.equal(targetCell.fire, true);
   assert.equal(applied.ignitedCells.length, 1);
   assert.ok(sourceCell.heatFluxKwM2 > 0);
+  assert.equal(targetCell.ignitionTime, 11);
+  assert.deepEqual(targetCell.spreadSourceCell, {floorIndex:0,cx:0,cy:0});
+  assert.equal(sourceCell.ignitionTime, 0);
 });
 
 test("agent behavior leaves a hazardous stuck cell toward clear air", () => {

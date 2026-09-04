@@ -80,13 +80,14 @@ export function deriveFireMetrics(intensity, options = {}) {
 
 /** FDS values replace the corresponding fallback fields, one field at a time. */
 export function applyFdsFireRecord(metrics, record, options = {}) {
-  if (!isFdsSampleAtHeight(record, options.eyeHeightMeters ?? 1.6)) return { ...metrics };
+  if (!isFdsSampleAtHeight(record, options.eyeHeightMeters ?? 1.6)) return { ...metrics, fireFdsFields: [] };
   const fds = normalizeFdsFireRecord(record);
-  if (!fds) return { ...metrics };
+  if (!fds) return { ...metrics, fireFdsFields: [] };
   return {
     ...metrics,
     temperatureC: fds.temperatureC == null ? metrics.temperatureC : fds.temperatureC,
     heatFluxKwM2: fds.heatFluxKwM2 == null ? metrics.heatFluxKwM2 : fds.heatFluxKwM2,
+    fireFdsFields: ['temperatureC','heatFluxKwM2'].filter(key => fds[key] != null),
     source: "fds_csv"
   };
 }
@@ -122,6 +123,8 @@ export function igniteFloorCell(floors, endpoint = {}, options = {}) {
     ...metrics,
     fire: true,
     fireAgeSec: Math.max(0, finiteNumber(options.fireAgeSec, 0)),
+    ignitionTime: Math.max(0, finiteNumber(options.ignitionTime, 0)),
+    spreadSourceCell: options.spreadSourceCell ? {...options.spreadSourceCell} : null,
     fireSource: options.fireSource || "manual"
   }));
   const next = floors.slice();
@@ -177,6 +180,8 @@ export function stepFire3D(floorsInput, dtSeconds, options = {}) {
           Object.assign(next, metrics, {
             fire: true,
             fireAgeSec: age,
+            ignitionTime: previous.ignitionTime ?? Math.max(0, timeSec - age),
+            fireDataSource: metrics.source,
             hrrKw,
             heat: metrics.heatFluxKwM2
           });
@@ -190,6 +195,7 @@ export function stepFire3D(floorsInput, dtSeconds, options = {}) {
               next.heat = fds.heatFluxKwM2;
             }
             next.fireDataSource = "fds_csv";
+            next.fireFdsFields = ['temperatureC','heatFluxKwM2'].filter(key => fds[key] != null);
           }
         }
       }
@@ -266,11 +272,15 @@ export function stepFire3D(floorsInput, dtSeconds, options = {}) {
     const target = grid?.[cy]?.[cx];
     if (!target || target.fire) continue;
     const metrics = deriveFireMetrics(config.initialIntensity, config);
+    // Metadata only: several sources may contribute to the ignition probability.
+    // Keep deterministic first contributor for a traceable marker, not a causal proof.
     Object.assign(target, metrics, {
       fire: true,
       fireAgeSec: 0,
       hrrKw: 0,
       fireSource: "spread",
+      ignitionTime: timeSec,
+      spreadSourceCell: record.sources[0] ? {...record.sources[0]} : null,
       heat: metrics.heatFluxKwM2
     });
     ignited.push({ floorIndex, cx, cy, probability, sources: record.sources });
@@ -373,6 +383,9 @@ export function applyFire3DResultToLegacyFloors(
         if (source.fire) target.fire = true;
         else if (options.copyClearedFire) target.fire = false;
         if (Number.isFinite(Number(source.fireIntensity))) target.fireIntensity = Math.max(0, Number(source.fireIntensity));
+        if (source.ignitionTime != null) target.ignitionTime = source.ignitionTime;
+        if (source.fireFdsFields) target.fireFdsFields = [...source.fireFdsFields];
+        if (source.spreadSourceCell != null) target.spreadSourceCell = {...source.spreadSourceCell};
         if (Number.isFinite(Number(source.fireAgeSec))) target.fireAgeSec = Math.max(0, Number(source.fireAgeSec));
         if (Number.isFinite(Number(source.hrrKw))) target.hrrKw = Math.max(0, Number(source.hrrKw));
         if (Number.isFinite(Number(source.temperatureC))) target.temperatureC = Number(source.temperatureC);
@@ -429,6 +442,7 @@ export function stepLegacyFireMetricsInPlace(floors, dtSeconds, options = {}) {
         Object.assign(cell, metrics, {
           fire: true,
           fireAgeSec: age,
+          ignitionTime: cell.ignitionTime ?? Math.max(0, timeSec - age),
           hrrKw,
           heat: metrics.heatFluxKwM2,
           fireDataSource: metrics.source

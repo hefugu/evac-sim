@@ -1525,7 +1525,8 @@ function applyFdsMetricsToCell(floor, cell, cx, cy, timeSec, config) {
     smokeDataSource: "fds_csv",
     hazardDataSource: "fds_csv",
     eyeLevelDataSource: "fds_csv",
-    fdsSampleHeightMeters: fds.sampleHeightMeters
+    fdsSampleHeightMeters: fds.sampleHeightMeters,
+    fdsFields: [hasExtinction && 'opticalDensityM1', hasCo && 'coPpm', hasVisibility && 'visibilityM', hasSmokeDensity && 'smokeDensity'].filter(Boolean)
   };
   if (hasSmokeDensity) {
     fields.smokeDensity = smokeDensity;

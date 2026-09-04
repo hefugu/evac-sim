@@ -63,6 +63,67 @@ test.beforeEach(async ({ page }) => {
   await loadRoom(page);
 });
 
+test('display controls and 2D/3D clicks inspect the same state without advancing hazards', async ({page}) => {
+  const errors=[];page.on('pageerror',e=>errors.push(String(e)));
+  await configureAgent(page,'0.2');
+  await marker(page,'modeSpawn',2,2);await marker(page,'modeExit',17,2);await marker(page,'modeFire',12,8);
+  await page.locator('#btnStart').click();await page.clock.runFor(2000);await page.locator('#btnStop').click();
+  const numericalState=()=>page.evaluate(async()=>{
+    const {state}=await import('/sim/js/state.js');
+    return JSON.stringify({time:state.sim.time,grids:state.map.floorStates.map(f=>f.grid),agents:state.agents,
+      inventories:state.map.floorStates.map(f=>f.smokePhysics),transfers:state.sim.verticalSmokeTransfers});
+  });
+  const before=await numericalState();
+  await marker(page,'modeInspect',12,8);
+  await expect(page.locator('[data-inspector-location]')).toContainText('cx=12, cy=8');
+  await expect(page.locator('[data-field="hrrKw"]')).toContainText('kW');
+  await expect(page.locator('[data-field="fireAgeSec"]')).not.toContainText('未取得');
+  await page.getByRole('button',{name:'地点分析を閉じる'}).click();
+  for(const mode of ['physical','analysis']) {
+    await page.locator('#smokeDisplayMode').selectOption(mode);
+    for(const metric of ['density','extinction','visibility','co','temperature']) await page.locator('#view3dSmokeMode').selectOption(metric);
+    for(const metric of ['intensity','hrr','age','heat_flux','spread_front']) await page.locator('#fireMetric').selectOption(metric);
+    for(const source of ['fds','fallback','mixed','none'])await page.locator('#dataSourceOverlay').selectOption(source);
+  }
+  for(const mode of ['density','temperature','layer_depth','heat_flux','optical_density','co','visibility','source','hrr','age','spread_front','none']) {
+    await page.locator('#riskViewMode').selectOption(mode);
+  }
+  await page.locator('#btnView3D').click();await page.clock.runFor(50);
+  const projected=await page.evaluate(async()=>{
+    const {state}=await import('/sim/js/state.js');state.render.renderer3d.renderOnce();
+    return state.render.renderer3d.projectCell({floorIndex:0,cx:12,cy:8});
+  });
+  const box=await page.locator('#simCanvas3d').boundingBox();
+  await page.mouse.click(box.x+projected.x,box.y+projected.y);
+  await expect(page.locator('[data-inspector-location]')).toContainText('cx=12, cy=8');
+  await expect(page.locator('[data-field="hrrKw"]')).toContainText('fallback');
+  expect(await numericalState()).toBe(before);
+  expect(errors).toEqual([]);
+});
+
+test('inspector keeps FDS provenance per field and live standalone view returns to fallback', async ({page,context}) => {
+  const csv='time_s,floor,cx,cy,sample_height_m,co_ppm,temperature_c\n0,1,5,5,1.6,600,85\n0,1,5,5,2.6,900,160';
+  await page.locator('#fdsCsvFile').setInputFiles({name:'inspect.csv',mimeType:'text/csv',buffer:Buffer.from(csv)});
+  await marker(page,'modeInspect',5,5);
+  await expect(page.locator('[data-field="coPpm"]')).toContainText('600 ppm');
+  await expect(page.locator('[data-field="coPpm"]')).toContainText('fds');
+  await expect(page.locator('[data-field="eyeLevelTemperatureC"]')).toContainText('85 °C');
+  await expect(page.locator('[data-field="upperLayerCoPpm"]')).toContainText('fallback');
+  const standalone=await context.newPage();await standalone.goto('/sim/3d.html?live=1');
+  await page.evaluate(async()=>(await import('/sim/js/view3d.js')).init3DView().publisher.publishNow(true));
+  await expect(standalone.locator('#standaloneConnection')).toContainText('同期中');
+  const transferred=await standalone.evaluate(async()=>{
+    const {state}=await import('/sim/js/state.js');return state.map.floorStates[0].grid[5][5];
+  });
+  expect(transferred.coPpm).toBe(600);expect(transferred.eyeLevelTemperatureC).toBe(85);
+  expect(transferred.fdsFields).toContain('coPpm');expect(transferred.fdsSamples).toHaveLength(2);
+  await page.locator('#btnClearFdsCsv').click();
+  await expect(page.locator('[data-field="coPpm"]')).toContainText('fallback');
+  await page.evaluate(async()=>(await import('/sim/js/view3d.js')).init3DView().publisher.publishNow());
+  await expect.poll(()=>standalone.evaluate(async()=> (await import('/sim/js/state.js')).state.map.floorStates[0].grid[5][5].fdsFields ?? null)).toBeNull();
+  await standalone.close();
+});
+
 test("Monte Carlo completes 100 runs and preserves censored exposure reports", async ({ page }) => {
   test.setTimeout(60_000);
   const errors = [];

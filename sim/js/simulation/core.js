@@ -1,3 +1,5 @@
+import { buildAnalysisOverlay } from '../visualization/analysis-overlay.js';
+import { getInspectionPanel } from '../visualization/inspection-panel.js';
 import { parseFdsRiskCsv, eyeHeightFdsFrame } from "./fds-csv.js";
 import { bindCoreControls, getUIRefs } from "../ui.js";
 import { state, syncLegacyState } from "../state.js";
@@ -68,6 +70,7 @@ export function resetSimulation() {
 export function initSimulation() {
   const ui = getUIRefs();
   state.ui.refs = ui;
+  const inspectionPanel = getInspectionPanel(state);
 
   // ==== Basic Setup ====
   const cvs = ui.simCanvas;
@@ -167,6 +170,7 @@ export function initSimulation() {
     stair: ui.modeButtons.stair,
     stairLink: ui.modeButtons.stairLink,
     fire: ui.modeButtons.fire,
+    inspect: ui.modeButtons.inspect,
     erase: ui.modeButtons.erase
   };
   const modeLabelMap = {
@@ -1680,6 +1684,9 @@ export function initSimulation() {
     if (!cell) return;
     const { cx, cy } = cell;
     const cellObj = grid[cy][cx];
+    if(mode === 'inspect' || e.altKey) {
+      inspectionPanel.select({floorIndex:currentFloor,cx,cy}); drawScene(); return;
+    }
 
     if (mode === "spawn") {
       if (!cellObj.walkable || cellObj.fire) {
@@ -1743,6 +1750,8 @@ export function initSimulation() {
     } else if (mode === "fire") {
       cellObj.fire = true;
       cellObj.fireSource = "manual";
+      cellObj.ignitionTime = simTime;
+      cellObj.spreadSourceCell = null;
       cellObj.fireInitialIntensity = Math.max(0.05, Number(cellObj.fireInitialIntensity) || 0);
       cellObj.fireIntensity = cellObj.fireInitialIntensity;
       cellObj.fireAgeSec = 0;
@@ -1771,6 +1780,9 @@ export function initSimulation() {
       cellObj.temperatureC = 20;
       cellObj.heatFluxKwM2 = 0;
       cellObj.heat = 0;
+      delete cellObj.ignitionTime;
+      delete cellObj.spreadSourceCell;
+      delete cellObj.fireFdsFields;
       delete cellObj.fireSource;
       delete cellObj.fireInitialIntensity;
       delete cellObj.fireDataSource;
@@ -1883,6 +1895,9 @@ export function initSimulation() {
           );
           cell.fireIntensity = cell.fireInitialIntensity;
           cell.fireAgeSec = 0;
+          cell.ignitionTime = 0;
+          cell.spreadSourceCell = null;
+          delete cell.fireFdsFields;
           cell.hrrKw = 0;
           cell.temperatureC = 20;
           cell.heatFluxKwM2 = 0;
@@ -1900,6 +1915,9 @@ export function initSimulation() {
         cell.temperatureC = 20;
         cell.heatFluxKwM2 = 0;
         cell.heat = 0;
+        delete cell.ignitionTime;
+        delete cell.spreadSourceCell;
+        delete cell.fireFdsFields;
         delete cell.fireSource;
         delete cell.fireDataSource;
         const baseWalkable = !!floor.walkableTemplate?.[cy]?.[cx];
@@ -2212,6 +2230,9 @@ export function initSimulation() {
         grid[y][x].heatFluxKwM2 = 0;
         grid[y][x].heat = 0;
         delete grid[y][x].fireSource;
+        delete grid[y][x].ignitionTime;
+        delete grid[y][x].spreadSourceCell;
+        delete grid[y][x].fireFdsFields;
         delete grid[y][x].fireInitialIntensity;
         delete grid[y][x].fireDataSource;
         grid[y][x].stair = !!floorStates[currentFloor]?.stairTemplate?.[y]?.[x];
@@ -3507,97 +3528,6 @@ export function initSimulation() {
     }
   }
 
-  function fireHeatForOverlay(floor, cx, cy) {
-    let heat = 0;
-    const fs = floorStates[floor];
-    const fGrid = fs?.grid;
-    if (!fGrid) return 0;
-    const r = Math.ceil(FIRE_DANGER_RADIUS);
-    for (let dy = -r; dy <= r; dy++) {
-      for (let dx = -r; dx <= r; dx++) {
-        const nx = cx + dx;
-        const ny = cy + dy;
-        if (nx < 0 || ny < 0 || nx >= gridW || ny >= gridH) continue;
-        if (!fGrid[ny][nx].fire) continue;
-        const d = Math.hypot(dx, dy);
-        if (d <= FIRE_DANGER_RADIUS) heat += (FIRE_DANGER_RADIUS - d) / FIRE_DANGER_RADIUS;
-      }
-    }
-    return heat;
-  }
-
-  function riskRecordForOverlay(floor, cx, cy) {
-    const smoke = reducedSmokeMetricsAt(floor, cx, cy);
-    const fireHeat = fireHeatForOverlay(floor, cx, cy);
-    const hrrScale = Math.min(1, t2FireHrrKw(simTime) / Math.max(1, T2_FIRE_MAX_HRR_KW));
-    const fallback = {
-      heatFluxKwM2: Math.max(0, fireHeat * 8.0 * (0.35 + 0.65 * hrrScale)),
-      opticalDensityM1: smoke.extinctionCoefficientM1,
-      coPpm: smoke.coPpm,
-      visibilityM: smoke.visibilityM,
-      temperatureC: smoke.temperatureC,
-      source: smoke.source
-    };
-    return mergeFdsRiskRecord(fallback, getFdsRiskAt(floor, cx, cy, simTime));
-  }
-
-  function buildRiskOverlayGrid(mode) {
-    if (!grid || !floorStates.length || !mode || mode === 'none') return null;
-    const overlay = {
-      mode,
-      label: mode,
-      unit: '',
-      cells: new Array(gridH).fill(null).map(() => new Array(gridW).fill(null)),
-      maxValue: 0,
-      minValue: Infinity,
-      source: importedFdsRisk.active ? 'fds_csv' : 'fallback_t2'
-    };
-    if (mode === 'heat_flux') { overlay.label = 'Heat Flux'; overlay.unit = 'kW/m²'; }
-    else if (mode === 'optical_density') { overlay.label = 'Extinction coefficient K'; overlay.unit = '1/m'; }
-    else if (mode === 'co') { overlay.label = 'CO'; overlay.unit = 'ppm'; }
-    else if (mode === 'visibility') { overlay.label = 'Visibility risk'; overlay.unit = 'm'; }
-    else { overlay.label = 'Total fire risk'; overlay.unit = 'risk'; }
-
-    for (let y = 0; y < gridH; y++) {
-      for (let x = 0; x < gridW; x++) {
-        if (!grid[y][x].walkable && !grid[y][x].fire && !grid[y][x].stair) continue;
-        const rec = riskRecordForOverlay(currentFloor, x, y);
-        const hf = Math.max(0, rec.heatFluxKwM2 || 0);
-        const od = Math.max(0, rec.opticalDensityM1 || 0);
-        const co = Math.max(0, rec.coPpm || 0);
-        const vis = Number.isFinite(rec.visibilityM) ? Math.max(0, rec.visibilityM) : 30;
-        let value = 0;
-        let norm = 0;
-        if (mode === 'heat_flux') {
-          value = hf;
-          norm = clamp(hf / FDS_HEAT_FLUX_HARD_KW_M2, 0, 1);
-        } else if (mode === 'optical_density') {
-          value = od;
-          norm = clamp(od / FDS_OPTICAL_DENSITY_HARD, 0, 1);
-        } else if (mode === 'co') {
-          value = co;
-          norm = clamp(co / FDS_CO_HARD_PPM, 0, 1);
-        } else if (mode === 'visibility') {
-          value = vis;
-          norm = clamp(1 - (vis / 10), 0, 1);
-        } else {
-          const heatNorm = clamp(hf / FDS_HEAT_FLUX_HARD_KW_M2, 0, 1);
-          const odNorm = clamp(od / FDS_OPTICAL_DENSITY_HARD, 0, 1);
-          const coNorm = clamp(co / FDS_CO_HARD_PPM, 0, 1);
-          const visNorm = clamp(1 - (vis / 10), 0, 1);
-          norm = clamp(Math.max(heatNorm, odNorm, coNorm, visNorm) * 0.7 + ((heatNorm + odNorm + coNorm + visNorm) / 4) * 0.3, 0, 1);
-          value = norm;
-        }
-        if (norm <= 0.001) continue;
-        overlay.cells[y][x] = { value, norm };
-        overlay.maxValue = Math.max(overlay.maxValue, value);
-        overlay.minValue = Math.min(overlay.minValue, value);
-      }
-    }
-    if (!Number.isFinite(overlay.minValue)) overlay.minValue = 0;
-    return overlay;
-  }
-
   // ==== Rendering ====
   const renderer = createRenderer({
     ctx,
@@ -3611,6 +3541,10 @@ export function initSimulation() {
     const layout = worldLayout();
     const scene = {
       layout,
+      cellSizeMeters: floorStates[currentFloor]?.cellSizeMeters || state.spatial.cellSizeMeters,
+      hazardDisplay: state.viz.hazardDisplay,
+      selectedCell: state.viz.selectedCell,
+      verticalSmokeTransfers: state.sim.verticalSmokeTransfers,
       baseImage,
       grid,
       gridW,
@@ -3638,12 +3572,15 @@ export function initSimulation() {
       potentialViewMode: potentialViewModeInput.value,
       potentialExitIndex: Math.max(1, Math.floor(parseNum(potentialExitIndexInput, 1))),
       riskOverlayMode: riskViewModeInput?.value || "none",
-      riskOverlay: buildRiskOverlayGrid(riskViewModeInput?.value || "none"),
+      riskOverlay: buildAnalysisOverlay(grid, riskViewModeInput?.value || "none"),
       fdsStats: importedFdsRisk.stats
     };
     state.render.lastScene = scene;
     renderer.render(scene);
+    inspectionPanel.refresh();
   }
+
+  document.addEventListener("hazard-display-change", drawScene);
 
   // ==== Initialization ====
   runtimeControls.start = startSimulationCore;

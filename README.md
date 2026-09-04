@@ -86,6 +86,15 @@ node --test tests/3d-modules.test.mjs
 
 数式、単位、設定例、近似、変更理由は [火災工学モデルの根拠](docs/fire_engineering_model_basis.md) に記載しています。fallback単体を実火災の絶対予測や法令適合判定に使用することはできません。
 
+### 状態量を読むための表示
+
+- ツールバーの **Physical / Analysis** で、Beer–Lambertの煙透明度と表示専用ガンマ強調を切替。2Dは目線、3Dは天井側の上層煙を表示します。
+- 煙の量（density/K/visibility/CO/temperature）、火災量（intensity/HRR/age/heat flux/spread front）、FDS/fallback/mixedの由来を選べます。単位・色範囲を常時表示します。
+- 2Dの「地点分析」モードまたはAlt+クリック、3Dのクリックで、セルの生の状態量・単位・項目別由来を確認できます。左の「2D定量マップ」には層厚・熱流束などもあります。
+- 火炎グリフはHRR、年齢・強度・熱流束に対応し、着火元と延焼セルを区別します。描画側で延焼、減衰、煙生成を計算しません。
+
+数式と近似、操作、検証は [可視化の根拠](docs/hazard-display-math.md)、[変更ファイル一覧](docs/visualization-change-report.md) を参照してください。可視化は解析支援・研究発表支援用であり、法的評価や厳密な安全認証はFDSなどの高忠実度結果および数値指標を優先します。
+
 ブラウザ統合テスト（Node 22以上、Python 3）:
 
 ```sh

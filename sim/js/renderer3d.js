@@ -6,9 +6,20 @@
  * 2D and 3D views always describe the same simulation.
  */
 
+import {
+  computeSmokeDisplayOpacity,
+  computeSmokeViewPathLength,
+  createFireDisplayData,
+  isFireSpreadFront,
+  resolveHazardDisplaySource, sourceOverlayMatches, SOURCE_COLORS, displayMetricColor, displayLegend
+} from "./visualization/hazard-display.js";
+
 const TAU = Math.PI * 2;
 
-export const SMOKE_VISUALIZATION_MODES = Object.freeze(["extinction", "co", "temperature", "source"]);
+export const SMOKE_VISUALIZATION_MODES = Object.freeze(["density", "extinction", "visibility", "co", "temperature", "source"]);
+export const SMOKE_DISPLAY_MODES = Object.freeze(["physical", "analysis"]);
+export const FIRE_VISUALIZATION_MODES = Object.freeze(["intensity", "hrr", "age", "heat_flux", "spread_front"]);
+export const DATA_SOURCE_OVERLAYS = Object.freeze(["none", "fds", "fallback", "mixed"]);
 
 const DEFAULT_LAYERS = Object.freeze({
   floors: true,
@@ -50,11 +61,13 @@ const DEFAULT_OPTIONS = Object.freeze({
   minCameraDistance: 2,
   maxCameraDistance: 5000,
   maxDevicePixelRatio: 2,
-  maxSmokeSamples: 2400,
-  smokeThreshold: 0.025,
   legacyExtinctionPerSmokeDensity: 0.32,
-  maxSmokeOpacity: 0.86,
   smokeVisualizationMode: "extinction",
+  smokeDisplayMode: "physical",
+  smokeAnalysisGamma: 0.55,
+  fireVisualizationMode: "intensity",
+  dataSourceOverlay: "none",
+  clickDragThresholdPixels: 5,
   showSmokeLayerBounds: true,
   showStairSmokeTransfer: true,
   fireThreshold: 0.001,
@@ -135,6 +148,7 @@ function smokeLayerProfile(cell, roomHeightMeters) {
     ? null
     : clamp(explicitInterface, 0, roomHeight);
   let depth = explicitDepth == null ? null : clamp(explicitDepth, 0, roomHeight);
+  if (explicitDepth === 0) return null;
   if (interfaceHeight != null) depth = roomHeight - interfaceHeight;
   else if (depth != null) interfaceHeight = roomHeight - depth;
   if (!(depth > 0) || interfaceHeight == null) return null;
@@ -172,11 +186,13 @@ export function smokeVisualizationSample(cell = {}, roomHeightMeters = 2.8, opti
       sample.extinctionCoefficientPerM, sample.extinction_coefficient_m_1]),
     coPpm: firstOptionalFinite([sample.coPpm, sample.co_ppm]),
     temperatureC: firstOptionalFinite([sample.temperatureC, sample.temperature_c]),
+    visibilityM: firstOptionalFinite([sample.visibilityM, sample.visibility_m]),
     source: "fds_csv"
   }));
   return {
     density: extinctionCoefficientPerM / legacyFactor,
     extinctionCoefficientPerM, coPpm, temperatureC,
+    visibilityM: extinctionCoefficientPerM > 0 ? Math.min(30,3/extinctionCoefficientPerM) : 30,
     source: cell.upperLayerDataSource || (hasLayerState || hasUpperMetrics ? "reduced_order_nist" : cell.smokeDataSource || "legacy"),
     layer,
     pointSamples
@@ -185,6 +201,10 @@ export function smokeVisualizationSample(cell = {}, roomHeightMeters = 2.8, opti
 
 /** Display scales only: 0–1200 ppm CO and 20–200 °C are not injury thresholds. */
 export function smokeMetricColor(mode, sample = {}) {
+  const key = {density:'density', extinction:'extinctionCoefficientPerM', visibility:'visibilityM', co:'coPpm', temperature:'temperatureC'}[mode];
+  if (key && optionalFiniteNumber(sample[key]) == null) return '#63717d'; // missing observation, not zero
+  if (mode === "density") return displayMetricColor(mode,sample.density);
+  if (mode === "visibility") return displayMetricColor(mode,sample.visibilityM);
   if (mode === "source") return /fds/i.test(sample.source || "") ? "#55e4ff" : "#a0a8b0";
   if (mode === "co") {
     const amount = clamp(finiteNumber(sample.coPpm, 0) / 1200, 0, 1);
@@ -381,7 +401,12 @@ function makeNoContextApi() {
     resetCamera: unavailable,
     setLayerVisibility: unavailable,
     setSmokeVisualizationMode: unavailable,
-    setSmokeLayerBounds: unavailable
+    setSmokeLayerBounds: unavailable,
+    setSmokeDisplayMode: unavailable,
+    setFireVisualizationMode: unavailable,
+    setDataSourceOverlay: unavailable,
+    pickCell: () => null,
+    projectCell: () => null
   });
 }
 
@@ -405,15 +430,9 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
   config.floorHeightMeters = positiveNumber(config.floorHeightMeters, DEFAULT_OPTIONS.floorHeightMeters);
   config.wallHeightMeters = positiveNumber(config.wallHeightMeters, DEFAULT_OPTIONS.wallHeightMeters);
   config.fovDegrees = clamp(finiteNumber(config.fovDegrees, DEFAULT_OPTIONS.fovDegrees), 20, 100);
-  config.maxSmokeSamples = Math.max(64, Math.floor(finiteNumber(config.maxSmokeSamples, DEFAULT_OPTIONS.maxSmokeSamples)));
   config.legacyExtinctionPerSmokeDensity = positiveNumber(
     config.legacyExtinctionPerSmokeDensity,
     DEFAULT_OPTIONS.legacyExtinctionPerSmokeDensity
-  );
-  config.maxSmokeOpacity = clamp(
-    finiteNumber(config.maxSmokeOpacity, DEFAULT_OPTIONS.maxSmokeOpacity),
-    0.05,
-    1
   );
   if (!SMOKE_VISUALIZATION_MODES.includes(config.smokeVisualizationMode)) config.smokeVisualizationMode = "extinction";
 
@@ -835,75 +854,21 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
   }
 
   function dynamicCells(floor, needStairs, needFire, needSmoke) {
-    const stairs = [];
-    const fires = [];
-    const smoke = [];
-    const fdsSamples = [];
-    if (!needStairs && !needFire && !needSmoke) return { stairs, fires, smoke, fdsSamples };
-
-    const totalCells = floor.width * floor.height;
-    const automaticStride = Math.max(1, Math.ceil(Math.sqrt(totalCells / config.maxSmokeSamples)));
-    const smokeStride = Math.max(1, Math.floor(positiveNumber(config.smokeStride, automaticStride)));
-    const smokeColumns = Math.ceil(floor.width / smokeStride);
-    const smokeRows = Math.ceil(floor.height / smokeStride);
-    const smokeSampleCount = smokeColumns * smokeRows;
-    const smokeMaxima = needSmoke ? new Float32Array(smokeSampleCount) : null;
-    const smokeSamples = needSmoke ? new Array(smokeSampleCount) : null;
-    for (let cy = 0; cy < floor.height; cy += 1) {
-      for (let cx = 0; cx < floor.width; cx += 1) {
-        const cell = rawCellAt(floor, cx, cy);
-        const stair = !!cell?.stair || !!floor.source?.stairTemplate?.[cy]?.[cx];
-        if (needStairs && stair) {
-          stairs.push({ cx, cy, type: cell?.stairType || cell?.type || "indoor" });
-        }
-
-        if (needFire) {
-          const intensity = Math.max(0, finiteNumber(cell?.fireIntensity, cell?.fire ? 1 : 0));
-          if (cell?.fire || intensity > config.fireThreshold) fires.push({ cx, cy, intensity: Math.max(0.12, intensity) });
-        }
-
-        if (needSmoke) {
-          const sample = smokeVisualizationSample(cell, floor.wallHeight, {
-            legacyDensity: floor.smokeMap?.[cy]?.[cx],
-            legacyExtinctionPerSmokeDensity: config.legacyExtinctionPerSmokeDensity
-          });
-          // Measurements are discrete points at their supplied height. They
-          // never overwrite the upper-layer midpoint or physical extinction.
-          if (fdsSamples.length < config.maxSmokeSamples) {
-            for (const point of sample.pointSamples) {
-              if (fdsSamples.length >= config.maxSmokeSamples) break;
-              fdsSamples.push({ ...point, cx, cy });
-            }
-          }
-          const equivalentDensity = Math.max(sample.density,
-            sample.layer ? 0.03 : 0,
-            config.smokeVisualizationMode === "co" && sample.layer ? sample.coPpm / 400 : 0,
-            config.smokeVisualizationMode === "temperature" && sample.layer ? Math.max(0, sample.temperatureC - 20) / 100 : 0);
-          const bucket = Math.floor(cy / smokeStride) * smokeColumns + Math.floor(cx / smokeStride);
-          if (equivalentDensity > smokeMaxima[bucket]) {
-            smokeMaxima[bucket] = equivalentDensity;
-            smokeSamples[bucket] = sample;
-          }
-        }
+    const stairs=[],fires=[],smoke=[],fdsSamples=[];
+    for(let cy=0;cy<floor.height;cy++) for(let cx=0;cx<floor.width;cx++) {
+      const cell=rawCellAt(floor,cx,cy);
+      if(needStairs && (cell?.stair || floor.source?.stairTemplate?.[cy]?.[cx])) stairs.push({cx,cy,type:cell?.stairType || 'indoor'});
+      if(needFire && (cell?.fire || cell?.fireIntensity>config.fireThreshold)) {
+        fires.push({cx,cy,...createFireDisplayData(cell,{metric:config.fireVisualizationMode,
+          isFront:isFireSpreadFront(floor.grid,cx,cy),maxHeightMeters:floor.wallHeight})});
       }
+      if(!needSmoke) continue;
+      const sample=smokeVisualizationSample(cell,floor.wallHeight,{legacyDensity:floor.smokeMap?.[cy]?.[cx],legacyExtinctionPerSmokeDensity:config.legacyExtinctionPerSmokeDensity});
+      sample.pointSamples.forEach(point=>fdsSamples.push({...point,cx,cy}));
+      // One actual cell per slab. The former block maximum could paint empty/wall cells as smoke.
+      if(sample.extinctionCoefficientPerM>0 || sample.layer) smoke.push({...sample,cx,cy,stride:1});
     }
-    if (needSmoke) {
-      for (let row = 0; row < smokeRows; row += 1) {
-        for (let column = 0; column < smokeColumns; column += 1) {
-          const index = row * smokeColumns + column;
-          if (smokeMaxima[index] <= config.smokeThreshold || !smokeSamples[index]) continue;
-          const sample = smokeSamples[index];
-          smoke.push({
-            ...sample,
-            cx: Math.min(floor.width - 1, column * smokeStride + (smokeStride - 1) * 0.5),
-            cy: Math.min(floor.height - 1, row * smokeStride + (smokeStride - 1) * 0.5),
-            stride: smokeStride,
-            layerMidpointHeightMeters: sample.layer?.midpointHeightMeters ?? Number.NaN
-          });
-        }
-      }
-    }
-    return { stairs, fires, smoke, fdsSamples };
+    return {stairs,fires,smoke,fdsSamples};
   }
 
   function addFloorPrimitives(primitives, floor, geometry, basis) {
@@ -1148,75 +1113,60 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
     return { cells: landings.length, regions: regions.length };
   }
 
-  function addHazardPrimitives(primitives, floor, dynamic, basis, timestamp) {
-    const cell = floor.cellSize;
-    if (layerVisibility.smoke) {
-      dynamic.smoke.forEach(sample => {
-        const density = clamp(sample.density, 0, 2.5);
-        const layerMidpoint = Number.isFinite(sample.layerMidpointHeightMeters)
-          ? clamp(sample.layerMidpointHeightMeters, 0, floor.wallHeight)
-          : floor.wallHeight * 0.67;
-        const world = {
-          x: sample.cx * cell,
-          y: floor.elevation + layerMidpoint,
-          z: sample.cy * cell
-        };
-        const projected = project(world, basis);
-        if (!projected) return;
-        primitives.push({
-          kind: "smoke",
-          center: projected,
-          depth: projected.depth,
-          order: 5,
-          radius: Math.max(cell * sample.stride * 0.58, 0.28),
-          density,
-          color: smokeMetricColor(config.smokeVisualizationMode, sample),
-          visualizationMode: config.smokeVisualizationMode,
-          extinctionCoefficientPerM: sample.extinctionCoefficientPerM,
-          // The sampled block width is a cheap representative optical path.
-          // It also compensates opacity when large maps use a coarser stride.
-          opticalPathLengthMeters: Math.max(0.05, cell * sample.stride),
-          phase: ((sample.cx * 17 + sample.cy * 31 + floor.floorIndex * 13) % 97) / 97,
-          timestamp
-        });
-        if (config.showSmokeLayerBounds && sample.layer) {
-          const interfaceY = floor.elevation + sample.layer.interfaceHeightMeters;
-          const half = cell * sample.stride * 0.44;
-          pushPolygon(primitives, [
-            { x: world.x - half, y: interfaceY, z: world.z - half },
-            { x: world.x + half, y: interfaceY, z: world.z - half },
-            { x: world.x + half, y: interfaceY, z: world.z + half },
-            { x: world.x - half, y: interfaceY, z: world.z + half }
-          ], basis, { stroke: "#a8bec8", lineWidth: 0.6, alpha: 0.28, order: 4 });
-          pushLine(primitives,
-            { x: world.x, y: interfaceY, z: world.z },
-            { x: world.x, y: floor.elevation + floor.wallHeight, z: world.z },
-            basis, { stroke: "#a8bec8", lineWidth: 1, alpha: 0.5, order: 5 });
+  // Project a layer box to its convex silhouette and apply attenuation once, not once per face.
+  function projectedHull(points) {
+    const sorted=points.slice().sort((a,b)=>a.x-b.x || a.y-b.y);
+    const cross2=(a,b,c)=>(b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x);
+    const half=list=>{const out=[];for(const point of list){while(out.length>=2 && cross2(out.at(-2),out.at(-1),point)<=0)out.pop();out.push(point);}return out;};
+    return [...half(sorted).slice(0,-1),...half(sorted.slice().reverse()).slice(0,-1)];
+  }
+
+  function addHazardPrimitives(primitives, floor, dynamic, basis) {
+    const cell=floor.cellSize;
+    if(layerVisibility.smoke) {
+      dynamic.smoke.forEach(sample=>{
+        // Legacy density-only API has no layer height; retain its explicitly documented display assumption.
+        const layer=sample.layer || {interfaceHeightMeters:floor.wallHeight*.5,depthMeters:floor.wallHeight*.5};
+        const world={x:sample.cx*cell,y:floor.elevation+layer.interfaceHeightMeters,z:sample.cy*cell};
+        const mid={...world,y:world.y+layer.depthMeters*.5};
+        const direction={x:basis.eye.x-mid.x,y:basis.eye.y-mid.y,z:basis.eye.z-mid.z};
+        const path=computeSmokeViewPathLength({cellSizeMeters:cell,layerDepthMeters:layer.depthMeters,viewDirection:direction});
+        const alpha=computeSmokeDisplayOpacity(sample.extinctionCoefficientPerM,path,{mode:config.smokeDisplayMode,gamma:config.smokeAnalysisGamma});
+        const corners=[];
+        for(const dy of [0,layer.depthMeters])for(const dx of [-.5,.5])for(const dz of [-.5,.5]) {
+          const point=project({x:world.x+dx*cell,y:world.y+dy,z:world.z+dz*cell},basis);if(point)corners.push(point);
+        }
+        if(alpha>0 && corners.length===8) primitives.push({kind:'polygon',points:projectedHull(corners),
+          depth:project(mid,basis).depth,order:5,fill:smokeMetricColor(config.smokeVisualizationMode,sample),alpha});
+        if(config.showSmokeLayerBounds && sample.layer) {
+          pushPolygon(primitives,[{x:world.x-cell*.5,y:world.y,z:world.z-cell*.5},
+            {x:world.x+cell*.5,y:world.y,z:world.z-cell*.5},{x:world.x+cell*.5,y:world.y,z:world.z+cell*.5},
+            {x:world.x-cell*.5,y:world.y,z:world.z+cell*.5}],basis,{stroke:'#a8bec8',lineWidth:.6,alpha:.28,order:4});
+          pushLine(primitives,world,{...world,y:world.y+layer.depthMeters},basis,{stroke:'#a8bec8',lineWidth:1,alpha:.5,order:5});
         }
       });
-      dynamic.fdsSamples.forEach(sample => {
-        const center = project({ x: sample.cx * cell, y: floor.elevation + sample.sampleHeightMeters, z: sample.cy * cell }, basis);
-        if (!center) return;
-        primitives.push({ kind: "fdsSample", center, depth: center.depth, order: 7,
-          color: smokeMetricColor(config.smokeVisualizationMode, sample) });
+      dynamic.fdsSamples.forEach(sample=>{
+        const center=project({x:sample.cx*cell,y:floor.elevation+sample.sampleHeightMeters,z:sample.cy*cell},basis);
+        if(center) primitives.push({kind:'fdsSample',center,depth:center.depth,order:7,color:smokeMetricColor(config.smokeVisualizationMode,sample)});
       });
     }
-
-    if (layerVisibility.fire) {
-      dynamic.fires.forEach(fire => {
-        const world = {
-          x: fire.cx * cell,
-          y: floor.elevation + 0.03,
-          z: fire.cy * cell
-        };
-        const height = 0.55 + clamp(fire.intensity, 0, 1) * 1.15;
-        pushMarker(primitives, "fire", world, height, basis, {
-          intensity: fire.intensity,
-          phase: ((fire.cx * 19 + fire.cy * 29 + floor.floorIndex * 7) % 101) / 101,
-          timestamp,
-          order: 6
-        });
-      });
+    if(layerVisibility.fire) dynamic.fires.forEach(fire=>{
+      pushMarker(primitives,'fire',{x:fire.cx*cell,y:floor.elevation+.03,z:fire.cy*cell},fire.flameHeightMeters,basis,
+        {...fire,intensity:fire.strength,order:6});
+    });
+    const selected=readState()?.viz?.selectedCell;
+    if(config.dataSourceOverlay==='none' && !(layerVisibility.fire && config.fireVisualizationMode==='heat_flux') && !selected)return;
+    for(let cy=0;cy<floor.height;cy++)for(let cx=0;cx<floor.width;cx++) {
+      const raw=rawCellAt(floor,cx,cy);if(!raw || raw.wall)continue;
+      const source=resolveHazardDisplaySource(raw);
+      const isSelected=selected?.floorIndex===floor.floorIndex && selected.cx===cx && selected.cy===cy;
+      const sourceVisible=sourceOverlayMatches(config.dataSourceOverlay,source);
+      const heatVisible=layerVisibility.fire && config.fireVisualizationMode==='heat_flux' && raw.heatFluxKwM2>0;
+      if(!sourceVisible && !heatVisible && !isSelected)continue;
+      const x=cx*cell,z=cy*cell,y=floor.elevation+.045,h=cell*.48;
+      pushPolygon(primitives,[{x:x-h,y,z:z-h},{x:x+h,y,z:z-h},{x:x+h,y,z:z+h},{x:x-h,y,z:z+h}],basis,
+        {stroke:isSelected?'#ffffff':sourceVisible?SOURCE_COLORS[source]:null,lineWidth:isSelected?2:1,
+          fill:heatVisible?displayMetricColor('heat_flux',raw.heatFluxKwM2):null,alpha:heatVisible?.65:1,order:7});
     }
   }
 
@@ -1393,54 +1343,24 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
     context.restore();
   }
 
-  function drawSmoke(primitive, focal) {
-    const density = clamp(primitive.density / 1.8, 0, 1);
-    const extinction = optionalFiniteNumber(primitive.extinctionCoefficientPerM);
-    const opticalPath = positiveNumber(primitive.opticalPathLengthMeters, 0.5);
-    const beerLambertOpacity = extinction == null
-      ? null
-      : 1 - Math.exp(-Math.min(50, Math.max(0, extinction) * opticalPath));
-    const pulse = 0.94 + Math.sin(primitive.timestamp * 0.00045 + primitive.phase * TAU) * 0.06;
-    const radius = clamp(primitive.radius * focal / primitive.center.depth * pulse, 2.5, 54);
-    const gray = Math.round(174 - density * 116);
-    context.save();
-    context.globalAlpha = primitive.visualizationMode !== "extinction"
-      ? 0.5
-      : beerLambertOpacity == null
-      ? 0.1 + density * 0.38
-      : clamp(beerLambertOpacity, 0, config.maxSmokeOpacity);
-    context.fillStyle = primitive.color || `rgb(${gray}, ${gray + 4}, ${gray + 8})`;
-    context.beginPath();
-    context.ellipse(primitive.center.x - radius * 0.28, primitive.center.y, radius * 0.68, radius * 0.42, 0, 0, TAU);
-    context.ellipse(primitive.center.x + radius * 0.2, primitive.center.y - radius * 0.16, radius * 0.62, radius * 0.48, 0, 0, TAU);
-    context.ellipse(primitive.center.x + radius * 0.36, primitive.center.y + radius * 0.14, radius * 0.52, radius * 0.36, 0, 0, TAU);
-    context.fill();
-    context.restore();
-  }
-
   function drawFire(primitive) {
-    const height = Math.max(5, primitive.base.y - primitive.top.y);
-    const flicker = 0.82 + 0.18 * Math.sin(primitive.timestamp * 0.012 + primitive.phase * TAU);
-    const width = clamp(height * (0.25 + clamp(primitive.intensity, 0, 1) * 0.13) * flicker, 3, 24);
-    const x = primitive.base.x;
-    const bottom = primitive.base.y;
-    const top = bottom - height * flicker;
+    const height=Math.max(2,Math.hypot(primitive.base.x-primitive.top.x,primitive.base.y-primitive.top.y));
+    const width=Math.max(1,height*(.18+.12*primitive.strength));
+    const x=primitive.base.x,bottom=primitive.base.y,top=primitive.top.y;
     context.save();
-    context.globalCompositeOperation = "lighter";
-    context.fillStyle = "rgba(255, 74, 18, 0.88)";
-    context.beginPath();
-    context.moveTo(x, top);
-    context.bezierCurveTo(x + width * 0.18, top + height * 0.34, x + width, bottom - height * 0.27, x + width * 0.58, bottom);
-    context.lineTo(x - width * 0.58, bottom);
-    context.bezierCurveTo(x - width, bottom - height * 0.25, x - width * 0.15, top + height * 0.35, x, top);
-    context.fill();
-    context.fillStyle = "rgba(255, 229, 72, 0.92)";
-    context.beginPath();
-    context.moveTo(x, top + height * 0.36);
-    context.quadraticCurveTo(x + width * 0.48, bottom - height * 0.18, x + width * 0.24, bottom);
-    context.lineTo(x - width * 0.25, bottom);
-    context.quadraticCurveTo(x - width * 0.36, bottom - height * 0.18, x, top + height * 0.36);
-    context.fill();
+    const gradient=context.createLinearGradient(x-width,0,x+width,0);
+    gradient.addColorStop(0,'rgba(255,65,15,0)');gradient.addColorStop(.25,primitive.color);
+    gradient.addColorStop(.5,'#fff2b8');gradient.addColorStop(.75,primitive.color);gradient.addColorStop(1,'rgba(255,65,15,0)');
+    context.globalAlpha=.3+.7*primitive.strength;context.fillStyle=gradient;
+    context.beginPath();context.moveTo(primitive.top.x,top);
+    context.quadraticCurveTo(x+width,bottom-height*.3,x+width*.5,bottom);
+    context.lineTo(x-width*.5,bottom);context.quadraticCurveTo(x-width,bottom-height*.3,primitive.top.x,top);context.fill();
+    context.globalAlpha=1;context.strokeStyle=primitive.origin==='spread'?'#ffad55':'#fff0b0';context.lineWidth=1;
+    if(primitive.origin==='source')context.strokeRect(x-3,bottom-3,6,6);
+    else {context.beginPath();context.arc(x,bottom,3,0,TAU);context.stroke();}
+    if(config.fireVisualizationMode==='spread_front' && primitive.isFront) {
+      context.strokeStyle='#ff503d';context.lineWidth=2;context.beginPath();context.arc(x,bottom,6,0,TAU);context.stroke();
+    }
     context.restore();
   }
 
@@ -1586,7 +1506,6 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
   function drawPrimitive(primitive, basis) {
     if (primitive.kind === "polygon") drawPolygon(primitive);
     else if (primitive.kind === "line") drawLine(primitive);
-    else if (primitive.kind === "smoke") drawSmoke(primitive, basis.focal);
     else if (primitive.kind === "fdsSample") {
       context.save();
       context.globalAlpha = 0.92;
@@ -1656,23 +1575,15 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
     context.fillText(`simulation t=${simTime.toFixed(1)}s`, 22, 39);
 
     if (layerVisibility.smoke) {
-      const modeLabels = {
-        extinction: `extinction [1/m] max ${stats.maxExtinctionPerM.toFixed(2)}`,
-        co: `CO [ppm] max ${stats.maxCoPpm.toFixed(0)} (color: 0–1200)`,
-        temperature: `temperature [°C] max ${stats.maxTemperatureC.toFixed(1)} (20–200)`,
-        source: "source: gray = fallback, cyan ring = FDS"
-      };
-      context.fillStyle = "rgba(5, 13, 18, 0.76)";
-      context.fillRect(12, 66, Math.min(424, viewport.width - 24), 83);
-      context.fillStyle = "#d9eef5";
-      context.fillText(modeLabels[config.smokeVisualizationMode], 22, 74);
-      context.fillStyle = "#a8bec8";
-      context.fillText(stats.layerInterfaceMinMeters == null ? "upper layer: no physical layer"
-        : `interface ${stats.layerInterfaceMinMeters.toFixed(2)}–${stats.layerInterfaceMaxMeters.toFixed(2)} m / depth ≤${stats.maxLayerDepthMeters.toFixed(2)} m`, 22, 93);
-      context.fillStyle = "#55e4ff";
-      context.fillText(`FDS ○ at sample height: ${stats.fdsSamples} points`, 22, 112);
-      context.fillStyle = "#ffbd67";
-      context.fillText(`stair smoke → ${stats.stairSmokeTransfers} links (shared state)`, 22, 131);
+      const lines=[`${config.smokeDisplayMode}: alpha=1-exp(-K L)${config.smokeDisplayMode==='analysis'?' ^ gamma=0.55':''}`,
+        `Upper layer: ${displayLegend(config.smokeVisualizationMode)}`,
+        stats.layerInterfaceMinMeters==null?'No physical layer':`interface ${stats.layerInterfaceMinMeters.toFixed(2)}–${stats.layerInterfaceMaxMeters.toFixed(2)} m / depth ≤${stats.maxLayerDepthMeters.toFixed(2)} m`,
+        `Max K=${stats.maxExtinctionPerM.toFixed(2)} 1/m / CO=${stats.maxCoPpm.toFixed(0)} ppm / T=${stats.maxTemperatureC.toFixed(1)} °C`,
+        `FDS cyan ○ at sample height: ${stats.fdsSamples}; fallback gray / mixed purple`,
+        `Stair smoke amber → ${stats.stairSmokeTransfers} links (shared state)`,
+        `Fire: ${displayLegend(config.fireVisualizationMode)}; source □ / spread ○`];
+      context.fillStyle='rgba(5,13,18,.84)';context.fillRect(12,66,Math.min(680,viewport.width-24),lines.length*17+10);
+      context.fillStyle='#d9eef5';lines.forEach((line,i)=>context.fillText(line,22,72+i*17,Math.max(40,viewport.width-44)));
     }
 
     const legendY = viewport.height - 31;
@@ -1700,7 +1611,7 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
       x += item.label === "student" ? 91 : 84;
     });
 
-    if (config.showControlsHint && viewport.width > 570) {
+    if (config.showControlsHint && viewport.width > 1050) {
       const text = "drag: orbit   Shift/right drag: pan   wheel: zoom   double-click: reset";
       context.textAlign = "right";
       context.fillStyle = "rgba(5, 13, 18, 0.66)";
@@ -1826,13 +1737,16 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
       smokeSamples,
       fdsSamples: points.length,
       smokeVisualizationMode: config.smokeVisualizationMode,
+      smokeDisplayMode: config.smokeDisplayMode,
+      fireVisualizationMode: config.fireVisualizationMode,
+      dataSourceOverlay: config.dataSourceOverlay,
       stairSmokeTransfers,
-      layerInterfaceMinMeters: layers.length ? Math.min(...layers.map(layer => layer.interfaceHeightMeters)) : null,
-      layerInterfaceMaxMeters: layers.length ? Math.max(...layers.map(layer => layer.interfaceHeightMeters)) : null,
-      maxLayerDepthMeters: Math.max(0, ...layers.map(layer => layer.depthMeters)),
-      maxExtinctionPerM: Math.max(0, ...metricSamples.map(sample => finiteNumber(sample.extinctionCoefficientPerM, 0))),
-      maxCoPpm: Math.max(0, ...metricSamples.map(sample => finiteNumber(sample.coPpm, 0))),
-      maxTemperatureC: Math.max(20, ...metricSamples.map(sample => finiteNumber(sample.temperatureC, 20))),
+      layerInterfaceMinMeters: layers.length ? layers.reduce((min, layer) => Math.min(min, layer.interfaceHeightMeters), Infinity) : null,
+      layerInterfaceMaxMeters: layers.length ? layers.reduce((max, layer) => Math.max(max, layer.interfaceHeightMeters), -Infinity) : null,
+      maxLayerDepthMeters: layers.reduce((max, layer) => Math.max(max, layer.depthMeters), 0),
+      maxExtinctionPerM: metricSamples.reduce((max, sample) => Math.max(max, finiteNumber(sample.extinctionCoefficientPerM, 0)), 0),
+      maxCoPpm: metricSamples.reduce((max, sample) => Math.max(max, finiteNumber(sample.coPpm, 0)), 0),
+      maxTemperatureC: metricSamples.reduce((max, sample) => Math.max(max, finiteNumber(sample.temperatureC, 20)), 20),
       stairCells: stairStats.cells,
       stairRegions: stairStats.regions
     };
@@ -1889,6 +1803,38 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
     return config.smokeVisualizationMode;
   }
 
+  function setSmokeDisplayMode(mode) {
+    config.smokeDisplayMode=SMOKE_DISPLAY_MODES.includes(mode)?mode:'physical';
+    if(!running && !destroyed)renderOnce();return config.smokeDisplayMode;
+  }
+  function setFireVisualizationMode(mode) {
+    config.fireVisualizationMode=FIRE_VISUALIZATION_MODES.includes(mode)?mode:'intensity';
+    if(!running && !destroyed)renderOnce();return config.fireVisualizationMode;
+  }
+  function setDataSourceOverlay(mode) {
+    config.dataSourceOverlay=DATA_SOURCE_OVERLAYS.includes(mode)?mode:'none';
+    if(!running && !destroyed)renderOnce();return config.dataSourceOverlay;
+  }
+  // Ray intersection with visible floor cells. This picks the nearest actual floor plane,
+  // not flame/smoke geometry; drag/shift/right gestures remain camera controls.
+  function pickCell(screenX,screenY) {
+    const basis=cameraBasis(), rx=(screenX-viewport.width*.5)/basis.focal, ry=-(screenY-viewport.height*.5)/basis.focal;
+    const ray={};for(const axis of ['x','y','z'])ray[axis]=basis.forward[axis]+rx*basis.right[axis]+ry*basis.up[axis];
+    if(Math.abs(ray.y)<1e-9)return null;
+    let nearest=null;
+    for(const floor of lastFloors) {
+      const distance=(floor.elevation-basis.eye.y)/ray.y;if(distance<=0)continue;
+      const cx=Math.floor((basis.eye.x+ray.x*distance)/floor.cellSize+.5),cy=Math.floor((basis.eye.z+ray.z*distance)/floor.cellSize+.5);
+      if(cx<0 || cy<0 || cx>=floor.width || cy>=floor.height || !rawCellAt(floor,cx,cy))continue;
+      if(!nearest || distance<nearest.distance)nearest={floorIndex:floor.floorIndex,cx,cy,distance};
+    }
+    return nearest ? {floorIndex:nearest.floorIndex,cx:nearest.cx,cy:nearest.cy} : null;
+  }
+  function projectCell(endpoint) {
+    const floor=lastFloors.find(f=>f.floorIndex===endpoint.floorIndex);
+    return floor?project({x:endpoint.cx*floor.cellSize,y:floor.elevation,z:endpoint.cy*floor.cellSize},cameraBasis()):null;
+  }
+
   function setSmokeLayerBounds(visible) {
     config.showSmokeLayerBounds = !!visible;
     if (!running && !destroyed) renderOnce();
@@ -1901,11 +1847,13 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
     listeners.push(() => target.removeEventListener(type, handler, eventOptions));
   }
 
+  let pointerStart=null;
   function onPointerDown(event) {
     if (destroyed || activePointerId != null) return;
     activePointerId = event.pointerId;
     pointerX = event.clientX;
     pointerY = event.clientY;
+    pointerStart={x:event.clientX,y:event.clientY,button:event.button,moved:false};
     pointerMode = event.shiftKey || event.button === 1 || event.button === 2 ? "pan" : "orbit";
     canvas.setPointerCapture?.(event.pointerId);
     event.preventDefault?.();
@@ -1913,6 +1861,7 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
 
   function onPointerMove(event) {
     if (destroyed || event.pointerId !== activePointerId) return;
+    if(pointerStart && Math.hypot(event.clientX-pointerStart.x,event.clientY-pointerStart.y)>config.clickDragThresholdPixels)pointerStart.moved=true;
     const dx = event.clientX - pointerX;
     const dy = event.clientY - pointerY;
     pointerX = event.clientX;
@@ -1937,6 +1886,11 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
 
   function releasePointer(event) {
     if (event.pointerId !== activePointerId) return;
+    if(event.type==='pointerup' && pointerStart && !pointerStart.moved && pointerStart.button===0 && pointerMode==='orbit') {
+      const rect=canvas.getBoundingClientRect();const selected=pickCell(event.clientX-rect.left,event.clientY-rect.top);
+      if(selected)config.onCellSelect?.(selected);
+    }
+    pointerStart=null;
     canvas.releasePointerCapture?.(event.pointerId);
     activePointerId = null;
     event.preventDefault?.();
@@ -2001,7 +1955,12 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
     resetCamera,
     setLayerVisibility,
     setSmokeVisualizationMode,
-    setSmokeLayerBounds
+    setSmokeLayerBounds,
+    setSmokeDisplayMode,
+    setFireVisualizationMode,
+    setDataSourceOverlay,
+    pickCell,
+    projectCell
   });
   if (config.autoStart) start();
   return api;

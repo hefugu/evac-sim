@@ -81,11 +81,13 @@ test("legacy density-only 3D callers still display smoke", () => {
 });
 
 test("3D visualization modes supply distinct CO, temperature and source colors", () => {
-  assert.deepEqual(SMOKE_VISUALIZATION_MODES, ["extinction", "co", "temperature", "source"]);
+  assert.deepEqual(SMOKE_VISUALIZATION_MODES, ["density", "extinction", "visibility", "co", "temperature", "source"]);
   assert.notEqual(smokeMetricColor("co", { coPpm: 100 }), smokeMetricColor("co", { coPpm: 1000 }));
   assert.notEqual(smokeMetricColor("temperature", { temperatureC: 40 }), smokeMetricColor("temperature", { temperatureC: 190 }));
   assert.equal(smokeMetricColor("source", { source: "fds_csv" }), "#55e4ff");
   assert.equal(smokeMetricColor("source", { source: "reduced_order_nist" }), "#a0a8b0");
+  assert.equal(smokeMetricColor('temperature', {coPpm:200,temperatureC:null}), '#63717d');
+  assert.notEqual(smokeMetricColor('co', {coPpm:0}), '#63717d');
 });
 
 test("renderer draws layers, FDS points and stair transfer from frozen shared state only", () => {
@@ -125,4 +127,27 @@ test("empty canvas fallback accepts additive 3D controls without throwing", () =
   const renderer = createRenderer3D({ canvas: {} });
   assert.doesNotThrow(() => renderer.setSmokeVisualizationMode("source"));
   assert.doesNotThrow(() => renderer.setSmokeLayerBounds(false));
+  assert.doesNotThrow(() => renderer.setSmokeDisplayMode('analysis'));
+  assert.doesNotThrow(() => renderer.setFireVisualizationMode('hrr'));
+  assert.doesNotThrow(() => renderer.setDataSourceOverlay('mixed'));
+});
+
+test('3D display controls and picking preserve a frozen fire/smoke state', () => {
+  const room=floor();
+  room.grid[1][2]={walkable:true,fire:true,fireSource:'spread',hrrKw:500,fireIntensity:.2,fireAgeSec:24,
+    heatFluxKwM2:4,smokeLayerDepthMeters:.6,smokeLayerInterfaceHeightMeters:2.4,upperLayerExtinctionCoefficientM1:.05};
+  const state=deepFreeze({map:{floorStates:[room]},agents:[],sim:{time:24}}),before=JSON.stringify(state);
+  const {canvas}=canvasStub();
+  const renderer=createRenderer3D({canvas,state,options:{autoResize:false}});
+  renderer.renderOnce();
+  const point=renderer.projectCell({floorIndex:0,cx:2,cy:1});
+  assert.deepEqual(renderer.pickCell(point.x,point.y),{floorIndex:0,cx:2,cy:1});
+  for(const mode of ['physical','analysis'])for(const metric of ['intensity','hrr','age','heat_flux','spread_front']) {
+    renderer.setSmokeDisplayMode(mode);renderer.setFireVisualizationMode(metric);renderer.setDataSourceOverlay('mixed');
+    const stats=renderer.renderOnce();
+    assert.equal(stats.smokeDisplayMode,mode);assert.equal(stats.fireVisualizationMode,metric);
+    assert.equal(stats.smokeSamples,1);
+  }
+  assert.equal(JSON.stringify(state),before);
+  renderer.destroy();
 });

@@ -1,3 +1,4 @@
+import { getInspectionPanel, bindHazardDisplayControls } from './visualization/inspection-panel.js';
 import { state } from "./state.js";
 import { createRenderer3D } from "./renderer3d.js";
 import { create3DStatePublisher } from "./state-bridge3d.js";
@@ -25,6 +26,7 @@ export function init3DView() {
     state,
     options: {
       autoStart: false,
+      onCellSelect: endpoint => { getInspectionPanel(state).select(endpoint); document.dispatchEvent(new Event("hazard-display-change")); },
       cellSizeMeters: state.spatial.cellSizeMeters,
       floorHeightMeters: state.spatial.floorHeightMeters,
       wallHeightMeters: state.spatial.wallHeightMeters,
@@ -32,6 +34,7 @@ export function init3DView() {
     }
   });
   const publisher = create3DStatePublisher(state);
+  bindHazardDisplayControls(state, renderer);
   let mode = "2d";
 
   function updateStatus() {
@@ -66,7 +69,6 @@ export function init3DView() {
   buttons["3d"]?.addEventListener("click", () => setMode("3d"));
   buttons.split?.addEventListener("click", () => setMode("split"));
   byId("btnReset3DCamera")?.addEventListener("click", () => renderer.resetCamera());
-  byId("view3dSmokeMode")?.addEventListener("change", event => renderer.setSmokeVisualizationMode(event.target.value));
   byId("view3dSmokeBounds")?.addEventListener("change", event => renderer.setSmokeLayerBounds(event.target.checked));
   byId("btnOpen3D")?.addEventListener("click", () => {
     publisher.publishNow(true);

@@ -1,3 +1,21 @@
+import { DEFAULT_HAZARD_DISPLAY, computeSmokeDisplayOpacity, displayMetricValue, displayMetricColor,
+  displayLegend, createFireDisplayData, isFireSpreadFront, resolveHazardDisplaySource,
+  sourceOverlayMatches, SOURCE_COLORS } from './visualization/hazard-display.js';
+
+export function derive2DCellDisplay(cell, options = {}) {
+  const settings = {...DEFAULT_HAZARD_DISPLAY,...options};
+  const source = resolveHazardDisplaySource(cell);
+  const K = displayMetricValue(cell,'extinction') || 0;
+  // L is one cell width [m] at eye height, not a full horizontal ray integral.
+  // FDS may measure smoke below a fallback layer: display that eye reading, not a fictitious upper layer.
+  const fdsEye = cell?.fdsFields?.includes('opticalDensityM1') || (!cell?.fdsFields && /fds/i.test(cell?.eyeLevelDataSource || cell?.smokeDataSource || ''));
+  const layerAbsent = cell?.smokeLayerDepthMeters === 0 && !fdsEye;
+  const opacity = computeSmokeDisplayOpacity(K, layerAbsent ? 0 : (options.cellSizeMeters || .5),
+    {mode:settings.smokeDisplayMode,gamma:settings.analysisGamma});
+  return {opacity,source,color:displayMetricColor(settings.smokeMetric, settings.smokeMetric === 'source' ? source : displayMetricValue(cell,settings.smokeMetric)),
+    fire:createFireDisplayData(cell,{metric:settings.fireMetric,isFront:options.isFront})};
+}
+
 function drawArrow(ctx, px, py, vx, vy, color, width = 0.35) {
   const len = Math.hypot(vx, vy);
   if (len < 0.001) return;
@@ -164,43 +182,58 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
         const g = Math.floor(220 - 190 * t);
         const b = Math.floor(70 - 50 * t);
         const alpha = 0.18 + 0.48 * t;
-        ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+        ctx.save(); ctx.globalAlpha = alpha;
+        ctx.fillStyle = cell.color || `rgb(${r},${g},${b})`;
         ctx.fillRect(x * cellSizePx, y * cellSizePx, cellSizePx, cellSizePx);
+        ctx.restore();
       }
     }
   }
 
   function drawSmoke(scene) {
-    const { grid, gridW, gridH, smokeMap } = scene;
-    if (!grid) return;
-    ctx.fillStyle = "rgba(255,40,40,0.5)";
-    for (let y = 0; y < gridH; y++) {
-      for (let x = 0; x < gridW; x++) {
-        if (grid[y][x].fire) ctx.fillRect(x * cellSizePx, y * cellSizePx, cellSizePx, cellSizePx);
-      }
-    }
-    if (!smokeMap) return;
-    for (let y = 0; y < gridH; y++) {
-      for (let x = 0; x < gridW; x++) {
-        const s = smokeMap[y][x];
-        if (s <= 0.02) continue;
-        const v = Math.min(s / 2.0, 1.0);
-        let gray = 180;
-        let alpha = 0.35;
-        if (v >= 0.66) {
-          gray = 40;
-          alpha = 0.9;
-        } else if (v >= 0.33) {
-          gray = 110;
-          alpha = 0.65;
+    if (!scene.grid) return;
+    scene.grid.forEach((row,y)=>row.forEach((cell,x)=>{
+      const view = derive2DCellDisplay(cell,{...scene.hazardDisplay,cellSizeMeters:scene.cellSizeMeters});
+      if (!(view.opacity > 0)) return;
+      ctx.save(); ctx.globalAlpha = view.opacity; ctx.fillStyle = view.color;
+      ctx.fillRect(x*cellSizePx,y*cellSizePx,cellSizePx,cellSizePx); ctx.restore();
+    }));
+  }
+
+  function drawFireAndSources(scene) {
+    const settings = {...DEFAULT_HAZARD_DISPLAY,...scene.hazardDisplay};
+    scene.grid.forEach((row,y)=>row.forEach((cell,x)=>{
+      const view = derive2DCellDisplay(cell,{...settings,isFront:isFireSpreadFront(scene.grid,x,y)});
+      const px=(x+.5)*cellSizePx, py=(y+.5)*cellSizePx;
+      if (view.fire.active) {
+        // Glyph radius grows with state HRR. The floor cell is not uniformly painted as flame.
+        const radius=cellSizePx*(.18+.3*Math.min(1,view.fire.flameHeightMeters/2.32));
+        const glow=ctx.createRadialGradient(px,py,0,px,py,radius);
+        glow.addColorStop(0,'rgba(255,245,190,.95)');
+        glow.addColorStop(.35,view.fire.color); glow.addColorStop(1,'rgba(255,80,20,0)');
+        ctx.save(); ctx.globalAlpha=.3+.7*view.fire.strength; ctx.fillStyle=glow;
+        ctx.fillRect(px-radius,py-radius,radius*2,radius*2); ctx.restore();
+        ctx.strokeStyle=view.fire.origin==='spread'?'#ffad55':'#fff0b0'; ctx.lineWidth=.4;
+        if (view.fire.origin==='source') ctx.strokeRect(px-.6,py-.6,1.2,1.2);
+        else {ctx.beginPath();ctx.arc(px,py,.65,0,Math.PI*2);ctx.stroke();}
+        if(settings.fireMetric==='spread_front' && view.fire.isFront) {
+          ctx.strokeStyle='#ff503d';ctx.lineWidth=.8;ctx.strokeRect(x*cellSizePx,y*cellSizePx,cellSizePx,cellSizePx);
         }
-        ctx.fillStyle = `rgba(${gray},${gray},${gray},${alpha})`;
-        ctx.fillRect(x * cellSizePx, y * cellSizePx, cellSizePx, cellSizePx);
-        if (v > 0.66) {
-          ctx.fillStyle = "rgba(0,0,0,0.25)";
-          ctx.fillRect(x * cellSizePx, y * cellSizePx, cellSizePx, cellSizePx);
-        }
       }
+      if (sourceOverlayMatches(settings.dataSourceOverlay,view.source)) {
+        ctx.strokeStyle=SOURCE_COLORS[view.source];ctx.lineWidth=.45;
+        ctx.strokeRect(x*cellSizePx+.2,y*cellSizePx+.2,cellSizePx-.4,cellSizePx-.4);
+      }
+      if(cell.fdsSamples?.length) {
+        ctx.strokeStyle=SOURCE_COLORS.fds;ctx.lineWidth=.4;ctx.beginPath();ctx.arc(px,py,cellSizePx*.25,0,Math.PI*2);ctx.stroke();
+      }
+    }));
+    for(const transfer of scene.verticalSmokeTransfers || []) {
+      if (!(transfer.volumeM3>0 || transfer.sootMassKg>0 || transfer.amount>0)) continue;
+      const endpoint=(transfer.from?.floorIndex ?? transfer.from?.floor)===scene.currentFloor ? transfer.from :
+        (transfer.to?.floorIndex ?? transfer.to?.floor)===scene.currentFloor ? transfer.to : null;
+      if(!endpoint) continue;
+      drawArrow(ctx,(endpoint.cx+.5)*cellSizePx,(endpoint.cy+.5)*cellSizePx,0,-cellSizePx*.9,'#ffbd67',.65);
     }
   }
 
@@ -327,21 +360,31 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
   }
 
   function drawHUD(scene) {
-    ctx.fillStyle = "rgba(255,220,150,0.9)";
-    ctx.font = "10px Consolas";
-    ctx.textAlign = "left";
-    ctx.textBaseline = "top";
-    ctx.fillText(`フロア ${scene.currentFloor + 1}/${scene.floorCount}`, 4, 4);
-    if (scene.riskOverlay && scene.riskOverlay.mode !== "none") {
-      const maxVal = Number.isFinite(scene.riskOverlay.maxValue)
-        ? scene.riskOverlay.maxValue.toFixed(scene.riskOverlay.maxValue >= 100 ? 0 : 2)
-        : "--";
-      ctx.fillText(
-        `Risk: ${scene.riskOverlay.label} / max=${maxVal}${scene.riskOverlay.unit ? " " + scene.riskOverlay.unit : ""} / ${scene.riskOverlay.source}`,
-        4,
-        17
-      );
+    const settings={...DEFAULT_HAZARD_DISPLAY,...scene.hazardDisplay};
+    const lines=[`${scene.currentFloor+1}F | ${settings.smokeDisplayMode} | alpha=1-exp(-K L)${settings.smokeDisplayMode==='analysis'?' ^ gamma=0.55':''}`,
+      `Eye 1.6m / L=${Number(scene.cellSizeMeters || .5).toFixed(2)} m; ${displayLegend(settings.smokeMetric)}`,
+      `${displayLegend(settings.fireMetric)}; source □ / spread ○`,
+      'FDS cyan ○ / fallback gray / mixed purple; stair smoke amber →'];
+    if(scene.riskOverlay) {
+      lines.push(`2D map: ${scene.riskOverlay.legend}`);
+      const {minValue,maxValue,unit}=scene.riskOverlay;
+      lines.push(`Current range: ${minValue?.toFixed(2) ?? '--'}–${maxValue?.toFixed(2) ?? '--'} ${unit}`);
     }
+    ctx.save(); ctx.font='11px Consolas, monospace';ctx.textAlign='left';ctx.textBaseline='top';
+    const rect=cvs.getBoundingClientRect(), top=12, width=Math.max(50,rect.width-24);
+    // Wrap instead of squeezing scientific units; the existing evacuation HUD occupies the bottom right.
+    const wrapped=[];
+    for(const line of lines) {
+      let current='';
+      for(const word of line.split(' ')) {
+        const next=current ? current+' '+word : word;
+        if(current && ctx.measureText(next).width>width) {wrapped.push(current);current=word;} else current=next;
+      }
+      wrapped.push(current);
+    }
+    ctx.fillStyle='rgba(5,13,18,.88)';ctx.fillRect(5,top-5,Math.min(rect.width-10,800),wrapped.length*16+8);
+    ctx.fillStyle='#d9eef5';wrapped.forEach((line,i)=>ctx.fillText(line,12,top+i*16));
+    ctx.restore();
   }
 
   function render(scene) {
@@ -349,12 +392,17 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
     ctx.clearRect(0, 0, rect.width, rect.height);
     const canContinue = drawGrid(scene);
     if (!canContinue || !scene.grid) return;
-    drawRiskOverlay(scene);
     drawSmoke(scene);
+    drawRiskOverlay(scene);
+    drawFireAndSources(scene);
     drawAgents(scene);
     drawHeatmap(scene);
-    drawHUD(scene);
+    if(scene.selectedCell?.floorIndex===scene.currentFloor) {
+      ctx.strokeStyle='#ffffff';ctx.lineWidth=.8;
+      ctx.strokeRect(scene.selectedCell.cx*cellSizePx,scene.selectedCell.cy*cellSizePx,cellSizePx,cellSizePx);
+    }
     ctx.restore();
+    drawHUD(scene);
   }
 
   return {

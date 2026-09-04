@@ -12,10 +12,14 @@
       <a class="buttonLink" href="./">2D編集へ戻る</a>
       <button id="btnStandaloneSample" type="button">3Fサンプル</button>
       <button id="btnStandaloneResetCamera" type="button">視点リセット</button>
+
+      <label class="hazardControl">煙モード <select id="smokeDisplayMode" data-hazard-setting="smokeDisplayMode"><option value="physical">Physical</option><option value="analysis">Analysis (γ=0.55)</option></select></label>
+      <label class="hazardControl">火災量 <select id="fireMetric" data-hazard-setting="fireMetric"><option value="intensity">強度 [0–1]</option><option value="hrr">HRR [kW]</option><option value="age">年齢 [s]</option><option value="heat_flux">熱流束 [kW/m²]</option><option value="spread_front">延焼前線</option></select></label>
+      <label class="hazardControl">由来 <select id="dataSourceOverlay" data-hazard-setting="dataSourceOverlay"><option value="none">None</option><option value="fds">FDS</option><option value="fallback">Fallback</option><option value="mixed">Mixed / 全区分</option></select></label>
       <span class="viewToolbarSpacer"></span>
       <label><input id="standaloneFire" type="checkbox" checked> 火災</label>
       <label><input id="standaloneSmoke" type="checkbox" checked> 煙</label>
-      <label>煙表示 <select id="standaloneSmokeMode" aria-label="3D煙表示モード"><option value="extinction">消光係数 [1/m]</option><option value="co">CO [ppm]</option><option value="temperature">温度 [°C]</option><option value="source">データ源</option></select></label>
+      <label class="hazardControl">煙の量 <select data-hazard-setting="smokeMetric" id="standaloneSmokeMode" aria-label="3D煙表示モード"><option value="extinction">消散係数 [1/m]</option><option value="density">煙濃度 [index]</option><option value="visibility">視界 [m]</option><option value="co">CO [ppm]</option><option value="temperature">温度 [°C]</option><option value="source">データ源</option></select></label>
       <label><input id="standaloneSmokeBounds" type="checkbox" checked> 層境界・厚さ</label>
       <label><input id="standaloneAgents" type="checkbox" checked> 人</label>
       <label><input id="standaloneWalls" type="checkbox" checked> 壁</label>
@@ -26,6 +30,14 @@
       <div id="view3dStatus">3Fサンプルを準備しています…</div>
     </div>
   </div>
+
+    <aside id="hazardInspector" aria-label="地点分析" hidden>
+      <header><strong>地点分析</strong><button type="button" aria-label="地点分析を閉じる">閉じる</button></header>
+      <p data-inspector-location></p>
+      <p class="hint">現在のstate値。未取得は欠測です。FDSは観測高度の値、上層煙・HRRはfallbackです。</p>
+      <div class="inspectionTable"><table><thead><tr><th>状態量</th><th>値・単位</th><th>由来</th></tr></thead><tbody></tbody></table></div>
+    </aside>
+
   <script type="module" src="./js/3d-page.js"></script>
 </body>
 </html>

@@ -1,0 +1,14 @@
+#viewToolbar label.hazardControl { display: inline-flex; }
+#viewToolbar select { max-width: 160px; min-width: 0; }
+#hazardInspector { position: fixed; right: 12px; bottom: 42px; width: min(570px, calc(100vw - 28px)); z-index: 20;
+  max-height: 60vh; color: #d9eef5; background: #08151ef5; border: 1px solid #6b96a8; border-radius: 4px;
+  box-shadow: 0 4px 20px #0009; padding: 10px; font: 11px system-ui, sans-serif; }
+#hazardInspector[hidden] { display: none; }
+#hazardInspector header { display: flex; justify-content: space-between; align-items: center; }
+#hazardInspector button { width: auto; }
+#hazardInspector p { margin: 6px 0; }
+#hazardInspector .inspectionTable { overflow: auto; max-height: 42vh; }
+#hazardInspector table { width: 100%; border-collapse: collapse; }
+#hazardInspector th { text-align: left; position: sticky; top: 0; background: #122a38; }
+#hazardInspector td, #hazardInspector th { padding: 4px; border-bottom: 1px solid #274352; overflow-wrap: anywhere; }
+#hazardInspector td:first-child { color: #aacbdc; }

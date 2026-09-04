@@ -1,3 +1,4 @@
+import { getInspectionPanel, bindHazardDisplayControls } from './visualization/inspection-panel.js';
 import { state } from "./state.js";
 import { createRenderer3D } from "./renderer3d.js";
 import { create3DStateReceiver } from "./state-bridge3d.js";
@@ -80,9 +81,12 @@ const renderer = createRenderer3D({
   state,
   options: {
     autoStart: true,
+    onCellSelect: endpoint => getInspectionPanel(state).select(endpoint),
     geometryVersion: () => state.render.geometryRevision || 0
   }
 });
+
+bindHazardDisplayControls(state, renderer);
 
 async function loadStandaloneSample() {
   if (status) status.textContent = "科学技術高校3Fを読み込んでいます…";
@@ -112,6 +116,7 @@ async function loadStandaloneSample() {
 
 const receiver = create3DStateReceiver(state, {
   onUpdate(message) {
+    getInspectionPanel(state).refresh();
     if (connection) connection.textContent = "2D状態と同期中";
     if (status && message.type === "dynamic") {
       status.textContent = `ライブ表示 / ${Number(message.simTime || 0).toFixed(1)}s / agent ${message.agents?.length || 0}`;
@@ -121,7 +126,6 @@ const receiver = create3DStateReceiver(state, {
 
 byId("btnStandaloneSample")?.addEventListener("click", loadStandaloneSample);
 byId("btnStandaloneResetCamera")?.addEventListener("click", () => renderer.resetCamera());
-byId("standaloneSmokeMode")?.addEventListener("change", event => renderer.setSmokeVisualizationMode(event.target.value));
 byId("standaloneSmokeBounds")?.addEventListener("change", event => renderer.setSmokeLayerBounds(event.target.checked));
 [
   ["standaloneFire", "fire"],

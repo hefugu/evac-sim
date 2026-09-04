@@ -1,3 +1,4 @@
+import { DEFAULT_HAZARD_DISPLAY } from './visualization/hazard-display.js';
 export const state = {
   // legacy-flat fields (kept for compatibility)
   agents: [],
@@ -57,6 +58,8 @@ export const state = {
     results: []
   },
   viz: {
+    hazardDisplay: {...DEFAULT_HAZARD_DISPLAY},
+    selectedCell: null,
     trails: true,
     flow: true,
     potential: false,
