@@ -42,6 +42,13 @@ export function computePotentialFieldFromSeedsModule(seeds, ctx) {
       const nx = cx + d.dx;
       const ny = cy + d.dy;
       if (!isAgentTraversableCell(floor, nx, ny)) continue;
+      if (d.dx !== 0 && d.dy !== 0) {
+        // Never squeeze diagonally through a blocked wall/fire corner.
+        if (
+          !isAgentTraversableCell(floor, cx + d.dx, cy) ||
+          !isAgentTraversableCell(floor, cx, cy + d.dy)
+        ) continue;
+      }
       const newPot = base + d.c;
       if (newPot < potential[floor][ny][nx]) {
         potential[floor][ny][nx] = newPot;
