@@ -7,7 +7,8 @@ export function computePotentialFieldFromSeedsModule(seeds, ctx) {
     gridH,
     currentFloor,
     isAgentTraversableCell,
-    getLinkedStairDestinations
+    getLinkedStairDestinations,
+    canTraverseEdge
   } = ctx;
   if (!grid || !seeds || seeds.length === 0 || !floorStates.length) return null;
 
@@ -42,6 +43,12 @@ export function computePotentialFieldFromSeedsModule(seeds, ctx) {
       const nx = cx + d.dx;
       const ny = cy + d.dy;
       if (!isAgentTraversableCell(floor, nx, ny)) continue;
+      // The field is expanded backwards from the exit. Ask the optional edge
+      // policy about the corresponding forward agent move: neighbour -> current.
+      if (
+        typeof canTraverseEdge === "function" &&
+        !canTraverseEdge(floor, nx, ny, floor, cx, cy)
+      ) continue;
       if (d.dx !== 0 && d.dy !== 0) {
         // Never squeeze diagonally through a blocked wall/fire corner.
         if (
@@ -62,6 +69,10 @@ export function computePotentialFieldFromSeedsModule(seeds, ctx) {
         if (!isAgentTraversableCell(dst.floor, dst.cx, dst.cy)) continue;
         const nd = floorStates[dst.floor]?.grid?.[dst.cy]?.[dst.cx];
         if (!nd?.stair) continue;
+        if (
+          typeof canTraverseEdge === "function" &&
+          !canTraverseEdge(dst.floor, dst.cx, dst.cy, floor, cx, cy)
+        ) continue;
         const newPot = base + Math.max(1, Number(dst.travelCostSec) || 8);
         if (newPot < potential[dst.floor][dst.cy][dst.cx]) {
           potential[dst.floor][dst.cy][dst.cx] = newPot;
