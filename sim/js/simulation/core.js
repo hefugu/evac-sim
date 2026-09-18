@@ -6,7 +6,8 @@ import { state, syncLegacyState } from "../state.js";
 import { createRenderer } from "../renderer.js";
 import {
   computePotentialFieldFromSeedsModule,
-  estimateExitRoutingCost
+  estimateExitRoutingCost,
+  canTraverseGridStep
 } from "./potential.js";
 import { clamp, parseNum} from "../utils/helpers.js";
 import { downloadCsvReport } from "../export/csv.js";
@@ -2962,6 +2963,10 @@ export function initSimulation() {
         const ny = Number.isFinite(c.ny) ? c.ny : (cy + (c.dy ?? 0));
         const nf = c.nf ?? floor;
         if (!isAgentTraversableCell(nf, nx, ny)) continue;
+        if (
+          nf === floor &&
+          !canTraverseGridStep(floor, cx, cy, nx, ny, isAgentTraversableCell)
+        ) continue;
 
         const routeRisk = routeRiskAt(nf, nx, ny);
         if (routeRisk.blocked) continue;
