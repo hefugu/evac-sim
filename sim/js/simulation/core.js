@@ -226,6 +226,7 @@ export function initSimulation() {
   let simTime = state.simTime = 0;
   let lastFrameTime = 0;
   let simulationAnimationFrameId = null;
+  let last2DDrawMs = -Infinity;
   let heatmap = null;     // Cell pass count
 
   let maxHeatCell = null;
@@ -379,6 +380,9 @@ export function initSimulation() {
   const LOW_VISIBILITY_THRESHOLD = 0.35;
   const FIRE_LETHAL_RADIUS = 1.1;
   const FIRE_DANGER_RADIUS = 3.0;
+  // Behavioral routing buffer, not a lethal-distance model. Agents prefer
+  // routes that remain at least this far from any active flame when possible.
+  const FIRE_ROUTE_AVOID_RADIUS_METERS = 4.0;
   const FALL_SMOKE_THRESHOLD = 0.9;
   const FALL_RATE_PER_SEC = 0.015;
   const HELPERS_NEEDED = 2;
@@ -1895,11 +1899,19 @@ export function initSimulation() {
       )
     );
 
+    const routeCellMeters = Math.max(
+      0.05,
+      parseFloat(cellSizeMetersInput.value) || state.spatial.cellSizeMeters || 0.5
+    );
+    const fireRouteAvoidRadiusCells = Math.max(
+      FIRE_DANGER_RADIUS,
+      FIRE_ROUTE_AVOID_RADIUS_METERS / routeCellMeters
+    );
     fireAvoidanceMasks = buildFireAvoidanceMasks(
       floorStates,
       gridW,
       gridH,
-      FIRE_DANGER_RADIUS
+      fireRouteAvoidRadiusCells
     );
     const isFireSafeRouteCell = (floor, cx, cy) =>
       isAgentTraversableCell(floor, cx, cy) &&
@@ -2467,7 +2479,19 @@ export function initSimulation() {
       stepSimulation(MAX_SIMULATION_SUBSTEP_SEC);
     }
     syncPublicState();
-    drawScene();
+
+    // Rendering is view-dependent. In 3D-only mode the hidden 2D canvas does
+    // no useful work; in split mode cap 2D to 20 FPS so simulation + 3D have
+    // more main-thread budget without changing the fixed simulation timestep.
+    const viewMode = state.render.viewMode || "2d";
+    const shouldDraw2D =
+      viewMode === "2d" ||
+      (viewMode === "split" && now - last2DDrawMs >= 50);
+    if (shouldDraw2D) {
+      drawScene();
+      last2DDrawMs = now;
+    }
+
     const frameEndedAt = performance.now();
     perfProfile.frames += 1;
     perfProfile.frameWorkMs += frameEndedAt - frameStartedAt;
