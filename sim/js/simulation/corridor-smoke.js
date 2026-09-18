@@ -188,7 +188,6 @@ function geometryFor(floor, physics, options) {
 }
 
 export function computeCorridorSmokeTransport(floor, physics, dtSeconds, options = {}) {
-  const startedAt = performance.now();
   const config = configFor(options);
   const geometry = geometryFor(floor, physics, config);
   const { width, height, cellSizeMeters } = dimensions(floor);
@@ -221,15 +220,6 @@ export function computeCorridorSmokeTransport(floor, physics, dtSeconds, options
       activeIndicesBySegment[segmentIndex].push(index);
     }
   }
-  const totalCorridorCells = geometry.segments.reduce(
-    (sum, segment) => sum + segment.indices.length,
-    0
-  );
-  
-  const activeCorridorCells = activeIndicesBySegment.reduce(
-    (sum, indices) => sum + indices.length,
-    0
-  );
   const segments = geometry.segments.map((segment, segmentIndex) => {
     let totalVolume = 0, totalHeat = 0, occupiedCells = 0;
     let frontMin = Infinity, frontMax = -Infinity, leftSpeed = 0, rightSpeed = 0;
@@ -300,14 +290,5 @@ export function computeCorridorSmokeTransport(floor, physics, dtSeconds, options
       ] : []
     };
   });
-  const elapsedMs = performance.now() - startedAt;
-
-  console.log(
-    `[corridor smoke] total=${totalCorridorCells}, active=${activeCorridorCells}, ` +
-    `reduction=${totalCorridorCells > 0
-      ? ((1 - activeCorridorCells / totalCorridorCells) * 100).toFixed(1)
-      : 0}%, time=${elapsedMs.toFixed(3)}ms`
-  );
-
   return { membership: geometry.membership, transfers, segments, maxFrontVelocityMps };
 }
