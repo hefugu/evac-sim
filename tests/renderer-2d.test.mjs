@@ -16,6 +16,18 @@ test('2D physical/analysis opacity uses eye extinction and never inflates cell s
   assert.ok(derive2DCellDisplay({...cell,smokeLayerDepthMeters:0,fdsFields:['opticalDensityM1']}).opacity>0);
   assert.equal(JSON.stringify(cell),before);
 });
+test('2D top-down view shows upper-layer smoke before it reaches eye height', () => {
+  const cell=Object.freeze({
+    smokeLayerDepthMeters:.6,
+    eyeLevelExtinctionCoefficientM1:0,
+    upperLayerExtinctionCoefficientM1:.2,
+    upperLayerDataSource:'reduced_order_nist'
+  });
+  const view=derive2DCellDisplay(cell,{cellSizeMeters:.5});
+  assert.ok(view.opacity>0);
+  assert.equal(view.smokeUsesUpperLayer,true);
+});
+
 test('quantitative overlay retains actual ranges, zero and missing data with units', () => {
   const grid=[[{walkable:true,coPpm:0},{walkable:true,coPpm:30},{walkable:true}]];
   const overlay=buildAnalysisOverlay(grid,'co');
