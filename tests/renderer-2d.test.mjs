@@ -46,6 +46,35 @@ test('renderer uses shared cells and makes balanced canvas transforms for all ne
   assert.equal(JSON.stringify(cell),before);assert.equal(saved.length,0);
   assert.ok(calls.some(c=>c.key==='lineTo' && c.stroke==='#ffbd67'),'actual stair transfer arrow');
 });
+test('manual 2D fire source remains visibly marked before HRR rises', () => {
+  const calls=[], saved=[];
+  const context=new Proxy({}, {get(target,key) {
+    if(key in target)return target[key];
+    if(key==='createRadialGradient')return ()=>({addColorStop(){}});
+    if(key==='measureText')return text=>({width:text.length*6});
+    if(key==='save')return ()=>saved.push(1);
+    if(key==='restore')return ()=>{assert.ok(saved.length);saved.pop();};
+    return (...args)=>calls.push({key,args});
+  },set(t,k,v){t[k]=v;return true;}});
+  const scene={
+    grid:[[{walkable:false,wall:false,fire:true,fireSource:'manual',fireIntensity:.05,hrrKw:0,fireAgeSec:0}]],
+    gridW:1,gridH:1,baseImage:{width:4,height:4},layout:{scale:1,ox:0,oy:0},
+    cellSizeMeters:.5,currentFloor:0,floorCount:1,stairLinks:[],potentialByExit:[],
+    exits:[],spawns:[],agents:[],allExitPoints:[],verticalSmokeTransfers:[]
+  };
+  const renderer=createRenderer({
+    ctx:context,
+    cvs:{getBoundingClientRect:()=>({width:800,height:500})},
+    cellSizePx:4,
+    typeMeta:{},
+    clamp:(v,a,b)=>Math.max(a,Math.min(b,v))
+  });
+  renderer.render(scene);
+  const sourceMarker=calls.find(c=>c.key==='strokeRect' && c.args[2]>=3.5 && c.args[3]>=3.5);
+  assert.ok(sourceMarker,'manual fire source marker should remain visible at HRR=0');
+  assert.equal(saved.length,0);
+});
+
 test('bridge inspection preserves raw upper/eye quantities, fire provenance and FDS release', () => {
   const source={map:{floorStates:[{floorIndex:0,grid:[[{walkable:true,fire:true,hrrKw:123,fireAgeSec:15,
     fireSource:'spread',ignitionTime:4,spreadSourceCell:{floorIndex:0,cx:1,cy:0},smokeDensity:2,eyeLevelSmokeDensity:.3,
