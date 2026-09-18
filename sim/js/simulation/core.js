@@ -8,6 +8,7 @@ import { computePotentialFieldFromSeedsModule } from "./potential.js";
 import {
   buildFireAvoidanceMasks,
   isFireAvoidanceBlocked,
+  extendPotentialIntoFireAvoidanceZone,
   chooseFireSafeExitField,
   routeChoiceForExit
 } from "./routing.js";
@@ -1917,8 +1918,15 @@ export function initSimulation() {
       isAgentTraversableCell(floor, cx, cy) &&
       !isFireAvoidanceBlocked(fireAvoidanceMasks, floor, cx, cy, gridW);
 
-    multiFireSafePotentialByExit = allExitPoints.map(ex =>
-      computePotentialFieldFromSeedsModule(
+    multiFireSafePotentialByExit = allExitPoints.map(ex => {
+      // An exit inside the active fire buffer is never a normal safe choice.
+      if (isFireAvoidanceBlocked(fireAvoidanceMasks, ex.floor, ex.cx, ex.cy, gridW)) {
+        return new Array(floorCount).fill(null).map(() =>
+          new Array(gridH).fill(null).map(() => new Array(gridW).fill(Infinity))
+        );
+      }
+
+      const safeField = computePotentialFieldFromSeedsModule(
         [{ floor: ex.floor, cx: ex.cx, cy: ex.cy }],
         {
           grid,
@@ -1930,8 +1938,18 @@ export function initSimulation() {
           isAgentTraversableCell: isFireSafeRouteCell,
           getLinkedStairDestinations
         }
-      )
-    );
+      );
+
+      return extendPotentialIntoFireAvoidanceZone(
+        safeField,
+        floorStates,
+        fireAvoidanceMasks,
+        gridW,
+        gridH,
+        isAgentTraversableCell,
+        50
+      );
+    });
 
     multiCombinedPotential = new Array(floorCount).fill(null).map(() =>
       new Array(gridH).fill(null).map(() => new Array(gridW).fill(Infinity))
@@ -3018,7 +3036,13 @@ export function initSimulation() {
       const potentialField = a.potentialField || multiCombinedPotential;
       if (!potentialField) return;
       const curPot = potentialField?.[floor]?.[cy]?.[cx];
-      if (!isFinite(curPot) || curPot < 0.01) {
+      if (!isFinite(curPot)) {
+        // Unreachable is not the same as evacuated. Keep the agent active so
+        // replanning / hazard escape can recover instead of falsely finishing.
+        a.stuckTime = (a.stuckTime || 0) + dt;
+        return;
+      }
+      if (curPot < 0.01) {
         a.finished = true;
         a.finishTime = simTime;
         evacCount++;
