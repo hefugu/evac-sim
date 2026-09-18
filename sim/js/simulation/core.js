@@ -8,7 +8,6 @@ import { computePotentialFieldFromSeedsModule } from "./potential.js";
 import {
   buildFireAvoidanceMasks,
   isFireAvoidanceBlocked,
-  extendPotentialIntoFireAvoidanceZone,
   chooseFireSafeExitField,
   routeChoiceForExit
 } from "./routing.js";
@@ -800,7 +799,9 @@ export function initSimulation() {
     if (!fs) return;
     currentFloor = floorIndex;
     baseImage = fs.baseImage || null;
-    baseWalkableTemplate = cloneWalkableTemplate(fs.walkableTemplate);
+    // Stable between map edits. Cloning this entire grid on every 0.1 s tick
+    // creates avoidable allocations and browser GC stalls.
+    baseWalkableTemplate = fs.walkableTemplate || null;
     grid = fs.grid;
     exits = fs.exits;
     spawns = fs.spawns;
@@ -1926,7 +1927,7 @@ export function initSimulation() {
         );
       }
 
-      const safeField = computePotentialFieldFromSeedsModule(
+      return computePotentialFieldFromSeedsModule(
         [{ floor: ex.floor, cx: ex.cx, cy: ex.cy }],
         {
           grid,
@@ -1938,16 +1939,6 @@ export function initSimulation() {
           isAgentTraversableCell: isFireSafeRouteCell,
           getLinkedStairDestinations
         }
-      );
-
-      return extendPotentialIntoFireAvoidanceZone(
-        safeField,
-        floorStates,
-        fireAvoidanceMasks,
-        gridW,
-        gridH,
-        isAgentTraversableCell,
-        50
       );
     });
 
@@ -2486,6 +2477,7 @@ export function initSimulation() {
     // exposure and smoke transport are refresh-rate independent.
     verticalSmokeTransfers = [];
     simulationAccumulatorSec += Math.min(wallDt, MAX_SIMULATION_ADVANCE_PER_FRAME_SEC);
+    let stepped = false;
     while (
       simulationAccumulatorSec + 1e-9 >= MAX_SIMULATION_SUBSTEP_SEC &&
       simRunning
@@ -2495,19 +2487,20 @@ export function initSimulation() {
       // Subtracting afterwards would make the new run's accumulator negative.
       simulationAccumulatorSec -= MAX_SIMULATION_SUBSTEP_SEC;
       stepSimulation(MAX_SIMULATION_SUBSTEP_SEC);
+      stepped = true;
     }
-    syncPublicState();
 
-    // Rendering is view-dependent. In 3D-only mode the hidden 2D canvas does
-    // no useful work; in split mode cap 2D to 20 FPS so simulation + 3D have
-    // more main-thread budget without changing the fixed simulation timestep.
-    const viewMode = state.render.viewMode || "2d";
-    const shouldDraw2D =
-      viewMode === "2d" ||
-      (viewMode === "split" && now - last2DDrawMs >= 50);
-    if (shouldDraw2D) {
-      drawScene();
-      last2DDrawMs = now;
+    if (stepped) {
+      // The model only changes on the fixed 0.1 s simulation clock. Repeating
+      // normalization + summary work on every browser RAF was pure overhead.
+      syncPublicState();
+
+      const viewMode = state.render.viewMode || "2d";
+      const min2DIntervalMs = viewMode === "split" ? 50 : 33.3;
+      if (viewMode !== "3d" && now - last2DDrawMs >= min2DIntervalMs) {
+        drawScene();
+        last2DDrawMs = now;
+      }
     }
 
     const frameEndedAt = performance.now();
@@ -3778,7 +3771,27 @@ export function initSimulation() {
       exits,
       spawns,
       smokeMap,
+      smokeActiveIndices: importedFdsRisk.active
+        ? null
+        : (floorStates[currentFloor]?.smokePhysics?.activeIndices || []),
       agents,
+      routeDebug: (() => {
+        const byExit = new Map();
+        let active = 0;
+        let fallback = 0;
+        agents.forEach(agent => {
+          if (agent.dead || agent.finished) return;
+          active += 1;
+          if (agent.routeUsesFireFallback) fallback += 1;
+          const idx = Number.isInteger(agent.targetExitIndex) ? agent.targetExitIndex : -1;
+          if (idx >= 0) byExit.set(idx, (byExit.get(idx) || 0) + 1);
+        });
+        return {
+          active,
+          fallback,
+          byExit: [...byExit.entries()].sort((a, b) => a[0] - b[0])
+        };
+      })(),
       flowField,
       simRunning,
       simTime,
