@@ -782,13 +782,68 @@ function beginCeilingJetCacheStep(state) {
   }
 }
 
-function buildFireDistanceField(floor, state, config) {
+function rebuildFireDistancePropagation(state, nextFireIndices) {
   const distance = state.fireDistanceCells;
   const sourceIndex = state.fireSourceIndex;
+  distance.fill(Infinity);
+  sourceIndex.fill(-1);
+  const queue = state.fireDistanceQueue;
+  let head = 0;
+  let tail = 0;
+  for (const index of nextFireIndices) {
+    distance[index] = 0;
+    sourceIndex[index] = index;
+    queue[tail++] = index;
+  }
+  while (head < tail) {
+    const current = queue[head++];
+    const neighborBase = current * CARDINAL_DIRECTIONS.length;
+    for (let directionIndex = 0; directionIndex < CARDINAL_DIRECTIONS.length; directionIndex++) {
+      const next = state.cardinalNeighborIndices[neighborBase + directionIndex];
+      if (next < 0) continue;
+      if (distance[next] <= distance[current] + 1) continue;
+      distance[next] = distance[current] + 1;
+      sourceIndex[next] = sourceIndex[current];
+      queue[tail++] = next;
+    }
+  }
+}
+
+function buildFireDistanceField(floor, state, config, liveFireIndices = null) {
   const sourceHrr = state.fireSourceHrrKw;
   for (const index of state.fireIndices) sourceHrr[index] = 0;
   const nextFireIndices = [];
   const grid = floor?.grid;
+
+  // Live simulation supplies a geometry revision and sparse active-fire list.
+  // When geometry/vent topology is unchanged, avoid rescanning all ~30k cells:
+  // only refresh HRR for the known fire cells and rebuild BFS if that set changed.
+  if (
+    config.liveTopologyKey != null &&
+    state.liveTopologyKey === config.liveTopologyKey &&
+    Array.isArray(liveFireIndices)
+  ) {
+    for (const rawIndex of liveFireIndices) {
+      const index = Math.floor(Number(rawIndex));
+      if (index < 0 || index >= state.width * state.height) continue;
+      if (!state.passableMask[index]) continue;
+      const cy = Math.floor(index / state.width);
+      const cx = index % state.width;
+      const hrr = fireHrrKw(grid?.[cy]?.[cx], config) * config.sourceMultiplier;
+      if (!(hrr > 0)) continue;
+      sourceHrr[index] = hrr;
+      nextFireIndices.push(index);
+    }
+    nextFireIndices.sort((a, b) => a - b);
+    let sameFires = nextFireIndices.length === state.fireIndices.length;
+    for (let offset = 0; sameFires && offset < nextFireIndices.length; offset++) {
+      sameFires = nextFireIndices[offset] === state.fireIndices[offset];
+    }
+    state.fireIndices = nextFireIndices;
+    if (!sameFires) rebuildFireDistancePropagation(state, nextFireIndices);
+    return;
+  }
+
   const smokeMap = floor?.smokeMap;
   const exitKeys = config.exitActsAsOpenVent && Array.isArray(floor?.exits) && floor.exits.length
     ? exitCellKeys(floor)
@@ -831,6 +886,7 @@ function buildFireDistanceField(floor, state, config) {
     }
   }
   state.potentialVentilationCount = potentialVentilationCount;
+  nextFireIndices.sort((a, b) => a - b);
   let sameFires = nextFireIndices.length === state.fireIndices.length;
   for (let offset = 0; sameFires && offset < nextFireIndices.length; offset++) {
     sameFires = nextFireIndices[offset] === state.fireIndices[offset];
@@ -838,33 +894,13 @@ function buildFireDistanceField(floor, state, config) {
   const topologyUnchanged = topologyHash === state.topologyHash &&
     passableCount === state.topologyPassableCount && sameFires;
   state.fireIndices = nextFireIndices;
+  state.liveTopologyKey = config.liveTopologyKey ?? null;
   if (topologyUnchanged) return;
 
   state.topologyHash = topologyHash;
   state.topologyPassableCount = passableCount;
   rebuildPassableNeighborIndices(state);
-  distance.fill(Infinity);
-  sourceIndex.fill(-1);
-  const queue = state.fireDistanceQueue;
-  let head = 0;
-  let tail = 0;
-  for (const index of nextFireIndices) {
-    distance[index] = 0;
-    sourceIndex[index] = index;
-    queue[tail++] = index;
-  }
-  while (head < tail) {
-    const current = queue[head++];
-    const neighborBase = current * CARDINAL_DIRECTIONS.length;
-    for (let directionIndex = 0; directionIndex < CARDINAL_DIRECTIONS.length; directionIndex++) {
-      const next = state.cardinalNeighborIndices[neighborBase + directionIndex];
-      if (next < 0) continue;
-      if (distance[next] <= distance[current] + 1) continue;
-      distance[next] = distance[current] + 1;
-      sourceIndex[next] = sourceIndex[current];
-      queue[tail++] = next;
-    }
-  }
+  rebuildFireDistancePropagation(state, nextFireIndices);
 }
 
 function clearDeltas(state) {
@@ -1813,10 +1849,15 @@ export function stepLegacySmokePhysicsInPlace(
   const timeSec = Math.max(0, finiteNumber(options.timeSec, dt));
   const statesByFloor = new Map();
   let maximumVelocity = 0;
-  floors.forEach(floor => {
+  floors.forEach((floor, floorArrayIndex) => {
     const state = ensurePhysicsState(floor, config);
     statesByFloor.set(floor, state);
-    buildFireDistanceField(floor, state, config);
+    buildFireDistanceField(
+      floor,
+      state,
+      config,
+      config.activeFireIndicesByFloor?.[floorArrayIndex] ?? null
+    );
     beginCeilingJetCacheStep(state);
     for (const index of state.fireIndices) {
       maximumVelocity = Math.max(
