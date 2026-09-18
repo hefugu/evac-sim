@@ -61,6 +61,7 @@ const DEFAULT_OPTIONS = Object.freeze({
   minCameraDistance: 2,
   maxCameraDistance: 5000,
   maxDevicePixelRatio: 2,
+  maxFps: 30,
   legacyExtinctionPerSmokeDensity: 0.32,
   smokeVisualizationMode: "extinction",
   smokeDisplayMode: "physical",
@@ -430,6 +431,7 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
   config.floorHeightMeters = positiveNumber(config.floorHeightMeters, DEFAULT_OPTIONS.floorHeightMeters);
   config.wallHeightMeters = positiveNumber(config.wallHeightMeters, DEFAULT_OPTIONS.wallHeightMeters);
   config.fovDegrees = clamp(finiteNumber(config.fovDegrees, DEFAULT_OPTIONS.fovDegrees), 20, 100);
+  config.maxFps = clamp(finiteNumber(config.maxFps, DEFAULT_OPTIONS.maxFps), 1, 60);
   config.legacyExtinctionPerSmokeDensity = positiveNumber(
     config.legacyExtinctionPerSmokeDensity,
     DEFAULT_OPTIONS.legacyExtinctionPerSmokeDensity
@@ -457,6 +459,7 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
   let running = false;
   let destroyed = false;
   let frameHandle = null;
+  let lastRenderedFrameMs = -Infinity;
   let lastFloors = [];
   let lastRenderStats = null;
   let activePointerId = null;
@@ -1757,13 +1760,18 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
 
   function frame(timestamp) {
     if (!running || destroyed) return;
-    renderOnce(timestamp);
+    const minIntervalMs = 1000 / Math.max(1, config.maxFps);
+    if (timestamp - lastRenderedFrameMs >= minIntervalMs - 0.5) {
+      renderOnce(timestamp);
+      lastRenderedFrameMs = timestamp;
+    }
     frameHandle = requestVisualFrame(frame);
   }
 
   function start() {
     if (destroyed || running) return running;
     running = true;
+    lastRenderedFrameMs = -Infinity;
     frameHandle = requestVisualFrame(frame);
     return true;
   }
