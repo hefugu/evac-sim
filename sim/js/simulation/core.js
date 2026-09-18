@@ -32,7 +32,8 @@ import {
 } from "../scitech3f-map3d.js";
 import {
   stepFire3D,
-  applyFire3DResultToLegacyFloors
+  applyFire3DResultToLegacyFloors,
+  stepLegacyFireSpreadInPlace
 } from "./fire3d.js";
 import {
   clearLegacySmokePhysicsCell,
@@ -2598,19 +2599,22 @@ export function initSimulation() {
       // re-applied once all reduced-order hazards have advanced below.
       restoreLastAppliedFdsCells();
       const fireDt = Math.max(dt, Math.min(1, simTime - lastFireStepAt || dt));
-      const fireResult = stepFire3D(floorStates, fireDt, {
-        timeSec: simTime,
-        cellSizeMeters: cellMeters,
-        floorHeightMeters: state.spatial.floorHeightMeters || 3.5,
-        stairLinks
-      });
-      const applied = applyFire3DResultToLegacyFloors(floorStates, fireResult, {
-        blockIgnitedCells: false
-      });
+      const fireResult = stepLegacyFireSpreadInPlace(
+        floorStates,
+        fireDt,
+        {
+          timeSec: simTime,
+          cellSizeMeters: cellMeters,
+          floorHeightMeters: state.spatial.floorHeightMeters || 3.5,
+          stairLinks,
+          activeIndicesByFloor: activeFireIndicesByFloor
+        }
+      );
+      activeFireIndicesByFloor = fireResult.activeIndicesByFloor;
       activeFireCount = fireResult.activeFireCount;
       totalFireHrrKw = fireResult.totalHrrKw;
-      if (applied.ignitedCells.length) {
-        log(`火災延焼: ${applied.ignitedCells.length}セル / active=${activeFireCount}`);
+      if (fireResult.ignitedCells.length) {
+        log(`火災延焼: ${fireResult.ignitedCells.length}セル / active=${activeFireCount}`);
         // Fire spread changes both ordinary traversability and the wider
         // fire-avoidance buffer. Rebuild routes only when topology actually changes.
         rebuildPotentialCache();
