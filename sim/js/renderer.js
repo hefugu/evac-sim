@@ -192,12 +192,26 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
 
   function drawSmoke(scene) {
     if (!scene.grid) return;
-    scene.grid.forEach((row,y)=>row.forEach((cell,x)=>{
+
+    const drawCell = (x, y) => {
+      const cell = scene.grid?.[y]?.[x];
+      if (!cell) return;
       const view = derive2DCellDisplay(cell,{...scene.hazardDisplay,cellSizeMeters:scene.cellSizeMeters});
       if (!(view.opacity > 0)) return;
       ctx.save(); ctx.globalAlpha = view.opacity; ctx.fillStyle = view.color;
       ctx.fillRect(x*cellSizePx,y*cellSizePx,cellSizePx,cellSizePx); ctx.restore();
-    }));
+    };
+
+    if (Array.isArray(scene.smokeActiveIndices)) {
+      for (const index of scene.smokeActiveIndices) {
+        const x = index % scene.gridW;
+        const y = Math.floor(index / scene.gridW);
+        drawCell(x, y);
+      }
+      return;
+    }
+
+    scene.grid.forEach((row,y)=>row.forEach((_cell,x)=>drawCell(x,y)));
   }
 
   function drawFireAndSources(scene) {
@@ -419,6 +433,13 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
       );
       lines.push(
         `Agents ${Number(p.agentMs || 0).toFixed(2)} ms/step | Fire ${Number(p.fireMs || 0).toFixed(2)} ms/tick`
+      );
+    }
+    if(scene.routeDebug) {
+      const r=scene.routeDebug;
+      const exits=(r.byExit || []).map(([idx,count])=>`E${idx+1}:${count}`).join(' ');
+      lines.push(
+        `ROUTE ${exits || 'none'} | fallback ${r.fallback || 0}/${r.active || 0}`
       );
     }
     ctx.save(); ctx.font='11px Consolas, monospace';ctx.textAlign='left';ctx.textBaseline='top';
