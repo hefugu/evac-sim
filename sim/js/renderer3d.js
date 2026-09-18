@@ -403,6 +403,7 @@ function makeNoContextApi() {
     setLayerVisibility: unavailable,
     setSmokeVisualizationMode: unavailable,
     setSmokeLayerBounds: unavailable,
+    setMaxFps: unavailable,
     setSmokeDisplayMode: unavailable,
     setFireVisualizationMode: unavailable,
     setDataSourceOverlay: unavailable,
@@ -1849,6 +1850,12 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
     return config.showSmokeLayerBounds;
   }
 
+  function setMaxFps(value) {
+    config.maxFps = clamp(finiteNumber(value, config.maxFps), 1, 60);
+    lastRenderedFrameMs = -Infinity;
+    return config.maxFps;
+  }
+
   function listen(target, type, handler, eventOptions) {
     if (!target?.addEventListener) return;
     target.addEventListener(type, handler, eventOptions);
@@ -1964,6 +1971,7 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
     setLayerVisibility,
     setSmokeVisualizationMode,
     setSmokeLayerBounds,
+    setMaxFps,
     setSmokeDisplayMode,
     setFireVisualizationMode,
     setDataSourceOverlay,
