@@ -218,20 +218,35 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
           // still near zero. Flame/glow size remains driven by physical state.
           const markerRadius = Math.max(cellSizePx * 0.42, 1.8);
           ctx.save();
-          ctx.strokeStyle = '#fff0b0';
-          ctx.lineWidth = Math.max(0.6, cellSizePx * 0.12);
+
+          // Dark outer keyline keeps the marker readable on white floorplans.
+          ctx.strokeStyle = '#2b1208';
+          ctx.lineWidth = Math.max(1.2, cellSizePx * 0.22);
           ctx.strokeRect(
             px - markerRadius,
             py - markerRadius,
             markerRadius * 2,
             markerRadius * 2
           );
+
+          // Bright fire-colored inner marker stays visible over smoke and heat maps.
+          const innerRadius = markerRadius * 0.78;
+          ctx.strokeStyle = '#ff5a1f';
+          ctx.lineWidth = Math.max(0.8, cellSizePx * 0.14);
+          ctx.strokeRect(
+            px - innerRadius,
+            py - innerRadius,
+            innerRadius * 2,
+            innerRadius * 2
+          );
+
           ctx.beginPath();
-          ctx.moveTo(px - markerRadius * 0.65, py);
-          ctx.lineTo(px + markerRadius * 0.65, py);
-          ctx.moveTo(px, py - markerRadius * 0.65);
-          ctx.lineTo(px, py + markerRadius * 0.65);
+          ctx.moveTo(px - innerRadius * 0.65, py);
+          ctx.lineTo(px + innerRadius * 0.65, py);
+          ctx.moveTo(px, py - innerRadius * 0.65);
+          ctx.lineTo(px, py + innerRadius * 0.65);
           ctx.stroke();
+
           ctx.restore();
         } else {
           ctx.strokeStyle = '#ffad55';
