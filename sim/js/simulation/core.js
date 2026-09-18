@@ -258,6 +258,7 @@ export function initSimulation() {
   const MAX_SMOKE_WORK_PER_FRAME_SEC = 0.5;
   const MAX_SIMULATION_ADVANCE_PER_FRAME_SEC = 0.5;
   const MAX_SIMULATION_SUBSTEP_SEC = 0.1;
+  const MAX_SIMULATION_STEPS_PER_FRAME = 2;
   const PRESET_STORAGE_KEY = "evac_presets_v1";
 
   // Lightweight rolling profiler. Samples only coarse blocks and publishes a
@@ -2526,9 +2527,11 @@ export function initSimulation() {
     verticalSmokeTransfers = [];
     simulationAccumulatorSec += Math.min(wallDt, MAX_SIMULATION_ADVANCE_PER_FRAME_SEC);
     let stepped = false;
+    let stepsThisFrame = 0;
     while (
       simulationAccumulatorSec + 1e-9 >= MAX_SIMULATION_SUBSTEP_SEC &&
-      simRunning
+      simRunning &&
+      stepsThisFrame < MAX_SIMULATION_STEPS_PER_FRAME
     ) {
       simTime += MAX_SIMULATION_SUBSTEP_SEC;
       // Consume the old step before summarize() can reset/start a new MC run.
@@ -2536,6 +2539,19 @@ export function initSimulation() {
       simulationAccumulatorSec -= MAX_SIMULATION_SUBSTEP_SEC;
       stepSimulation(MAX_SIMULATION_SUBSTEP_SEC);
       stepped = true;
+      stepsThisFrame += 1;
+    }
+
+    if (
+      stepsThisFrame >= MAX_SIMULATION_STEPS_PER_FRAME &&
+      simulationAccumulatorSec >= MAX_SIMULATION_SUBSTEP_SEC
+    ) {
+      // Interactive mode deliberately drops excess wall-clock backlog instead
+      // of entering a catch-up spiral that can pin the browser at 1–2 FPS.
+      simulationAccumulatorSec = Math.min(
+        simulationAccumulatorSec,
+        MAX_SIMULATION_SUBSTEP_SEC
+      );
     }
 
     if (stepped) {
@@ -2646,11 +2662,19 @@ export function initSimulation() {
       smokeWorkThisFrameSec + SMOKE_FIXED_STEP_SEC <= MAX_SMOKE_WORK_PER_FRAME_SEC + 1e-9
     ) {
       const smokeStartedAt = performance.now();
+      const smokeOptions = currentSmokeModelOptions(
+        simTime - smokeAccumulatorSec + SMOKE_FIXED_STEP_SEC
+      );
+      if (!importedFdsRisk.active) {
+        smokeOptions.liveTopologyKey =
+          `${state.render.geometryRevision || 0}:${smokeOptions.exitActsAsOpenVent ? 1 : 0}`;
+        smokeOptions.activeFireIndicesByFloor = activeFireIndicesByFloor;
+      }
       const smokeResult = stepLegacySmokePhysicsInPlace(
         floorStates,
         stairLinks,
         SMOKE_FIXED_STEP_SEC,
-        currentSmokeModelOptions(simTime - smokeAccumulatorSec + SMOKE_FIXED_STEP_SEC)
+        smokeOptions
       );
       mergeVerticalSmokeTransferBatch(smokeResult.verticalTransfers);
       perfProfile.smokeMs += performance.now() - smokeStartedAt;
