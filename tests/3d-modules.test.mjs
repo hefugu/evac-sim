@@ -7,6 +7,11 @@ import "./renderer-modes.test.mjs";
 import "./hazard-display.test.mjs";
 import "./renderer-2d.test.mjs";
 import assert from "node:assert/strict";
+import {
+  computePotentialFieldFromSeedsModule,
+  estimateExitRoutingCost,
+  canTraverseGridStep
+} from "../sim/js/simulation/potential.js";
 
 import {
   createFloor3D,
@@ -68,6 +73,79 @@ function assertNearlyEqual(actual, expected, tolerance = 1e-12) {
     `expected ${actual} to be within ${tolerance} of ${expected}`
   );
 }
+
+test("exit routing cost includes assigned-exit load without corrupting distance", () => {
+  assert.equal(estimateExitRoutingCost(12, 0), 12);
+  assert.equal(estimateExitRoutingCost(12, -5), 12);
+  assert.equal(estimateExitRoutingCost(Infinity, 10), Infinity);
+  assert.ok(estimateExitRoutingCost(12, 10) > estimateExitRoutingCost(15, 0));
+  assert.equal(
+    estimateExitRoutingCost(12, 10, { loadPenaltyPerAgent: 0.2 }),
+    14
+  );
+});
+
+test("grid routing rejects diagonal corner cutting", () => {
+  const grid = [
+    [{ walkable: true }, { walkable: false }],
+    [{ walkable: false }, { walkable: true }]
+  ];
+  const floorStates = [{ grid }];
+  const traversable = (floor, cx, cy) =>
+    floor === 0 && cx >= 0 && cy >= 0 && cx < 2 && cy < 2 &&
+    !!grid[cy][cx].walkable;
+
+  assert.equal(canTraverseGridStep(0, 0, 0, 1, 1, traversable), false);
+
+  const field = computePotentialFieldFromSeedsModule(
+    [{ floor: 0, cx: 1, cy: 1 }],
+    {
+      grid,
+      floorStates,
+      floorCount: 1,
+      gridW: 2,
+      gridH: 2,
+      currentFloor: 0,
+      isAgentTraversableCell: traversable,
+      getLinkedStairDestinations: () => []
+    }
+  );
+  assert.equal(field[0][0][0], Infinity);
+});
+
+test("grid routing permits a diagonal only when both side cells are clear", () => {
+  const open = () => true;
+  assert.equal(canTraverseGridStep(0, 0, 0, 1, 1, open), true);
+  const oneSideBlocked = (_floor, cx, cy) => !(cx === 1 && cy === 0);
+  assert.equal(canTraverseGridStep(0, 0, 0, 1, 1, oneSideBlocked), false);
+});
+
+test("potential fields accept the full width of one physical exit as zero-cost seeds", () => {
+  const grid = [[
+    { walkable: true },
+    { walkable: true },
+    { walkable: true },
+    { walkable: true }
+  ]];
+  const traversable = (floor, cx, cy) =>
+    floor === 0 && cy === 0 && cx >= 0 && cx < grid[0].length && grid[0][cx].walkable;
+  const field = computePotentialFieldFromSeedsModule(
+    [{ floor: 0, cx: 2, cy: 0 }, { floor: 0, cx: 3, cy: 0 }],
+    {
+      grid,
+      floorStates: [{ grid }],
+      floorCount: 1,
+      gridW: 4,
+      gridH: 1,
+      currentFloor: 0,
+      isAgentTraversableCell: traversable,
+      getLinkedStairDestinations: () => []
+    }
+  );
+  assert.equal(field[0][0][2], 0);
+  assert.equal(field[0][0][3], 0);
+  assert.equal(field[0][0][1], 1);
+});
 
 test("2.5D floor schema and exact grid-to-world conversion", () => {
   const floor = createFloor3D({
@@ -725,8 +803,18 @@ test("color map extraction recognizes white, green and yellow while dropping tex
   assert.equal(parsed.stairCells, 1);
   assert.equal(parsed.exitCells, 3);
   assert.deepEqual(parsed.exitPoints, [
-    { cx: 0, cy: 1, cellCount: 2 },
-    { cx: 4, cy: 1, cellCount: 1 }
+    {
+      cx: 0,
+      cy: 1,
+      cellCount: 2,
+      cells: [{ cx: 0, cy: 1 }, { cx: 0, cy: 2 }]
+    },
+    {
+      cx: 4,
+      cy: 1,
+      cellCount: 1,
+      cells: [{ cx: 4, cy: 1 }]
+    }
   ]);
   assert.equal(parsed.exitTemplate[1][0], true);
   assert.equal(parsed.walkableTemplate[1][4], true);

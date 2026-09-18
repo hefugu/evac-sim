@@ -4,7 +4,11 @@ import { parseFdsRiskCsv, eyeHeightFdsFrame } from "./fds-csv.js";
 import { bindCoreControls, getUIRefs } from "../ui.js";
 import { state, syncLegacyState } from "../state.js";
 import { createRenderer } from "../renderer.js";
-import { computePotentialFieldFromSeedsModule } from "./potential.js";
+import {
+  computePotentialFieldFromSeedsModule,
+  estimateExitRoutingCost,
+  canTraverseGridStep
+} from "./potential.js";
 import { clamp, parseNum} from "../utils/helpers.js";
 import { downloadCsvReport } from "../export/csv.js";
 import {
@@ -307,6 +311,7 @@ export function initSimulation() {
   const STUCK_BACKTRACK_RELEASE_SEC = 1.0;
   const STUCK_UPHILL_RELEASE_SEC = 1.6;
   const EXIT_SWITCH_MARGIN = 2.0;
+  const EXIT_LOAD_PENALTY_PER_AGENT = 0.55;
   const MIN_SPEED_FACTOR = 0.12;
   const VISIBILITY_SMOKE_COEF = 0.33;
   const MIN_VISIBILITY = 0.1;
@@ -655,7 +660,31 @@ export function initSimulation() {
       const cy = Math.round(Number(exit?.cy));
       if (!Number.isFinite(cx) || !Number.isFinite(cy)) continue;
       if (cx < 0 || cy < 0 || cx >= gridW || cy >= gridH || !template?.[cy]?.[cx]) continue;
-      exitsByCell.set(`${cx}:${cy}`, { cx, cy, source: "image" });
+
+      const regionCells = [];
+      const seenCells = new Set();
+      for (const rawCell of Array.isArray(exit?.cells) ? exit.cells : []) {
+        const cellCx = Math.round(Number(rawCell?.cx));
+        const cellCy = Math.round(Number(rawCell?.cy));
+        if (!Number.isFinite(cellCx) || !Number.isFinite(cellCy)) continue;
+        if (
+          cellCx < 0 || cellCy < 0 || cellCx >= gridW || cellCy >= gridH ||
+          !template?.[cellCy]?.[cellCx]
+        ) continue;
+        const key = `${cellCx}:${cellCy}`;
+        if (seenCells.has(key)) continue;
+        seenCells.add(key);
+        regionCells.push({ cx: cellCx, cy: cellCy });
+      }
+      if (!regionCells.length) regionCells.push({ cx, cy });
+
+      exitsByCell.set(`${cx}:${cy}`, {
+        cx,
+        cy,
+        source: "image",
+        cellCount: regionCells.length,
+        cells: regionCells
+      });
     }
     return [...exitsByCell.values()];
   }
@@ -773,9 +802,32 @@ export function initSimulation() {
     for (let f = 0; f < floorStates.length; f++) {
       const fs = floorStates[f];
       if (!fs) continue;
-      fs.exits.forEach(e => arr.push({ floor: f, cx: e.cx, cy: e.cy }));
+      fs.exits.forEach(e => arr.push({
+        ...e,
+        floor: f,
+        cells: Array.isArray(e.cells)
+          ? e.cells.map(cell => ({ cx: cell.cx, cy: cell.cy }))
+          : undefined
+      }));
     }
     return arr;
+  }
+
+  function exitPotentialSeeds(exit) {
+    const cells = Array.isArray(exit?.cells) && exit.cells.length
+      ? exit.cells
+      : [{ cx: exit?.cx, cy: exit?.cy }];
+    return cells
+      .map(cell => ({
+        floor: exit.floor,
+        cx: Math.round(Number(cell?.cx)),
+        cy: Math.round(Number(cell?.cy))
+      }))
+      .filter(seed =>
+        Number.isFinite(seed.cx) &&
+        Number.isFinite(seed.cy) &&
+        isAgentTraversableCell(seed.floor, seed.cx, seed.cy)
+      );
   }
 
   function collectAllSpawns() {
@@ -1822,7 +1874,7 @@ export function initSimulation() {
     }
     multiPotentialByExit = allExitPoints.map(ex =>
       computePotentialFieldFromSeedsModule(
-        [{ floor: ex.floor, cx: ex.cx, cy: ex.cy }],
+        exitPotentialSeeds(ex),
         { grid, floorStates, floorCount, gridW, gridH, currentFloor, isAgentTraversableCell, getLinkedStairDestinations }
       )
     );
@@ -1855,8 +1907,9 @@ export function initSimulation() {
     if (!field) return Infinity;
     const dist = field[floor]?.[cy]?.[cx];
     if (!isFinite(dist)) return Infinity;
-    // TODO: combine static distance with dynamic congestion/load penalties.
-    return dist;
+    return estimateExitRoutingCost(dist, exitLoad?.[exitIndex], {
+      loadPenaltyPerAgent: EXIT_LOAD_PENALTY_PER_AGENT
+    });
   }
 
   function chooseExitForAgent(agent, exitLoad = []) {
@@ -2656,11 +2709,22 @@ export function initSimulation() {
         a.floor = f;
         a.cx = cx;
         a.cy = cy;
-        const choice = chooseExitForAgent(a, exitLoad);
-        const curScore =
+        const previousExitIndex =
           (Number.isInteger(a.targetExitIndex) && a.targetExitIndex >= 0 && a.targetExitIndex < allExitPoints.length)
-            ? estimateExitCost(a.targetExitIndex, f, cx, cy, exitLoad)
-            : Infinity;
+            ? a.targetExitIndex
+            : -1;
+
+        // Remove this agent from its current exit load while evaluating choices.
+        // Updating the shared load immediately after each decision prevents a
+        // whole crowd from switching to the same "less busy" exit at once.
+        if (previousExitIndex >= 0) {
+          exitLoad[previousExitIndex] = Math.max(0, exitLoad[previousExitIndex] - 1);
+        }
+
+        const choice = chooseExitForAgent(a, exitLoad);
+        const curScore = previousExitIndex >= 0
+          ? estimateExitCost(previousExitIndex, f, cx, cy, exitLoad)
+          : Infinity;
         const localRouteRisk = routeRiskAt(f, cx, cy);
         const switchMargin = a.type === "teacher"
           ? 0.5
@@ -2670,13 +2734,16 @@ export function initSimulation() {
           (a.stuckTime || 0) >= STUCK_UPHILL_RELEASE_SEC;
         const shouldSwitch =
           (choice.idx >= 0) &&
-          (choice.idx !== a.targetExitIndex) &&
+          (choice.idx !== previousExitIndex) &&
           panicMaySwitch &&
           (choice.score + switchMargin < curScore);
         if (shouldSwitch) {
           a.targetExitIndex = choice.idx;
           a.targetExit = choice.idx;
           a.potentialField = choice.field;
+          exitLoad[choice.idx] += 1;
+        } else if (previousExitIndex >= 0) {
+          exitLoad[previousExitIndex] += 1;
         }
       });
       nextRouteReplanAt = simTime + 1.5;
@@ -2943,6 +3010,10 @@ export function initSimulation() {
         const ny = Number.isFinite(c.ny) ? c.ny : (cy + (c.dy ?? 0));
         const nf = c.nf ?? floor;
         if (!isAgentTraversableCell(nf, nx, ny)) continue;
+        if (
+          nf === floor &&
+          !canTraverseGridStep(floor, cx, cy, nx, ny, isAgentTraversableCell)
+        ) continue;
 
         const routeRisk = routeRiskAt(nf, nx, ny);
         if (routeRisk.blocked) continue;

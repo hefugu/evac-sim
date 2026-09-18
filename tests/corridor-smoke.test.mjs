@@ -149,6 +149,33 @@ test("open side doors couple corridor smoke to ordinary room cells", () => {
   before.forEach((value, index) => near(totals(state)[index], value));
 });
 
+test("shared solver carries smoke through a T-junction into both open branches", () => {
+  const width = 15;
+  const height = 11;
+  const grid = Array.from({ length: height }, () =>
+    Array.from({ length: width }, () => ({ walkable: false, wall: true }))
+  );
+  for (let x = 1; x <= 13; x++) grid[7][x] = { walkable: true, wall: false };
+  for (let y = 2; y <= 7; y++) grid[y][7] = { walkable: true, wall: false };
+  grid[7][2] = { walkable: true, wall: false, fire: true, hrrKw: 40 };
+
+  let floors = [{ floorIndex: 0, cellSizeMeters: 1, grid }];
+  for (let step = 0; step < 240; step++) {
+    floors = stepSmoke3D(floors, [], 0.1, {
+      timeSec: (step + 1) * 0.1,
+      turbulentDiffusivityM2Sec: 0,
+      leakageRatePerSec: 0,
+      sootDepositionRatePerSec: 0,
+      heatLossRatePerSec: 0
+    }).floors;
+  }
+
+  const soot = floors[0].smokePhysics.sootMassKg;
+  const at = (x, y) => soot[y * width + x];
+  assert.ok(at(10, 7) > 0, "smoke must cross the junction into the straight branch");
+  assert.ok(at(7, 4) > 0, "smoke must turn through the junction into the side branch");
+});
+
 test("stair-delivered smoke seeds a corridor without a local fire or duplicate source", () => {
   const { floor, state } = corridor();
   floor.grid[0][5].stair = true;

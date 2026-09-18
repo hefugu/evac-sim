@@ -1,3 +1,37 @@
+export const DEFAULT_EXIT_LOAD_PENALTY_PER_AGENT = 0.55;
+
+export function estimateExitRoutingCost(distance, assignedLoad = 0, options = {}) {
+  const dist = Number(distance);
+  if (!Number.isFinite(dist)) return Infinity;
+
+  const load = Math.max(0, Number(assignedLoad) || 0);
+  const requestedWeight = Number(options.loadPenaltyPerAgent);
+  const loadPenaltyPerAgent = Number.isFinite(requestedWeight)
+    ? Math.max(0, requestedWeight)
+    : DEFAULT_EXIT_LOAD_PENALTY_PER_AGENT;
+
+  // Potential-field distance is measured in cell-equivalent steps. Treat the
+  // number of agents already assigned to an exit as an expected queue cost in
+  // the same units so nearby exits do not attract the entire population.
+  return dist + load * loadPenaltyPerAgent;
+}
+
+export function canTraverseGridStep(floor, fromCx, fromCy, toCx, toCy, isTraversable) {
+  if (typeof isTraversable !== "function") return false;
+  if (!isTraversable(floor, toCx, toCy)) return false;
+
+  const dx = toCx - fromCx;
+  const dy = toCy - fromCy;
+  if (Math.abs(dx) > 1 || Math.abs(dy) > 1) return false;
+  if (dx === 0 || dy === 0) return true;
+
+  // Prevent a diagonal move from cutting across a wall corner. Requiring both
+  // orthogonal side cells to be clear is conservative for finite-size people
+  // and keeps the potential field consistent with actual movement geometry.
+  return isTraversable(floor, fromCx + dx, fromCy) &&
+    isTraversable(floor, fromCx, fromCy + dy);
+}
+
 export function computePotentialFieldFromSeedsModule(seeds, ctx) {
   const {
     grid,
@@ -41,7 +75,7 @@ export function computePotentialFieldFromSeedsModule(seeds, ctx) {
     for (const d of dirs) {
       const nx = cx + d.dx;
       const ny = cy + d.dy;
-      if (!isAgentTraversableCell(floor, nx, ny)) continue;
+      if (!canTraverseGridStep(floor, cx, cy, nx, ny, isAgentTraversableCell)) continue;
       const newPot = base + d.c;
       if (newPot < potential[floor][ny][nx]) {
         potential[floor][ny][nx] = newPot;
