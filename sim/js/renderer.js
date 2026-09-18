@@ -213,9 +213,33 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
         glow.addColorStop(.35,view.fire.color); glow.addColorStop(1,'rgba(255,80,20,0)');
         ctx.save(); ctx.globalAlpha=.3+.7*view.fire.strength; ctx.fillStyle=glow;
         ctx.fillRect(px-radius,py-radius,radius*2,radius*2); ctx.restore();
-        ctx.strokeStyle=view.fire.origin==='spread'?'#ffad55':'#fff0b0'; ctx.lineWidth=.4;
-        if (view.fire.origin==='source') ctx.strokeRect(px-.6,py-.6,1.2,1.2);
-        else {ctx.beginPath();ctx.arc(px,py,.65,0,Math.PI*2);ctx.stroke();}
+        if (view.fire.origin === 'source') {
+          // Keep the scenario fire-source location readable even when HRR is
+          // still near zero. Flame/glow size remains driven by physical state.
+          const markerRadius = Math.max(cellSizePx * 0.42, 1.8);
+          ctx.save();
+          ctx.strokeStyle = '#fff0b0';
+          ctx.lineWidth = Math.max(0.6, cellSizePx * 0.12);
+          ctx.strokeRect(
+            px - markerRadius,
+            py - markerRadius,
+            markerRadius * 2,
+            markerRadius * 2
+          );
+          ctx.beginPath();
+          ctx.moveTo(px - markerRadius * 0.65, py);
+          ctx.lineTo(px + markerRadius * 0.65, py);
+          ctx.moveTo(px, py - markerRadius * 0.65);
+          ctx.lineTo(px, py + markerRadius * 0.65);
+          ctx.stroke();
+          ctx.restore();
+        } else {
+          ctx.strokeStyle = '#ffad55';
+          ctx.lineWidth = Math.max(0.5, cellSizePx * 0.1);
+          ctx.beginPath();
+          ctx.arc(px, py, Math.max(cellSizePx * 0.28, 1.2), 0, Math.PI * 2);
+          ctx.stroke();
+        }
         if(settings.fireMetric==='spread_front' && view.fire.isFront) {
           ctx.strokeStyle='#ff503d';ctx.lineWidth=.8;ctx.strokeRect(x*cellSizePx,y*cellSizePx,cellSizePx,cellSizePx);
         }
