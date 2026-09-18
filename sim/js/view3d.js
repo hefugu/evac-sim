@@ -30,7 +30,7 @@ export function init3DView() {
       cellSizeMeters: state.spatial.cellSizeMeters,
       floorHeightMeters: state.spatial.floorHeightMeters,
       wallHeightMeters: state.spatial.wallHeightMeters,
-      maxFps: 20,
+      maxFps: 30,
       geometryVersion: () => state.render.geometryRevision || 0
     }
   });
@@ -55,6 +55,7 @@ export function init3DView() {
     if (mode === "2d") {
       renderer.stop();
     } else {
+      renderer.setMaxFps(mode === "split" ? 12 : 30);
       renderer.resize();
       renderer.start();
       updateStatus();
