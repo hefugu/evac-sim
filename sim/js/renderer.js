@@ -409,6 +409,18 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
       const {minValue,maxValue,unit}=scene.riskOverlay;
       lines.push(`Current range: ${minValue?.toFixed(2) ?? '--'}–${maxValue?.toFixed(2) ?? '--'} ${unit}`);
     }
+    if(scene.profiler) {
+      const p=scene.profiler;
+      lines.push(
+        `PERF ${Number(p.fps || 0).toFixed(1)} FPS | frame ${Number(p.frameWorkMs || 0).toFixed(1)} ms | draw ${Number(p.renderMs || 0).toFixed(1)} ms`
+      );
+      lines.push(
+        `Smoke ${Number(p.smokeMs || 0).toFixed(2)} ms/tick | substeps ${Number(p.smokeSubsteps || 0).toFixed(1)} | active ${p.activeSmokeCells || 0}/${p.totalGridCells || 0}`
+      );
+      lines.push(
+        `Agents ${Number(p.agentMs || 0).toFixed(2)} ms/step | Fire ${Number(p.fireMs || 0).toFixed(2)} ms/tick`
+      );
+    }
     ctx.save(); ctx.font='11px Consolas, monospace';ctx.textAlign='left';ctx.textBaseline='top';
     const rect=cvs.getBoundingClientRect(), top=12, width=Math.max(50,rect.width-24);
     // Wrap instead of squeezing scientific units; the existing evacuation HUD occupies the bottom right.
