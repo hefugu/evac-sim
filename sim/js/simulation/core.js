@@ -211,6 +211,7 @@ export function initSimulation() {
   let multiPotentialByExit = []; // [exit][floor][y][x]
   let multiFireSafePotentialByExit = []; // same shape, but fire danger buffer is impassable
   let fireAvoidanceMasks = [];
+  let activeFireIndicesByFloor = [];
   let multiCombinedPotential = null; // [floor][y][x]
   let stairTrafficState = createStairTrafficState([]);
   let stairCongestion = [];
@@ -1890,6 +1891,7 @@ export function initSimulation() {
       multiPotentialByExit = [];
       multiFireSafePotentialByExit = [];
       fireAvoidanceMasks = [];
+      activeFireIndicesByFloor = [];
       multiCombinedPotential = null;
       return false;
     }
@@ -1915,6 +1917,18 @@ export function initSimulation() {
       gridH,
       fireRouteAvoidRadiusCells
     );
+
+    // Rebuild the tiny render index only when routing/fire topology changes.
+    // Avoid scanning every grid cell again on every canvas frame.
+    activeFireIndicesByFloor = floorStates.map(floor => {
+      const indices = [];
+      for (let cy = 0; cy < gridH; cy++) {
+        for (let cx = 0; cx < gridW; cx++) {
+          if (floor?.grid?.[cy]?.[cx]?.fire) indices.push(cy * gridW + cx);
+        }
+      }
+      return indices;
+    });
     const isFireSafeRouteCell = (floor, cx, cy) =>
       isAgentTraversableCell(floor, cx, cy) &&
       !isFireAvoidanceBlocked(fireAvoidanceMasks, floor, cx, cy, gridW);
@@ -3762,6 +3776,7 @@ export function initSimulation() {
       gridH,
       floorCount,
       currentFloor,
+      geometryRevision: state.render.geometryRevision || 0,
       stairLinks,
       pendingStairLink,
       potentialByExit,
@@ -3774,22 +3789,52 @@ export function initSimulation() {
       smokeActiveIndices: importedFdsRisk.active
         ? null
         : (floorStates[currentFloor]?.smokePhysics?.activeIndices || []),
+      fireActiveIndices: importedFdsRisk.active
+        ? null
+        : (activeFireIndicesByFloor[currentFloor] || []),
+      fireAvoidanceMask: fireAvoidanceMasks[currentFloor] || null,
       agents,
       routeDebug: (() => {
         const byExit = new Map();
         let active = 0;
         let fallback = 0;
+        const liveAgents = [];
         agents.forEach(agent => {
           if (agent.dead || agent.finished) return;
           active += 1;
+          liveAgents.push(agent);
           if (agent.routeUsesFireFallback) fallback += 1;
           const idx = Number.isInteger(agent.targetExitIndex) ? agent.targetExitIndex : -1;
           if (idx >= 0) byExit.set(idx, (byExit.get(idx) || 0) + 1);
         });
+
+        const safeByExit = allExitPoints.map((exit, idx) => {
+          let reachable = 0;
+          const field = multiFireSafePotentialByExit[idx];
+          for (const agent of liveAgents) {
+            const floor = Math.max(0, Math.min(floorCount - 1, Math.floor(agent.floor ?? 0)));
+            const cx = Math.round(agent.x);
+            const cy = Math.round(agent.y);
+            if (Number.isFinite(field?.[floor]?.[cy]?.[cx])) reachable += 1;
+          }
+          return {
+            idx,
+            reachable,
+            masked: isFireAvoidanceBlocked(
+              fireAvoidanceMasks,
+              exit.floor,
+              exit.cx,
+              exit.cy,
+              gridW
+            )
+          };
+        });
+
         return {
           active,
           fallback,
-          byExit: [...byExit.entries()].sort((a, b) => a[0] - b[0])
+          byExit: [...byExit.entries()].sort((a, b) => a[0] - b[0]),
+          safeByExit
         };
       })(),
       flowField,
