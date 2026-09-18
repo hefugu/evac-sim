@@ -660,7 +660,31 @@ export function initSimulation() {
       const cy = Math.round(Number(exit?.cy));
       if (!Number.isFinite(cx) || !Number.isFinite(cy)) continue;
       if (cx < 0 || cy < 0 || cx >= gridW || cy >= gridH || !template?.[cy]?.[cx]) continue;
-      exitsByCell.set(`${cx}:${cy}`, { cx, cy, source: "image" });
+
+      const regionCells = [];
+      const seenCells = new Set();
+      for (const rawCell of Array.isArray(exit?.cells) ? exit.cells : []) {
+        const cellCx = Math.round(Number(rawCell?.cx));
+        const cellCy = Math.round(Number(rawCell?.cy));
+        if (!Number.isFinite(cellCx) || !Number.isFinite(cellCy)) continue;
+        if (
+          cellCx < 0 || cellCy < 0 || cellCx >= gridW || cellCy >= gridH ||
+          !template?.[cellCy]?.[cellCx]
+        ) continue;
+        const key = `${cellCx}:${cellCy}`;
+        if (seenCells.has(key)) continue;
+        seenCells.add(key);
+        regionCells.push({ cx: cellCx, cy: cellCy });
+      }
+      if (!regionCells.length) regionCells.push({ cx, cy });
+
+      exitsByCell.set(`${cx}:${cy}`, {
+        cx,
+        cy,
+        source: "image",
+        cellCount: regionCells.length,
+        cells: regionCells
+      });
     }
     return [...exitsByCell.values()];
   }
@@ -778,9 +802,32 @@ export function initSimulation() {
     for (let f = 0; f < floorStates.length; f++) {
       const fs = floorStates[f];
       if (!fs) continue;
-      fs.exits.forEach(e => arr.push({ floor: f, cx: e.cx, cy: e.cy }));
+      fs.exits.forEach(e => arr.push({
+        ...e,
+        floor: f,
+        cells: Array.isArray(e.cells)
+          ? e.cells.map(cell => ({ cx: cell.cx, cy: cell.cy }))
+          : undefined
+      }));
     }
     return arr;
+  }
+
+  function exitPotentialSeeds(exit) {
+    const cells = Array.isArray(exit?.cells) && exit.cells.length
+      ? exit.cells
+      : [{ cx: exit?.cx, cy: exit?.cy }];
+    return cells
+      .map(cell => ({
+        floor: exit.floor,
+        cx: Math.round(Number(cell?.cx)),
+        cy: Math.round(Number(cell?.cy))
+      }))
+      .filter(seed =>
+        Number.isFinite(seed.cx) &&
+        Number.isFinite(seed.cy) &&
+        isAgentTraversableCell(seed.floor, seed.cx, seed.cy)
+      );
   }
 
   function collectAllSpawns() {
@@ -1827,7 +1874,7 @@ export function initSimulation() {
     }
     multiPotentialByExit = allExitPoints.map(ex =>
       computePotentialFieldFromSeedsModule(
-        [{ floor: ex.floor, cx: ex.cx, cy: ex.cy }],
+        exitPotentialSeeds(ex),
         { grid, floorStates, floorCount, gridW, gridH, currentFloor, isAgentTraversableCell, getLinkedStairDestinations }
       )
     );
