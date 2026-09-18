@@ -23,7 +23,8 @@ import {
 } from "../sim/js/simulation/stairs3d.js";
 import {
   stepFire3D,
-  applyFire3DResultToLegacyFloors
+  applyFire3DResultToLegacyFloors,
+  stepLegacyFireSpreadInPlace
 } from "../sim/js/simulation/fire3d.js";
 import {
   clearLegacySmokePhysicsCell,
@@ -683,6 +684,38 @@ test("fire grows, spreads deterministically and applies in place", () => {
   assert.ok(sourceCell.heatFluxKwM2 > 0);
   assert.equal(targetCell.ignitionTime, 11);
   assert.deepEqual(targetCell.spreadSourceCell, {floorIndex:0,cx:0,cy:0});
+  assert.equal(sourceCell.ignitionTime, 0);
+});
+
+test("sparse live fire step grows and spreads in place", () => {
+  const sourceCell = legacyCell({ fire: true, fireIntensity: 1, fireAgeSec: 10 });
+  const targetCell = legacyCell();
+  const grid = [[sourceCell, targetCell]];
+  const floors = [{
+    floorIndex: 0,
+    grid,
+    smokeMap: [[0, 0]],
+    walkableTemplate: [[true, true]],
+    cellSizeMeters: 0.5
+  }];
+
+  const result = stepLegacyFireSpreadInPlace(floors, 1, {
+    random: () => 0,
+    spreadRatePerSec: 100,
+    timeSec: 11,
+    activeIndicesByFloor: [[0]]
+  });
+
+  assert.equal(floors[0].grid, grid);
+  assert.equal(floors[0].grid[0][0], sourceCell);
+  assert.equal(floors[0].grid[0][1], targetCell);
+  assert.equal(targetCell.fire, true);
+  assert.equal(result.ignitedCells.length, 1);
+  assert.equal(result.activeFireCount, 2);
+  assert.deepEqual(result.activeIndicesByFloor[0].sort((a,b)=>a-b), [0, 1]);
+  assert.ok(sourceCell.heatFluxKwM2 > 0);
+  assert.equal(targetCell.ignitionTime, 11);
+  assert.deepEqual(targetCell.spreadSourceCell, { floorIndex: 0, cx: 0, cy: 0 });
   assert.equal(sourceCell.ignitionTime, 0);
 });
 
