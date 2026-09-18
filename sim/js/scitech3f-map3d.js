@@ -193,7 +193,12 @@ function collectMarkerRegions(template) {
         const distanceB = (b[0] - centerX) ** 2 + (b[1] - centerY) ** 2;
         return distanceA - distanceB || a[1] - b[1] || a[0] - b[0];
       })[0];
-      regions.push({ cx: markerX, cy: markerY, cellCount: cells.length });
+      regions.push({
+        cx: markerX,
+        cy: markerY,
+        cellCount: cells.length,
+        cells: cells.map(([cellX, cellY]) => ({ cx: cellX, cy: cellY }))
+      });
     }
   }
   return regions;
