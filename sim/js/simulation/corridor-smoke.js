@@ -187,14 +187,16 @@ function geometryFor(floor, physics, options) {
   return geometry;
 }
 
-/**
- * Plan physical transfers without modifying any extensive quantity. The caller
- * MUST skip its generic advection for membership cells and apply these requests
- * using its shared equal-and-opposite volume/soot/CO/enthalpy flux accounting.
- * Incoming stair/door smoke seeds the next call directly from physical contents;
- * there is no independent source or externally imposed concentration field.
- */
+const elapsedMs = performance.now() - startedAt;
+
+console.log(
+  `[corridor smoke] total=${totalCorridorCells}, active=${activeCorridorCells}, ` +
+  `reduction=${totalCorridorCells > 0
+    ? ((1 - activeCorridorCells / totalCorridorCells) * 100).toFixed(1)
+    : 0}%, time=${elapsedMs.toFixed(3)}ms`
+);
 export function computeCorridorSmokeTransport(floor, physics, dtSeconds, options = {}) {
+  const startedAt = performance.now();
   const config = configFor(options);
   const geometry = geometryFor(floor, physics, config);
   const { width, height, cellSizeMeters } = dimensions(floor);
@@ -212,10 +214,37 @@ export function computeCorridorSmokeTransport(floor, physics, dtSeconds, options
     Math.max(1e-12, density * cp * volumeAt(index));
   const transfers = [];
   let maxFrontVelocityMps = 0;
+
+  const activeIndicesBySegment = Array.from(
+    { length: geometry.segments.length },
+    () => []
+  );
+  const hasActiveIndexList = Array.isArray(physics.activeIndices);
+
+  if (hasActiveIndexList) {
+    for (const index of physics.activeIndices) {
+      const segmentIndex = geometry.segmentIndexByCell[index];
+      if (segmentIndex < 0) continue;
+
+      activeIndicesBySegment[segmentIndex].push(index);
+    }
+  }
+  const totalCorridorCells = geometry.segments.reduce(
+    (sum, segment) => sum + segment.indices.length,
+    0
+  );
+  
+  const activeCorridorCells = activeIndicesBySegment.reduce(
+    (sum, indices) => sum + indices.length,
+    0
+  );
   const segments = geometry.segments.map((segment, segmentIndex) => {
     let totalVolume = 0, totalHeat = 0, occupiedCells = 0;
     let frontMin = Infinity, frontMax = -Infinity, leftSpeed = 0, rightSpeed = 0;
-    for (const index of segment.indices) {
+    const workingIndices = hasActiveIndexList
+    ? activeIndicesBySegment[segmentIndex]
+    : segment.indices;
+    for (const index of workingIndices) {
       const volume = volumeAt(index);
       const depth = depthAt(index);
       const temperature = temperatureAt(index);
