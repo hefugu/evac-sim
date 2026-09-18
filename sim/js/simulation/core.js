@@ -211,6 +211,7 @@ export function initSimulation() {
   let multiPotentialByExit = []; // [exit][floor][y][x]
   let multiFireSafePotentialByExit = []; // same shape, but fire danger buffer is impassable
   let fireAvoidanceMasks = [];
+  let fireAvoidanceIndicesByFloor = [];
   let activeFireIndicesByFloor = [];
   let multiCombinedPotential = null; // [floor][y][x]
   let stairTrafficState = createStairTrafficState([]);
@@ -1891,6 +1892,7 @@ export function initSimulation() {
       multiPotentialByExit = [];
       multiFireSafePotentialByExit = [];
       fireAvoidanceMasks = [];
+      fireAvoidanceIndicesByFloor = [];
       activeFireIndicesByFloor = [];
       multiCombinedPotential = null;
       return false;
@@ -1920,6 +1922,15 @@ export function initSimulation() {
 
     // Rebuild the tiny render index only when routing/fire topology changes.
     // Avoid scanning every grid cell again on every canvas frame.
+    fireAvoidanceIndicesByFloor = fireAvoidanceMasks.map(mask => {
+      const indices = [];
+      if (!mask) return indices;
+      for (let index = 0; index < mask.length; index++) {
+        if (mask[index]) indices.push(index);
+      }
+      return indices;
+    });
+
     activeFireIndicesByFloor = floorStates.map(floor => {
       const indices = [];
       for (let cy = 0; cy < gridH; cy++) {
@@ -3793,6 +3804,7 @@ export function initSimulation() {
         ? null
         : (activeFireIndicesByFloor[currentFloor] || []),
       fireAvoidanceMask: fireAvoidanceMasks[currentFloor] || null,
+      fireAvoidanceIndices: fireAvoidanceIndicesByFloor[currentFloor] || [],
       agents,
       routeDebug: (() => {
         const byExit = new Map();
