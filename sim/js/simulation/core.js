@@ -8,6 +8,9 @@ import { computePotentialFieldFromSeedsModule } from "./potential.js";
 import {
   buildFireAvoidanceMasks,
   isFireAvoidanceBlocked,
+  buildNearestFireDistanceFields,
+  fireDistanceAt,
+  moveApproachesFire,
   chooseFireSafeExitField,
   routeChoiceForExit
 } from "./routing.js";
@@ -213,6 +216,7 @@ export function initSimulation() {
   let fireAvoidanceMasks = [];
   let fireAvoidanceIndicesByFloor = [];
   let activeFireIndicesByFloor = [];
+  let fireDistanceFields = [];
   let multiCombinedPotential = null; // [floor][y][x]
   let stairTrafficState = createStairTrafficState([]);
   let stairCongestion = [];
@@ -1894,6 +1898,7 @@ export function initSimulation() {
       fireAvoidanceMasks = [];
       fireAvoidanceIndicesByFloor = [];
       activeFireIndicesByFloor = [];
+      fireDistanceFields = [];
       multiCombinedPotential = null;
       return false;
     }
@@ -1940,6 +1945,12 @@ export function initSimulation() {
       }
       return indices;
     });
+    fireDistanceFields = buildNearestFireDistanceFields(
+      floorStates,
+      gridW,
+      gridH
+    );
+
     const isFireSafeRouteCell = (floor, cx, cy) =>
       isAgentTraversableCell(floor, cx, cy) &&
       !isFireAvoidanceBlocked(fireAvoidanceMasks, floor, cx, cy, gridW);
@@ -1962,7 +1973,18 @@ export function initSimulation() {
           gridH,
           currentFloor,
           isAgentTraversableCell: isFireSafeRouteCell,
-          getLinkedStairDestinations
+          getLinkedStairDestinations,
+          canTraverseEdge: (fromFloor, fromCx, fromCy, toFloor, toCx, toCy) =>
+            !moveApproachesFire(
+              fireDistanceFields,
+              fromFloor,
+              fromCx,
+              fromCy,
+              toFloor,
+              toCx,
+              toCy,
+              gridW
+            )
         }
       );
     });
@@ -3176,6 +3198,36 @@ export function initSimulation() {
         const densityTarget = localDensity(nf, nx, ny);
         const smokeTarget = smokeAt(nf, nx, ny);
         const fireTarget = fireRiskAt(nf, nx, ny);
+        const currentFireDistance = fireDistanceAt(
+          fireDistanceFields,
+          floor,
+          cx,
+          cy,
+          gridW
+        );
+        const nextFireDistance = fireDistanceAt(
+          fireDistanceFields,
+          nf,
+          nx,
+          ny,
+          gridW
+        );
+        const fireApproach = moveApproachesFire(
+          fireDistanceFields,
+          floor,
+          cx,
+          cy,
+          nf,
+          nx,
+          ny,
+          gridW
+        );
+        const fireEscapeGain =
+          nf === floor &&
+          Number.isFinite(currentFireDistance) &&
+          Number.isFinite(nextFireDistance)
+            ? nextFireDistance - currentFireDistance
+            : 0;
         const heatPenalty = Math.min(100, (floorStates[nf].heatmap?.[ny]?.[nx] || 0)) * HEATMAP_PENALTY_WEIGHT;
         const potGain = curPot - nextPot;
         const uphill = Math.max(0, nextPot - curPot);
@@ -3184,22 +3236,30 @@ export function initSimulation() {
           c, nx, ny, nf, occ, densityTarget, smokeTarget, heatPenalty,
           fireHeat: fireTarget.heat,
           fireAvoid: fireTarget.heat > 1e-9,
+          fireApproach,
+          fireEscapeGain,
           routeRiskPenalty: routeRisk.penalty,
           routeVisibilityFactor: routeRisk.visibilityFactor,
           potGain, uphill, isBacktrack
         });
       }
 
-      // Prefer every non-fire-adjacent move before considering a move toward
-      // an active flame. Only relax this when no moving safe option exists.
+      // Never step closer to an active flame. If every physical move would
+      // reduce nearest-fire distance, stay put instead of walking into danger.
       const isStayCandidate = e => e.nf === floor && e.nx === cx && e.ny === cy;
-      const safeMovingOptions = evaluated.filter(e => !e.fireAvoid && !isStayCandidate(e));
+      const nonApproach = evaluated.filter(e => !e.fireApproach);
+      const safeMovingOptions = nonApproach.filter(e => !e.fireAvoid && !isStayCandidate(e));
       let preferredEvaluated;
       if (safeMovingOptions.length) {
-        preferredEvaluated = evaluated.filter(e => !e.fireAvoid);
+        preferredEvaluated = nonApproach.filter(e => !e.fireAvoid);
       } else {
-        const movingOptions = evaluated.filter(e => !isStayCandidate(e));
-        preferredEvaluated = movingOptions.length ? movingOptions : evaluated;
+        const nonApproachMoves = nonApproach.filter(e => !isStayCandidate(e));
+        preferredEvaluated = nonApproachMoves.length
+          ? nonApproach
+          : nonApproach.filter(isStayCandidate);
+      }
+      if (!preferredEvaluated.length) {
+        preferredEvaluated = evaluated.filter(isStayCandidate);
       }
 
       const stuckTime = a.stuckTime || 0;
@@ -3218,7 +3278,7 @@ export function initSimulation() {
       for (const e of evalPool) {
         const {
           c, nx, ny, nf, occ, densityTarget, smokeTarget, heatPenalty,
-          fireHeat, routeRiskPenalty, routeVisibilityFactor, potGain, uphill, isBacktrack
+          fireHeat, fireEscapeGain, routeRiskPenalty, routeVisibilityFactor, potGain, uphill, isBacktrack
         } = e;
         let score = potGain * POTENTIAL_GAIN_WEIGHT;
         score -= uphill * UPHILL_PENALTY_WEIGHT;
@@ -3226,6 +3286,7 @@ export function initSimulation() {
         score -= densityTarget * CONGESTION_PENALTY_WEIGHT;
         score -= smokeTarget * SMOKE_AVOID_WEIGHT;
         score -= fireHeat * FIRE_AVOID_WEIGHT;
+        score += Math.max(0, fireEscapeGain) * 4.0;
         const hazardAvoidance = a.type === "teacher" ? 1.35 : (a.type === "panic" ? 0.72 : 1);
         score -= routeRiskPenalty * hazardAvoidance;
         if (routeVisibilityFactor < 0.35) {
