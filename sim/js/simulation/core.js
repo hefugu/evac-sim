@@ -244,6 +244,63 @@ export function initSimulation() {
   const MAX_SIMULATION_SUBSTEP_SEC = 0.1;
   const PRESET_STORAGE_KEY = "evac_presets_v1";
 
+  // Lightweight rolling profiler. Samples only coarse blocks and publishes a
+  // one-second snapshot to the HUD; no per-tick console output.
+  const perfProfile = {
+    windowStartMs: performance.now(),
+    frames: 0,
+    steps: 0,
+    renderCalls: 0,
+    smokeTicks: 0,
+    fireTicks: 0,
+    frameWorkMs: 0,
+    renderMs: 0,
+    smokeMs: 0,
+    fireMs: 0,
+    agentMs: 0,
+    smokeSubsteps: 0,
+    activeSmokeCells: 0,
+    snapshot: {
+      fps: 0,
+      frameWorkMs: 0,
+      renderMs: 0,
+      smokeMs: 0,
+      fireMs: 0,
+      agentMs: 0,
+      smokeSubsteps: 0,
+      activeSmokeCells: 0,
+      totalGridCells: 0
+    }
+  };
+
+  function updatePerfProfile(nowMs) {
+    const elapsedMs = nowMs - perfProfile.windowStartMs;
+    if (elapsedMs < 1000) return;
+    perfProfile.snapshot = {
+      fps: perfProfile.frames * 1000 / Math.max(1, elapsedMs),
+      frameWorkMs: perfProfile.frameWorkMs / Math.max(1, perfProfile.frames),
+      renderMs: perfProfile.renderMs / Math.max(1, perfProfile.renderCalls),
+      smokeMs: perfProfile.smokeMs / Math.max(1, perfProfile.smokeTicks),
+      fireMs: perfProfile.fireMs / Math.max(1, perfProfile.fireTicks),
+      agentMs: perfProfile.agentMs / Math.max(1, perfProfile.steps),
+      smokeSubsteps: perfProfile.smokeSubsteps / Math.max(1, perfProfile.smokeTicks),
+      activeSmokeCells: perfProfile.activeSmokeCells,
+      totalGridCells: Math.max(0, gridW * gridH * floorCount)
+    };
+    perfProfile.windowStartMs = nowMs;
+    perfProfile.frames = 0;
+    perfProfile.steps = 0;
+    perfProfile.renderCalls = 0;
+    perfProfile.smokeTicks = 0;
+    perfProfile.fireTicks = 0;
+    perfProfile.frameWorkMs = 0;
+    perfProfile.renderMs = 0;
+    perfProfile.smokeMs = 0;
+    perfProfile.fireMs = 0;
+    perfProfile.agentMs = 0;
+    perfProfile.smokeSubsteps = 0;
+  }
+
   let smokeMap = null; 
   let smokeCeil = null; 
   let importedFdsRisk = {
@@ -2360,6 +2417,7 @@ export function initSimulation() {
   }
   // ==== Main Loop ====
   function loop(now) {
+    const frameStartedAt = performance.now();
     simulationAnimationFrameId = null;
     if (!simRunning) return;
     if (!lastFrameTime) lastFrameTime = now;
@@ -2383,6 +2441,10 @@ export function initSimulation() {
     }
     syncPublicState();
     drawScene();
+    const frameEndedAt = performance.now();
+    perfProfile.frames += 1;
+    perfProfile.frameWorkMs += frameEndedAt - frameStartedAt;
+    updatePerfProfile(frameEndedAt);
     scheduleSimulationFrame();
   }
 
@@ -2421,6 +2483,7 @@ export function initSimulation() {
     // === Smoke generation and diffusion (per-floor) ===
     const cellMeters = parseFloat(cellSizeMetersInput.value) || 0.5;
     if (simTime >= nextFireStepAt) {
+      const fireStartedAt = performance.now();
       // Remove the external overlay before growing the fallback t-squared fire.
       // This keeps the saved baseline current; the selected FDS frame is
       // re-applied once all reduced-order hazards have advanced below.
@@ -2442,6 +2505,8 @@ export function initSimulation() {
       }
       lastFireStepAt = simTime;
       nextFireStepAt = simTime + 0.5;
+      perfProfile.fireMs += performance.now() - fireStartedAt;
+      perfProfile.fireTicks += 1;
     }
     const dirs8 = [
       {dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1},
@@ -2463,6 +2528,7 @@ export function initSimulation() {
       smokeAccumulatorSec + 1e-9 >= SMOKE_FIXED_STEP_SEC &&
       smokeWorkThisFrameSec + SMOKE_FIXED_STEP_SEC <= MAX_SMOKE_WORK_PER_FRAME_SEC + 1e-9
     ) {
+      const smokeStartedAt = performance.now();
       const smokeResult = stepLegacySmokePhysicsInPlace(
         floorStates,
         stairLinks,
@@ -2470,9 +2536,16 @@ export function initSimulation() {
         currentSmokeModelOptions(simTime - smokeAccumulatorSec + SMOKE_FIXED_STEP_SEC)
       );
       mergeVerticalSmokeTransferBatch(smokeResult.verticalTransfers);
+      perfProfile.smokeMs += performance.now() - smokeStartedAt;
+      perfProfile.smokeTicks += 1;
+      perfProfile.smokeSubsteps += Math.max(0, Number(smokeResult.substepCount) || 0);
       smokeAccumulatorSec -= SMOKE_FIXED_STEP_SEC;
       smokeWorkThisFrameSec += SMOKE_FIXED_STEP_SEC;
     }
+    perfProfile.activeSmokeCells = floorStates.reduce(
+      (sum, floor) => sum + (floor?.smokePhysics?.activeIndices?.length || 0),
+      0
+    );
     applyCurrentFdsToSharedHazards(simTime);
 
     if (!agents || agents.length === 0) {
@@ -2480,6 +2553,7 @@ export function initSimulation() {
       return;
     }
 
+    const agentStartedAt = performance.now();
     const stairStep = stepStairTraffic(stairTrafficState, stairLinks, agents, dt);
     stairTrafficState = stairStep.trafficState;
     stairCongestion = stairStep.congestion;
@@ -3274,6 +3348,8 @@ export function initSimulation() {
         }
       }
     }
+    perfProfile.agentMs += performance.now() - agentStartedAt;
+    perfProfile.steps += 1;
   }
 
   function analyzeBottlenecks(writeLog = false) {
@@ -3581,6 +3657,7 @@ export function initSimulation() {
   });
 
   function drawScene() {
+    const drawStartedAt = performance.now();
     const layout = worldLayout();
     const scene = {
       layout,
@@ -3616,11 +3693,14 @@ export function initSimulation() {
       potentialExitIndex: Math.max(1, Math.floor(parseNum(potentialExitIndexInput, 1))),
       riskOverlayMode: riskViewModeInput?.value || "none",
       riskOverlay: buildAnalysisOverlay(grid, riskViewModeInput?.value || "none"),
-      fdsStats: importedFdsRisk.stats
+      fdsStats: importedFdsRisk.stats,
+      profiler: perfProfile.snapshot
     };
     state.render.lastScene = scene;
     renderer.render(scene);
     inspectionPanel.refresh();
+    perfProfile.renderMs += performance.now() - drawStartedAt;
+    perfProfile.renderCalls += 1;
   }
 
   document.addEventListener("hazard-display-change", drawScene);
