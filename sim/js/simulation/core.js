@@ -5,6 +5,12 @@ import { bindCoreControls, getUIRefs } from "../ui.js";
 import { state, syncLegacyState } from "../state.js";
 import { createRenderer } from "../renderer.js";
 import { computePotentialFieldFromSeedsModule } from "./potential.js";
+import {
+  buildFireAvoidanceMasks,
+  isFireAvoidanceBlocked,
+  chooseFireSafeExitField,
+  routeChoiceForExit
+} from "./routing.js";
 import { clamp, parseNum} from "../utils/helpers.js";
 import { downloadCsvReport } from "../export/csv.js";
 import {
@@ -203,6 +209,8 @@ export function initSimulation() {
   let allExitPoints = [];   // {floor,cx,cy}
   let allSpawnPoints = [];  // {floor,cx,cy}
   let multiPotentialByExit = []; // [exit][floor][y][x]
+  let multiFireSafePotentialByExit = []; // same shape, but fire danger buffer is impassable
+  let fireAvoidanceMasks = [];
   let multiCombinedPotential = null; // [floor][y][x]
   let stairTrafficState = createStairTrafficState([]);
   let stairCongestion = [];
@@ -1874,15 +1882,45 @@ export function initSimulation() {
       potentialByExit = [];
       combinedPotential = null;
       multiPotentialByExit = [];
+      multiFireSafePotentialByExit = [];
+      fireAvoidanceMasks = [];
       multiCombinedPotential = null;
       return false;
     }
+
     multiPotentialByExit = allExitPoints.map(ex =>
       computePotentialFieldFromSeedsModule(
         [{ floor: ex.floor, cx: ex.cx, cy: ex.cy }],
         { grid, floorStates, floorCount, gridW, gridH, currentFloor, isAgentTraversableCell, getLinkedStairDestinations }
       )
     );
+
+    fireAvoidanceMasks = buildFireAvoidanceMasks(
+      floorStates,
+      gridW,
+      gridH,
+      FIRE_DANGER_RADIUS
+    );
+    const isFireSafeRouteCell = (floor, cx, cy) =>
+      isAgentTraversableCell(floor, cx, cy) &&
+      !isFireAvoidanceBlocked(fireAvoidanceMasks, floor, cx, cy, gridW);
+
+    multiFireSafePotentialByExit = allExitPoints.map(ex =>
+      computePotentialFieldFromSeedsModule(
+        [{ floor: ex.floor, cx: ex.cx, cy: ex.cy }],
+        {
+          grid,
+          floorStates,
+          floorCount,
+          gridW,
+          gridH,
+          currentFloor,
+          isAgentTraversableCell: isFireSafeRouteCell,
+          getLinkedStairDestinations
+        }
+      )
+    );
+
     multiCombinedPotential = new Array(floorCount).fill(null).map(() =>
       new Array(gridH).fill(null).map(() => new Array(gridW).fill(Infinity))
     );
@@ -1907,31 +1945,19 @@ export function initSimulation() {
     return true;
   }
 
-  function estimateExitCost(exitIndex, floor, cx, cy, exitLoad) {
-    const field = multiPotentialByExit[exitIndex];
-    if (!field) return Infinity;
-    const dist = field[floor]?.[cy]?.[cx];
-    if (!isFinite(dist)) return Infinity;
-    // TODO: combine static distance with dynamic congestion/load penalties.
-    return dist;
-  }
-
   function chooseExitForAgent(agent, exitLoad = []) {
-    if (!multiPotentialByExit.length) return { idx: -1, field: null };
-    let bestIdx = -1;
-    let bestScore = Infinity;
-    for (let i = 0; i < multiPotentialByExit.length; i++) {
-      const score = estimateExitCost(i, agent.floor, agent.cx, agent.cy, exitLoad);
-      if (score < bestScore) {
-        bestScore = score;
-        bestIdx = i;
-      }
+    if (!multiPotentialByExit.length) {
+      return { idx: -1, field: null, score: Infinity, usesFireFallback: true };
     }
-    return {
-      idx: bestIdx,
-      field: bestIdx >= 0 ? multiPotentialByExit[bestIdx] : multiCombinedPotential,
-      score: bestScore
-    };
+    // Safety is lexicographic here: any route that stays outside the active
+    // fire danger buffer beats every route that enters it, even if longer.
+    return chooseFireSafeExitField(
+      multiFireSafePotentialByExit,
+      multiPotentialByExit,
+      agent.floor,
+      agent.cx,
+      agent.cy
+    );
   }
 
   function resetFireScenarioState() {
@@ -2104,6 +2130,7 @@ export function initSimulation() {
         targetExit: exitChoice.idx,
         targetStair: null,
         potentialField: exitChoice.field,
+        routeUsesFireFallback: !!exitChoice.usesFireFallback,
         prevCell: null,
         moveDir: null,
         stuckTime: 0,
@@ -2502,6 +2529,10 @@ export function initSimulation() {
       totalFireHrrKw = fireResult.totalHrrKw;
       if (applied.ignitedCells.length) {
         log(`火災延焼: ${applied.ignitedCells.length}セル / active=${activeFireCount}`);
+        // Fire spread changes both ordinary traversability and the wider
+        // fire-avoidance buffer. Rebuild routes only when topology actually changes.
+        rebuildPotentialCache();
+        nextRouteReplanAt = simTime;
       }
       lastFireStepAt = simTime;
       nextFireStepAt = simTime + 0.5;
@@ -2761,10 +2792,17 @@ export function initSimulation() {
         a.cx = cx;
         a.cy = cy;
         const choice = chooseExitForAgent(a, exitLoad);
-        const curScore =
+        const currentChoice =
           (Number.isInteger(a.targetExitIndex) && a.targetExitIndex >= 0 && a.targetExitIndex < allExitPoints.length)
-            ? estimateExitCost(a.targetExitIndex, f, cx, cy, exitLoad)
-            : Infinity;
+            ? routeChoiceForExit(
+                a.targetExitIndex,
+                multiFireSafePotentialByExit,
+                multiPotentialByExit,
+                f,
+                cx,
+                cy
+              )
+            : { idx: -1, field: null, score: Infinity, usesFireFallback: true };
         const localRouteRisk = routeRiskAt(f, cx, cy);
         const switchMargin = a.type === "teacher"
           ? 0.5
@@ -2772,15 +2810,25 @@ export function initSimulation() {
         const panicMaySwitch = a.type !== "panic" ||
           localRouteRisk.penalty >= HIGH_SMOKE_BLOCK_SCORE * 0.35 ||
           (a.stuckTime || 0) >= STUCK_UPHILL_RELEASE_SEC;
+        const safetyUpgrade =
+          choice.idx >= 0 &&
+          !choice.usesFireFallback &&
+          currentChoice.usesFireFallback;
         const shouldSwitch =
           (choice.idx >= 0) &&
           (choice.idx !== a.targetExitIndex) &&
           panicMaySwitch &&
-          (choice.score + switchMargin < curScore);
-        if (shouldSwitch) {
+          (safetyUpgrade || choice.score + switchMargin < currentChoice.score);
+
+        if (choice.idx === a.targetExitIndex && choice.field) {
+          // Refresh the field after fire spread even when the chosen exit stays the same.
+          a.potentialField = choice.field;
+          a.routeUsesFireFallback = !!choice.usesFireFallback;
+        } else if (shouldSwitch) {
           a.targetExitIndex = choice.idx;
           a.targetExit = choice.idx;
           a.potentialField = choice.field;
+          a.routeUsesFireFallback = !!choice.usesFireFallback;
         }
       });
       nextRouteReplanAt = simTime + 1.5;
