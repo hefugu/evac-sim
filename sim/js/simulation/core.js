@@ -2489,18 +2489,35 @@ export function initSimulation() {
       Object.assign(current, nextAgent);
     });
 
+    // Hazards are frozen for the remainder of this 0.1 s step. Cache repeated
+    // cell lookups because every agent evaluates several neighboring cells.
+    const smokeMetricsCache = new Map();
+    function smokeMetricsAt(floor, x, y) {
+      if (!floorInBounds(floor) || !inBounds(x, y)) return null;
+      const key = `${floor}:${x}:${y}`;
+      if (smokeMetricsCache.has(key)) return smokeMetricsCache.get(key);
+      const value = reducedSmokeMetricsAt(floor, x, y);
+      smokeMetricsCache.set(key, value);
+      return value;
+    }
     const smokeAt = (floor, x, y) =>
-      (floorInBounds(floor) && inBounds(x, y))
-        ? reducedSmokeMetricsAt(floor, x, y).eyeLevelSmokeDensity
-        : 0;
+      smokeMetricsAt(floor, x, y)?.eyeLevelSmokeDensity || 0;
 
+    const fireRiskCache = new Map();
     function fireRiskAt(floor, cx, cy) {
+      const key = `${floor}:${cx}:${cy}`;
+      if (fireRiskCache.has(key)) return fireRiskCache.get(key);
+
       let heat = 0;
       let heatFluxKwM2 = 0;
       let temperatureC = 20;
       let lethal = false;
       const fGrid = floorStates[floor]?.grid;
-      if (!fGrid) return { heat, heatFluxKwM2, temperatureC, lethal };
+      if (!fGrid) {
+        const empty = { heat, heatFluxKwM2, temperatureC, lethal };
+        fireRiskCache.set(key, empty);
+        return empty;
+      }
       const r = Math.ceil(FIRE_DANGER_RADIUS);
       for (let dy = -r; dy <= r; dy++) {
         for (let dx = -r; dx <= r; dx++) {
@@ -2526,11 +2543,19 @@ export function initSimulation() {
           }
         }
       }
-      return { heat, heatFluxKwM2, temperatureC, lethal };
+      const value = { heat, heatFluxKwM2, temperatureC, lethal };
+      fireRiskCache.set(key, value);
+      return value;
     }
 
     function fallbackEngineeringRisk(floor, cx, cy) {
-      const smoke = reducedSmokeMetricsAt(floor, cx, cy);
+      const smoke = smokeMetricsAt(floor, cx, cy) || {
+        extinctionCoefficientM1: 0,
+        coPpm: 0,
+        visibilityM: 30,
+        temperatureC: 20,
+        source: "none"
+      };
       const fire = fireRiskAt(floor, cx, cy);
       const hrrScale = Math.min(1, t2FireHrrKw(simTime) / Math.max(1, T2_FIRE_MAX_HRR_KW));
       const heatFluxKwM2 = Math.max(
@@ -2548,10 +2573,15 @@ export function initSimulation() {
       };
     }
 
+    const engineeringRiskCache = new Map();
     function engineeringRiskAt(floor, cx, cy) {
+      const key = `${floor}:${cx}:${cy}`;
+      if (engineeringRiskCache.has(key)) return engineeringRiskCache.get(key);
       const fallback = fallbackEngineeringRisk(floor, cx, cy);
       const fds = getFdsRiskAt(floor, cx, cy, simTime);
-      return mergeFdsRiskRecord(fallback, fds);
+      const value = mergeFdsRiskRecord(fallback, fds);
+      engineeringRiskCache.set(key, value);
+      return value;
     }
 
     function routeRiskAt(floor, cx, cy) {
@@ -2963,24 +2993,37 @@ export function initSimulation() {
         evaluated.push({
           c, nx, ny, nf, occ, densityTarget, smokeTarget, heatPenalty,
           fireHeat: fireTarget.heat,
+          fireAvoid: fireTarget.heat > 1e-9,
           routeRiskPenalty: routeRisk.penalty,
           routeVisibilityFactor: routeRisk.visibilityFactor,
           potGain, uphill, isBacktrack
         });
       }
 
+      // Prefer every non-fire-adjacent move before considering a move toward
+      // an active flame. Only relax this when no moving safe option exists.
+      const isStayCandidate = e => e.nf === floor && e.nx === cx && e.ny === cy;
+      const safeMovingOptions = evaluated.filter(e => !e.fireAvoid && !isStayCandidate(e));
+      let preferredEvaluated;
+      if (safeMovingOptions.length) {
+        preferredEvaluated = evaluated.filter(e => !e.fireAvoid);
+      } else {
+        const movingOptions = evaluated.filter(e => !isStayCandidate(e));
+        preferredEvaluated = movingOptions.length ? movingOptions : evaluated;
+      }
+
       const stuckTime = a.stuckTime || 0;
       const strictBacktrack = stuckTime < STUCK_BACKTRACK_RELEASE_SEC;
       const strictUphill = stuckTime < STUCK_UPHILL_RELEASE_SEC;
-      const hasForwardMove = evaluated.some(e => e.potGain > 0.04);
-      const hasNonBacktrackOption = evaluated.some(e => !e.isBacktrack);
+      const hasForwardMove = preferredEvaluated.some(e => e.potGain > 0.04);
+      const hasNonBacktrackOption = preferredEvaluated.some(e => !e.isBacktrack);
 
-      let evalPool = evaluated.filter(e => {
+      let evalPool = preferredEvaluated.filter(e => {
         if (strictBacktrack && e.isBacktrack && hasNonBacktrackOption) return false;
         if (strictUphill && e.uphill > 0.06 && hasForwardMove) return false;
         return true;
       });
-      if (evalPool.length === 0) evalPool = evaluated;
+      if (evalPool.length === 0) evalPool = preferredEvaluated;
 
       for (const e of evalPool) {
         const {
