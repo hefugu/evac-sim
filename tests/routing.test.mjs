@@ -137,3 +137,19 @@ test("exit inside fire buffer remains unsafe instead of becoming safe through ex
   assert.equal(choice.idx, 1);
   assert.equal(choice.usesFireFallback, false);
 });
+
+
+test("nearest-fire distance marks moves toward fire as unsafe", () => {
+  const grid = [[
+    { fire: false },
+    { fire: false },
+    { fire: false },
+    { fire: true }
+  ]];
+  const fields = buildNearestFireDistanceFields([{ grid }], 4, 1);
+
+  assert.equal(fireDistanceAt(fields, 0, 3, 0, 4), 0);
+  assert.ok(fireDistanceAt(fields, 0, 0, 0, 4) > fireDistanceAt(fields, 0, 1, 0, 4));
+  assert.equal(moveApproachesFire(fields, 0, 0, 0, 0, 1, 0, 4), true);
+  assert.equal(moveApproachesFire(fields, 0, 1, 0, 0, 0, 0, 4), false);
+});
