@@ -7,6 +7,7 @@ import "./renderer-modes.test.mjs";
 import "./hazard-display.test.mjs";
 import "./renderer-2d.test.mjs";
 import assert from "node:assert/strict";
+import { estimateExitRoutingCost } from "../sim/js/simulation/potential.js";
 
 import {
   createFloor3D,
@@ -68,6 +69,17 @@ function assertNearlyEqual(actual, expected, tolerance = 1e-12) {
     `expected ${actual} to be within ${tolerance} of ${expected}`
   );
 }
+
+test("exit routing cost includes assigned-exit load without corrupting distance", () => {
+  assert.equal(estimateExitRoutingCost(12, 0), 12);
+  assert.equal(estimateExitRoutingCost(12, -5), 12);
+  assert.equal(estimateExitRoutingCost(Infinity, 10), Infinity);
+  assert.ok(estimateExitRoutingCost(12, 10) > estimateExitRoutingCost(15, 0));
+  assert.equal(
+    estimateExitRoutingCost(12, 10, { loadPenaltyPerAgent: 0.2 }),
+    14
+  );
+});
 
 test("2.5D floor schema and exact grid-to-world conversion", () => {
   const floor = createFloor3D({
