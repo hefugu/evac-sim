@@ -34,3 +34,36 @@ test("potential field cannot cut diagonally through blocked corners", () => {
 
   assert.equal(potential[0][1][1], Infinity);
 });
+
+
+test("potential field can reject forward moves that approach fire", () => {
+  const grid = [[cell(true), cell(true), cell(true)]];
+  const floorStates = [{ grid }];
+  const ctx = {
+    grid,
+    floorStates,
+    floorCount: 1,
+    gridW: 3,
+    gridH: 1,
+    currentFloor: 0,
+    isAgentTraversableCell(floor, cx, cy) {
+      return !!floorStates[floor]?.grid?.[cy]?.[cx]?.walkable;
+    },
+    getLinkedStairDestinations() {
+      return [];
+    },
+    // Forward moves to the right are "toward fire" and therefore forbidden.
+    canTraverseEdge(_fromFloor, fromCx, _fromCy, _toFloor, toCx) {
+      return toCx <= fromCx;
+    }
+  };
+
+  const potential = computePotentialFieldFromSeedsModule(
+    [{ floor: 0, cx: 2, cy: 0 }],
+    ctx
+  );
+
+  assert.equal(potential[0][0][2], 0);
+  assert.equal(potential[0][0][1], Infinity);
+  assert.equal(potential[0][0][0], Infinity);
+});
