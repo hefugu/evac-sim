@@ -6,6 +6,7 @@ import "./corridor-smoke.test.mjs";
 import "./renderer-modes.test.mjs";
 import "./hazard-display.test.mjs";
 import "./renderer-2d.test.mjs";
+import "./routing.test.mjs";
 import assert from "node:assert/strict";
 
 import {
