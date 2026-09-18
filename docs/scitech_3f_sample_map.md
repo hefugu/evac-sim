@@ -24,7 +24,7 @@
 
 ## 使い方
 
-1. ` python -m uvicorn main:app --reload` で起動する。
+1. リポジトリのルートで `python -m uvicorn server.main:app --reload` を実行して起動する。
 2. `http://localhost:8000/sim/` を開く。
 3. 左パネルの `3Fサンプル読込` を押す。
 4. 3Fが選ばれ、緑の階段候補が水色で表示されることを確認する。
