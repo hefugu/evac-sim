@@ -64,8 +64,10 @@ const DEFAULT_OPTIONS = Object.freeze({
   maxFps: 30,
   legacyExtinctionPerSmokeDensity: 0.32,
   smokeVisualizationMode: "extinction",
-  smokeDisplayMode: "physical",
-  smokeAnalysisGamma: 0.55,
+  // Display-only visibility boost for low but non-zero smoke. The underlying
+  // extinction/layer state remains physical and inspectable.
+  smokeDisplayMode: "analysis",
+  smokeAnalysisGamma: 0.35,
   fireVisualizationMode: "intensity",
   dataSourceOverlay: "none",
   clickDragThresholdPixels: 5,
