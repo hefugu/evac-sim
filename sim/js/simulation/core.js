@@ -2817,8 +2817,10 @@ export function initSimulation() {
         const shouldSwitch =
           (choice.idx >= 0) &&
           (choice.idx !== a.targetExitIndex) &&
-          panicMaySwitch &&
-          (safetyUpgrade || choice.score + switchMargin < currentChoice.score);
+          (
+            safetyUpgrade ||
+            (panicMaySwitch && choice.score + switchMargin < currentChoice.score)
+          );
 
         if (choice.idx === a.targetExitIndex && choice.field) {
           // Refresh the field after fire spread even when the chosen exit stays the same.
