@@ -30,6 +30,7 @@ export function init3DView() {
       cellSizeMeters: state.spatial.cellSizeMeters,
       floorHeightMeters: state.spatial.floorHeightMeters,
       wallHeightMeters: state.spatial.wallHeightMeters,
+      maxFps: 20,
       geometryVersion: () => state.render.geometryRevision || 0
     }
   });
