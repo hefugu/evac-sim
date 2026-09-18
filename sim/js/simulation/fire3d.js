@@ -299,6 +299,228 @@ export function stepFire3D(floorsInput, dtSeconds, options = {}) {
   return { floors: nextFloors, ignited, activeFireCount, totalHrrKw, timeSec };
 }
 
+/**
+ * Fast in-place fire step for the live simulator.
+ *
+ * Unlike stepFire3D(), this keeps the legacy floor/grid identities and touches
+ * only known active fire cells plus their immediate spread candidates. The
+ * immutable/snapshot stepFire3D path remains available for isolated tests and
+ * callers that need fresh floor objects.
+ */
+export function stepLegacyFireSpreadInPlace(
+  floors,
+  dtSeconds,
+  options = {}
+) {
+  if (!Array.isArray(floors)) {
+    return {
+      activeFireCount: 0,
+      totalHrrKw: 0,
+      updatedCells: [],
+      ignitedCells: [],
+      activeIndicesByFloor: []
+    };
+  }
+
+  const config = normalizedOptions(options);
+  const dt = Math.max(0, finiteNumber(dtSeconds, 0));
+  const timeSec = Math.max(0, finiteNumber(options.timeSec, dt));
+  const random = typeof options.random === "function" ? options.random : Math.random;
+  const suppliedActive = Array.isArray(options.activeIndicesByFloor)
+    ? options.activeIndicesByFloor
+    : null;
+
+  const activeIndicesByFloor = floors.map((floor, floorArrayIndex) => {
+    const grid = floor?.grid;
+    if (!Array.isArray(grid) || !grid.length) return [];
+
+    const supplied = suppliedActive?.[floorArrayIndex];
+    if (Array.isArray(supplied)) {
+      return supplied.filter(index => {
+        const width = grid[0]?.length || 0;
+        if (!width) return false;
+        const cy = Math.floor(index / width);
+        const cx = index % width;
+        return !!grid?.[cy]?.[cx]?.fire;
+      });
+    }
+
+    const width = grid[0]?.length || 0;
+    const active = [];
+    for (let cy = 0; cy < grid.length; cy++) {
+      for (let cx = 0; cx < (grid[cy]?.length || 0); cx++) {
+        if (grid[cy][cx]?.fire) active.push(cy * width + cx);
+      }
+    }
+    return active;
+  });
+
+  const updatedCells = [];
+  const ignitionHazard = new Map();
+  const directions = [
+    [-1, -1], [0, -1], [1, -1],
+    [-1, 0],             [1, 0],
+    [-1, 1],  [0, 1],   [1, 1]
+  ];
+
+  const addHazard = (floorIndex, cx, cy, value, source) => {
+    if (!(value > 0)) return;
+    const key = `${floorIndex}:${cx}:${cy}`;
+    const current = ignitionHazard.get(key) || { hazard: 0, sources: [] };
+    current.hazard += value;
+    current.sources.push(source);
+    ignitionHazard.set(key, current);
+  };
+
+  let activeFireCount = 0;
+  let totalHrrKw = 0;
+
+  floors.forEach((floor, floorArrayIndex) => {
+    const grid = floor?.grid;
+    if (!Array.isArray(grid) || !grid.length) return;
+    const width = grid[0]?.length || 0;
+    const floorIndex = Math.floor(finiteNumber(
+      floor.floorIndex ?? floor.floor,
+      floorArrayIndex
+    ));
+
+    for (const index of activeIndicesByFloor[floorArrayIndex]) {
+      const cy = Math.floor(index / width);
+      const cx = index % width;
+      const cell = grid?.[cy]?.[cx];
+      if (!cell?.fire) continue;
+
+      const age = Math.max(0, finiteNumber(cell.fireAgeSec, 0)) + dt;
+      const hrrKw = tSquaredFireHrrKw(age, config);
+      const intensity = clamp(Math.max(
+        finiteNumber(cell.fireIntensity, config.initialIntensity),
+        hrrKw / config.maxHrrKw
+      ), 0, 1);
+      const metrics = applyFdsFireRecord(
+        deriveFireMetrics(intensity, config),
+        fdsRecordAt(config, floorIndex, cx, cy, timeSec)
+      );
+
+      Object.assign(cell, metrics, {
+        fire: true,
+        fireAgeSec: age,
+        ignitionTime: cell.ignitionTime ?? Math.max(0, timeSec - age),
+        hrrKw,
+        heat: metrics.heatFluxKwM2,
+        fireDataSource: metrics.source
+      });
+
+      activeFireCount += 1;
+      totalHrrKw += hrrKw;
+      updatedCells.push({ floorIndex, cx, cy, fire: true });
+
+      for (const [dx, dy] of directions) {
+        const nx = cx + dx;
+        const ny = cy + dy;
+        const target = grid?.[ny]?.[nx];
+        const factor = spreadFactor(cell, target, dx, dy, config);
+        addHazard(
+          floorIndex,
+          nx,
+          ny,
+          config.spreadRatePerSec * cell.fireIntensity * factor * dt,
+          { floorIndex, cx, cy }
+        );
+      }
+    }
+  });
+
+  // Preserve the existing lightweight vertical ignition behavior.
+  (Array.isArray(options.stairLinks) ? options.stairLinks : []).forEach(raw => {
+    const link = normalizeStairLink(raw);
+    for (const [from, to] of [[link.from, link.to], [link.to, link.from]]) {
+      const fromFloor = getFloorByIndex(floors, from.floorIndex);
+      const toFloor = getFloorByIndex(floors, to.floorIndex);
+      const source = fromFloor?.grid?.[from.cy]?.[from.cx];
+      const target = toFloor?.grid?.[to.cy]?.[to.cx];
+      if (!fromFloor || !toFloor || !source?.fire || !target ||
+          target.fire || target.wall || target.flammable === false) continue;
+
+      const upward = finiteNumber(toFloor.elevationMeters, to.floorIndex * 3.5) >
+        finiteNumber(fromFloor.elevationMeters, from.floorIndex * 3.5);
+      const directionFactor = upward ? 1 : 0.3;
+      addHazard(
+        to.floorIndex,
+        to.cx,
+        to.cy,
+        config.spreadRatePerSec * source.fireIntensity *
+          config.verticalSpreadFactor * directionFactor * dt,
+        {
+          floorIndex: from.floorIndex,
+          cx: from.cx,
+          cy: from.cy,
+          stairId: link.id
+        }
+      );
+    }
+  });
+
+  const ignitedCells = [];
+  for (const [key, record] of ignitionHazard.entries()) {
+    const [floorIndex, cx, cy] = key.split(":").map(Number);
+    const probability = 1 - Math.exp(-record.hazard);
+    if (random() >= probability) continue;
+
+    const floorArrayIndex = floors.findIndex((floor, arrayIndex) =>
+      Math.floor(finiteNumber(
+        floor?.floorIndex ?? floor?.floor,
+        arrayIndex
+      )) === floorIndex
+    );
+    if (floorArrayIndex < 0) continue;
+
+    const floor = floors[floorArrayIndex];
+    const target = floor?.grid?.[cy]?.[cx];
+    if (!target || target.fire) continue;
+
+    const metrics = deriveFireMetrics(config.initialIntensity, config);
+    Object.assign(target, metrics, {
+      fire: true,
+      fireAgeSec: 0,
+      hrrKw: 0,
+      fireSource: "spread",
+      ignitionTime: timeSec,
+      spreadSourceCell: record.sources[0]
+        ? { ...record.sources[0] }
+        : null,
+      heat: metrics.heatFluxKwM2,
+      fireDataSource: metrics.source
+    });
+
+    const width = floor.grid?.[0]?.length || 0;
+    if (width) {
+      const index = cy * width + cx;
+      if (!activeIndicesByFloor[floorArrayIndex].includes(index)) {
+        activeIndicesByFloor[floorArrayIndex].push(index);
+      }
+    }
+
+    activeFireCount += 1;
+    ignitedCells.push({
+      floorIndex,
+      cx,
+      cy,
+      probability,
+      sources: record.sources
+    });
+    updatedCells.push({ floorIndex, cx, cy, fire: true });
+  }
+
+  return {
+    activeFireCount,
+    totalHrrKw,
+    updatedCells,
+    ignitedCells,
+    activeIndicesByFloor,
+    timeSec
+  };
+}
+
 /** Local radial risk helper for routing and rendering. */
 export function fireRiskAt3D(floors, endpoint = {}, options = {}) {
   const floorIndex = Math.floor(finiteNumber(endpoint.floorIndex ?? endpoint.floor, 0));
