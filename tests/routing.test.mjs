@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   buildFireAvoidanceMasks,
   isFireAvoidanceBlocked,
+  extendPotentialIntoFireAvoidanceZone,
   chooseFireSafeExitField,
   routeChoiceForExit
 } from "../sim/js/simulation/routing.js";
@@ -83,4 +84,56 @@ test("route choice for one exit refreshes between safe and fallback fields", () 
   const fallback = routeChoiceForExit(0, safeFields, fallbackFields, 0, 0, 0);
   assert.equal(fallback.score, 4);
   assert.equal(fallback.usesFireFallback, true);
+});
+
+test("agent already inside fire buffer can still escape toward a safe exit", () => {
+  const width = 7;
+  const height = 1;
+  const grid = [Array.from({ length: width }, () => ({
+    walkable: true,
+    wall: false,
+    fire: false
+  }))];
+  grid[0][4].fire = true;
+  grid[0][4].walkable = false;
+
+  const floors = [{ grid }];
+  const masks = buildFireAvoidanceMasks(floors, width, height, 2);
+  const traversable = (floor, cx, cy) =>
+    !!floors[floor]?.grid?.[cy]?.[cx]?.walkable &&
+    !floors[floor]?.grid?.[cy]?.[cx]?.fire;
+
+  // Exit at x=0 is safe. Its hard-safe field stops at the buffer edge x=2.
+  const safeField = [[[
+    0, 1, 2, Infinity, Infinity, Infinity, Infinity
+  ]]];
+  const extended = extendPotentialIntoFireAvoidanceZone(
+    safeField,
+    floors,
+    masks,
+    width,
+    height,
+    traversable,
+    50
+  );
+
+  // x=3 is inside the fire buffer, but receives an escape gradient back to x=2.
+  assert.ok(Number.isFinite(extended[0][0][3]));
+  assert.ok(extended[0][0][3] > extended[0][0][2]);
+});
+
+test("exit inside fire buffer remains unsafe instead of becoming safe through extension", () => {
+  const safeFields = [fieldAt(Infinity), fieldAt(15)];
+  const fallbackFields = [fieldAt(2), fieldAt(15)];
+
+  const choice = chooseFireSafeExitField(
+    safeFields,
+    fallbackFields,
+    0,
+    0,
+    0
+  );
+
+  assert.equal(choice.idx, 1);
+  assert.equal(choice.usesFireFallback, false);
 });
