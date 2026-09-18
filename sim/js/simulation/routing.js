@@ -48,6 +48,87 @@ export function isFireAvoidanceBlocked(masks, floor, cx, cy, gridWidth) {
   return !!masks?.[floor]?.[index];
 }
 
+export function buildNearestFireDistanceFields(
+  floorStates,
+  gridWidth,
+  gridHeight
+) {
+  const width = Math.max(0, Math.floor(Number(gridWidth) || 0));
+  const height = Math.max(0, Math.floor(Number(gridHeight) || 0));
+  const floors = Array.isArray(floorStates) ? floorStates : [];
+  const diagonal = Math.SQRT2;
+
+  return floors.map(floor => {
+    const distance = new Float32Array(width * height);
+    distance.fill(Infinity);
+    const grid = floor?.grid;
+    if (!Array.isArray(grid) || width === 0 || height === 0) return distance;
+
+    for (let cy = 0; cy < height; cy++) {
+      for (let cx = 0; cx < width; cx++) {
+        if (grid?.[cy]?.[cx]?.fire) distance[cy * width + cx] = 0;
+      }
+    }
+
+    // Two-pass 8-neighbour distance transform. It is O(grid cells), which is
+    // cheap enough to rebuild whenever fire topology changes and avoids
+    // per-agent scans over every active flame.
+    for (let cy = 0; cy < height; cy++) {
+      for (let cx = 0; cx < width; cx++) {
+        const index = cy * width + cx;
+        let best = distance[index];
+        if (cx > 0) best = Math.min(best, distance[index - 1] + 1);
+        if (cy > 0) best = Math.min(best, distance[index - width] + 1);
+        if (cx > 0 && cy > 0) best = Math.min(best, distance[index - width - 1] + diagonal);
+        if (cx + 1 < width && cy > 0) best = Math.min(best, distance[index - width + 1] + diagonal);
+        distance[index] = best;
+      }
+    }
+
+    for (let cy = height - 1; cy >= 0; cy--) {
+      for (let cx = width - 1; cx >= 0; cx--) {
+        const index = cy * width + cx;
+        let best = distance[index];
+        if (cx + 1 < width) best = Math.min(best, distance[index + 1] + 1);
+        if (cy + 1 < height) best = Math.min(best, distance[index + width] + 1);
+        if (cx + 1 < width && cy + 1 < height) best = Math.min(best, distance[index + width + 1] + diagonal);
+        if (cx > 0 && cy + 1 < height) best = Math.min(best, distance[index + width - 1] + diagonal);
+        distance[index] = best;
+      }
+    }
+
+    return distance;
+  });
+}
+
+export function fireDistanceAt(fields, floor, cx, cy, gridWidth) {
+  const width = Math.max(0, Math.floor(Number(gridWidth) || 0));
+  if (!width) return Infinity;
+  const x = Math.floor(Number(cx));
+  const y = Math.floor(Number(cy));
+  if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0) return Infinity;
+  const value = fields?.[floor]?.[y * width + x];
+  return Number.isFinite(value) ? value : Infinity;
+}
+
+export function moveApproachesFire(
+  fields,
+  fromFloor,
+  fromCx,
+  fromCy,
+  toFloor,
+  toCx,
+  toCy,
+  gridWidth,
+  toleranceCells = 0.05
+) {
+  if (fromFloor !== toFloor) return false;
+  const from = fireDistanceAt(fields, fromFloor, fromCx, fromCy, gridWidth);
+  const to = fireDistanceAt(fields, toFloor, toCx, toCy, gridWidth);
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return false;
+  return to + Math.max(0, Number(toleranceCells) || 0) < from;
+}
+
 /**
  * Extend an already-safe potential field only into the fire-avoidance zone.
  * This gives agents who are already inside the buffer a gradient back out
