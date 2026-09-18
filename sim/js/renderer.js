@@ -582,7 +582,8 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
     ctx.clearRect(0, 0, rect.width, rect.height);
     const canContinue = drawGrid(scene);
     if (!canContinue || !scene.grid) return;
-    drawFireAvoidanceMask(scene);
+    // Fire-avoidance mask is retained as a debug helper but is not painted
+    // during normal simulation; thousands of translucent cell fills are costly.
     drawSmoke(scene);
     drawRiskOverlay(scene);
     drawFireAndSources(scene);
