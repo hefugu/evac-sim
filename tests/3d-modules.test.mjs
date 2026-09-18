@@ -7,7 +7,11 @@ import "./renderer-modes.test.mjs";
 import "./hazard-display.test.mjs";
 import "./renderer-2d.test.mjs";
 import assert from "node:assert/strict";
-import { estimateExitRoutingCost } from "../sim/js/simulation/potential.js";
+import {
+  computePotentialFieldFromSeedsModule,
+  estimateExitRoutingCost,
+  canTraverseGridStep
+} from "../sim/js/simulation/potential.js";
 
 import {
   createFloor3D,
@@ -79,6 +83,41 @@ test("exit routing cost includes assigned-exit load without corrupting distance"
     estimateExitRoutingCost(12, 10, { loadPenaltyPerAgent: 0.2 }),
     14
   );
+});
+
+test("grid routing rejects diagonal corner cutting", () => {
+  const grid = [
+    [{ walkable: true }, { walkable: false }],
+    [{ walkable: false }, { walkable: true }]
+  ];
+  const floorStates = [{ grid }];
+  const traversable = (floor, cx, cy) =>
+    floor === 0 && cx >= 0 && cy >= 0 && cx < 2 && cy < 2 &&
+    !!grid[cy][cx].walkable;
+
+  assert.equal(canTraverseGridStep(0, 0, 0, 1, 1, traversable), false);
+
+  const field = computePotentialFieldFromSeedsModule(
+    [{ floor: 0, cx: 1, cy: 1 }],
+    {
+      grid,
+      floorStates,
+      floorCount: 1,
+      gridW: 2,
+      gridH: 2,
+      currentFloor: 0,
+      isAgentTraversableCell: traversable,
+      getLinkedStairDestinations: () => []
+    }
+  );
+  assert.equal(field[0][0][0], Infinity);
+});
+
+test("grid routing permits a diagonal only when both side cells are clear", () => {
+  const open = () => true;
+  assert.equal(canTraverseGridStep(0, 0, 0, 1, 1, open), true);
+  const oneSideBlocked = (_floor, cx, cy) => !(cx === 1 && cy === 0);
+  assert.equal(canTraverseGridStep(0, 0, 0, 1, 1, oneSideBlocked), false);
 });
 
 test("2.5D floor schema and exact grid-to-world conversion", () => {
