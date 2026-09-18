@@ -40,6 +40,95 @@ function drawArrow(ctx, px, py, vx, vy, color, width = 0.35) {
 }
 
 export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
+  let staticLayer = null;
+  let staticLayerKey = "";
+
+  function createLayerCanvas(width, height) {
+    if (typeof OffscreenCanvas !== "undefined") {
+      return new OffscreenCanvas(width, height);
+    }
+    if (typeof document !== "undefined" && document.createElement) {
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      return canvas;
+    }
+    return null;
+  }
+
+  function drawStaticBase(scene) {
+    const { baseImage, grid, gridW, gridH, currentFloor, geometryRevision = 0 } = scene;
+    if (!baseImage) return false;
+    const rect = cvs.getBoundingClientRect();
+    const dpr = (typeof window !== "undefined" && window.devicePixelRatio) || 1;
+    const key = [
+      geometryRevision,
+      currentFloor,
+      Math.round(rect.width * 10),
+      Math.round(rect.height * 10),
+      Math.round(scene.layout.scale * 10000),
+      Math.round(scene.layout.ox * 10),
+      Math.round(scene.layout.oy * 10),
+      baseImage.width || 0,
+      baseImage.height || 0
+    ].join(":");
+
+    if (!staticLayer || staticLayerKey !== key) {
+      const layer = createLayerCanvas(
+        Math.max(1, Math.round(rect.width * dpr)),
+        Math.max(1, Math.round(rect.height * dpr))
+      );
+      const layerCtx = layer?.getContext?.("2d");
+      if (!layer || !layerCtx) return false;
+
+      layerCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      layerCtx.clearRect(0, 0, rect.width, rect.height);
+      const { scale, ox, oy } = scene.layout;
+      layerCtx.drawImage(baseImage, ox, oy, baseImage.width * scale, baseImage.height * scale);
+
+      if (grid) {
+        layerCtx.save();
+        layerCtx.translate(ox, oy);
+        layerCtx.scale(scale, scale);
+
+        layerCtx.strokeStyle = "rgba(80,0,40,0.25)";
+        layerCtx.lineWidth = 0.2;
+        for (let y = 0; y <= gridH; y++) {
+          layerCtx.beginPath();
+          layerCtx.moveTo(0, y * cellSizePx);
+          layerCtx.lineTo(gridW * cellSizePx, y * cellSizePx);
+          layerCtx.stroke();
+        }
+        for (let x = 0; x <= gridW; x++) {
+          layerCtx.beginPath();
+          layerCtx.moveTo(x * cellSizePx, 0);
+          layerCtx.lineTo(x * cellSizePx, gridH * cellSizePx);
+          layerCtx.stroke();
+        }
+
+        layerCtx.fillStyle = "rgba(80,220,255,0.42)";
+        for (let y = 0; y < gridH; y++) {
+          for (let x = 0; x < gridW; x++) {
+            if (grid[y][x].stair) {
+              layerCtx.fillRect(x * cellSizePx, y * cellSizePx, cellSizePx, cellSizePx);
+            }
+          }
+        }
+        layerCtx.restore();
+      }
+
+      staticLayer = layer;
+      staticLayerKey = key;
+    }
+
+    ctx.drawImage(
+      staticLayer,
+      0, 0, staticLayer.width, staticLayer.height,
+      0, 0, rect.width, rect.height
+    );
+    return true;
+  }
+
   function drawGrid(scene) {
     const {
       layout, baseImage, grid, gridW, gridH, stairLinks, pendingStairLink, currentFloor,
@@ -48,9 +137,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
     } = scene;
     const { scale, ox, oy } = layout;
 
-    if (baseImage) {
-      ctx.drawImage(baseImage, ox, oy, baseImage.width * scale, baseImage.height * scale);
-    } else {
+    if (!baseImage) {
       const rect = cvs.getBoundingClientRect();
       ctx.strokeStyle = "#330011";
       ctx.strokeRect(20, 20, rect.width - 40, rect.height - 40);
@@ -59,30 +146,37 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
       return false;
     }
 
+    const cachedStatic = drawStaticBase(scene);
+    if (!cachedStatic) {
+      ctx.drawImage(baseImage, ox, oy, baseImage.width * scale, baseImage.height * scale);
+    }
+
     if (!grid) return true;
     ctx.save();
     ctx.translate(ox, oy);
     ctx.scale(scale, scale);
 
-    ctx.strokeStyle = "rgba(80,0,40,0.25)";
-    ctx.lineWidth = 0.2;
-    for (let y = 0; y <= gridH; y++) {
-      ctx.beginPath();
-      ctx.moveTo(0, y * cellSizePx);
-      ctx.lineTo(gridW * cellSizePx, y * cellSizePx);
-      ctx.stroke();
-    }
-    for (let x = 0; x <= gridW; x++) {
-      ctx.beginPath();
-      ctx.moveTo(x * cellSizePx, 0);
-      ctx.lineTo(x * cellSizePx, gridH * cellSizePx);
-      ctx.stroke();
-    }
+    if (!cachedStatic) {
+      ctx.strokeStyle = "rgba(80,0,40,0.25)";
+      ctx.lineWidth = 0.2;
+      for (let y = 0; y <= gridH; y++) {
+        ctx.beginPath();
+        ctx.moveTo(0, y * cellSizePx);
+        ctx.lineTo(gridW * cellSizePx, y * cellSizePx);
+        ctx.stroke();
+      }
+      for (let x = 0; x <= gridW; x++) {
+        ctx.beginPath();
+        ctx.moveTo(x * cellSizePx, 0);
+        ctx.lineTo(x * cellSizePx, gridH * cellSizePx);
+        ctx.stroke();
+      }
 
-    ctx.fillStyle = "rgba(80,220,255,0.42)";
-    for (let y = 0; y < gridH; y++) {
-      for (let x = 0; x < gridW; x++) {
-        if (grid[y][x].stair) ctx.fillRect(x * cellSizePx, y * cellSizePx, cellSizePx, cellSizePx);
+      ctx.fillStyle = "rgba(80,220,255,0.42)";
+      for (let y = 0; y < gridH; y++) {
+        for (let x = 0; x < gridW; x++) {
+          if (grid[y][x].stair) ctx.fillRect(x * cellSizePx, y * cellSizePx, cellSizePx, cellSizePx);
+        }
       }
     }
 
@@ -144,11 +238,10 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
             if (!isFinite(cur)) continue;
             let best = { dx: 0, dy: 0, gain: 0 };
             const dirs = [
-              { dx: 1, dy: 0 }, { dx: -1, dy: 0 }, { dx: 0, dy: 1 }, { dx: 0, dy: -1 },
-              { dx: 1, dy: 1 }, { dx: -1, dy: 1 }, { dx: 1, dy: -1 }, { dx: -1, dy: -1 }
+              { dx: 1, dy: 0 }, { dx: -1,dy: 0 }, { dx: 0,dy: 1 }, { dx: 0,dy: -1 },
+              { dx: 1,dy: 1 }, { dx: -1,dy: 1 }, { dx: 1,dy: -1 }, { dx: -1,dy: -1 }
             ];
-            for (let i = 0; i < dirs.length; i++) {
-              const d = dirs[i];
+            for (const d of dirs) {
               const nx = x + d.dx;
               const ny = y + d.dy;
               if (nx < 0 || ny < 0 || nx >= gridW || ny >= gridH) continue;
@@ -168,6 +261,18 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
       }
     }
     return true;
+  }
+
+  function drawFireAvoidanceMask(scene) {
+    if (!Array.isArray(scene.fireAvoidanceIndices) || !scene.fireAvoidanceIndices.length) return;
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,35,35,0.14)';
+    for (const index of scene.fireAvoidanceIndices) {
+      const x = index % scene.gridW;
+      const y = Math.floor(index / scene.gridW);
+      ctx.fillRect(x * cellSizePx, y * cellSizePx, cellSizePx, cellSizePx);
+    }
+    ctx.restore();
   }
 
   function drawRiskOverlay(scene) {
@@ -216,11 +321,11 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
 
   function drawFireAndSources(scene) {
     const settings = {...DEFAULT_HAZARD_DISPLAY,...scene.hazardDisplay};
-    scene.grid.forEach((row,y)=>row.forEach((cell,x)=>{
+
+    const drawCell = (cell, x, y) => {
       const view = derive2DCellDisplay(cell,{...settings,isFront:isFireSpreadFront(scene.grid,x,y)});
       const px=(x+.5)*cellSizePx, py=(y+.5)*cellSizePx;
       if (view.fire.active) {
-        // Glyph radius grows with state HRR. The floor cell is not uniformly painted as flame.
         const radius=cellSizePx*(.18+.3*Math.min(1,view.fire.flameHeightMeters/2.32));
         const glow=ctx.createRadialGradient(px,py,0,px,py,radius);
         glow.addColorStop(0,'rgba(255,245,190,.95)');
@@ -228,12 +333,8 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
         ctx.save(); ctx.globalAlpha=.3+.7*view.fire.strength; ctx.fillStyle=glow;
         ctx.fillRect(px-radius,py-radius,radius*2,radius*2); ctx.restore();
         if (view.fire.origin === 'source') {
-          // Keep the scenario fire-source location readable even when HRR is
-          // still near zero. Flame/glow size remains driven by physical state.
           const markerRadius = Math.max(cellSizePx * 0.42, 1.8);
           ctx.save();
-
-          // Dark outer keyline keeps the marker readable on white floorplans.
           ctx.strokeStyle = '#2b1208';
           ctx.lineWidth = Math.max(1.2, cellSizePx * 0.22);
           ctx.strokeRect(
@@ -242,8 +343,6 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
             markerRadius * 2,
             markerRadius * 2
           );
-
-          // Bright fire-colored inner marker stays visible over smoke and heat maps.
           const innerRadius = markerRadius * 0.78;
           ctx.strokeStyle = '#ff5a1f';
           ctx.lineWidth = Math.max(0.8, cellSizePx * 0.14);
@@ -253,14 +352,12 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
             innerRadius * 2,
             innerRadius * 2
           );
-
           ctx.beginPath();
           ctx.moveTo(px - innerRadius * 0.65, py);
           ctx.lineTo(px + innerRadius * 0.65, py);
           ctx.moveTo(px, py - innerRadius * 0.65);
           ctx.lineTo(px, py + innerRadius * 0.65);
           ctx.stroke();
-
           ctx.restore();
         } else {
           ctx.strokeStyle = '#ffad55';
@@ -280,7 +377,24 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
       if(cell.fdsSamples?.length) {
         ctx.strokeStyle=SOURCE_COLORS.fds;ctx.lineWidth=.4;ctx.beginPath();ctx.arc(px,py,cellSizePx*.25,0,Math.PI*2);ctx.stroke();
       }
-    }));
+    };
+
+    const needsFullScan =
+      settings.dataSourceOverlay !== 'none' ||
+      !!scene.fdsStats ||
+      !Array.isArray(scene.fireActiveIndices);
+
+    if (needsFullScan) {
+      scene.grid.forEach((row,y)=>row.forEach((cell,x)=>drawCell(cell,x,y)));
+    } else {
+      for (const index of scene.fireActiveIndices) {
+        const x = index % scene.gridW;
+        const y = Math.floor(index / scene.gridW);
+        const cell = scene.grid?.[y]?.[x];
+        if (cell) drawCell(cell, x, y);
+      }
+    }
+
     for(const transfer of scene.verticalSmokeTransfers || []) {
       if (!(transfer.volumeM3>0 || transfer.sootMassKg>0 || transfer.amount>0)) continue;
       const endpoint=(transfer.from?.floorIndex ?? transfer.from?.floor)===scene.currentFloor ? transfer.from :
@@ -441,6 +555,10 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
       lines.push(
         `ROUTE ${exits || 'none'} | fallback ${r.fallback || 0}/${r.active || 0}`
       );
+      const safe=(r.safeByExit || []).map(item =>
+        `E${item.idx+1}:${item.reachable}${item.masked?'X':''}`
+      ).join(' ');
+      if(safe) lines.push(`SAFE ${safe} | X=exit inside fire mask`);
     }
     ctx.save(); ctx.font='11px Consolas, monospace';ctx.textAlign='left';ctx.textBaseline='top';
     const rect=cvs.getBoundingClientRect(), top=12, width=Math.max(50,rect.width-24);
@@ -464,6 +582,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
     ctx.clearRect(0, 0, rect.width, rect.height);
     const canContinue = drawGrid(scene);
     if (!canContinue || !scene.grid) return;
+    drawFireAvoidanceMask(scene);
     drawSmoke(scene);
     drawRiskOverlay(scene);
     drawFireAndSources(scene);
