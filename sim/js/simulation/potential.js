@@ -1,3 +1,21 @@
+export const DEFAULT_EXIT_LOAD_PENALTY_PER_AGENT = 0.55;
+
+export function estimateExitRoutingCost(distance, assignedLoad = 0, options = {}) {
+  const dist = Number(distance);
+  if (!Number.isFinite(dist)) return Infinity;
+
+  const load = Math.max(0, Number(assignedLoad) || 0);
+  const requestedWeight = Number(options.loadPenaltyPerAgent);
+  const loadPenaltyPerAgent = Number.isFinite(requestedWeight)
+    ? Math.max(0, requestedWeight)
+    : DEFAULT_EXIT_LOAD_PENALTY_PER_AGENT;
+
+  // Potential-field distance is measured in cell-equivalent steps. Treat the
+  // number of agents already assigned to an exit as an expected queue cost in
+  // the same units so nearby exits do not attract the entire population.
+  return dist + load * loadPenaltyPerAgent;
+}
+
 export function computePotentialFieldFromSeedsModule(seeds, ctx) {
   const {
     grid,
