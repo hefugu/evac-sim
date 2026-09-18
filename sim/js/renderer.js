@@ -5,15 +5,37 @@ import { DEFAULT_HAZARD_DISPLAY, computeSmokeDisplayOpacity, displayMetricValue,
 export function derive2DCellDisplay(cell, options = {}) {
   const settings = {...DEFAULT_HAZARD_DISPLAY,...options};
   const source = resolveHazardDisplaySource(cell);
-  const K = displayMetricValue(cell,'extinction') || 0;
-  // L is one cell width [m] at eye height, not a full horizontal ray integral.
-  // FDS may measure smoke below a fallback layer: display that eye reading, not a fictitious upper layer.
-  const fdsEye = cell?.fdsFields?.includes('opticalDensityM1') || (!cell?.fdsFields && /fds/i.test(cell?.eyeLevelDataSource || cell?.smokeDataSource || ''));
-  const layerAbsent = cell?.smokeLayerDepthMeters === 0 && !fdsEye;
-  const opacity = computeSmokeDisplayOpacity(K, layerAbsent ? 0 : (options.cellSizeMeters || .5),
-    {mode:settings.smokeDisplayMode,gamma:settings.analysisGamma});
-  return {opacity,source,color:displayMetricColor(settings.smokeMetric, settings.smokeMetric === 'source' ? source : displayMetricValue(cell,settings.smokeMetric)),
-    fire:createFireDisplayData(cell,{metric:settings.fireMetric,isFront:options.isFront})};
+
+  const eyeK = displayMetricValue(cell,'extinction') || 0;
+  const upperK = displayMetricValue(cell,'extinction',{upper:true}) || 0;
+  const layerDepth = Math.max(0, Number(cell?.smokeLayerDepthMeters) || 0);
+
+  // A top-down map should still show the footprint of an upper smoke layer
+  // even when that layer has not descended to the 1.6 m eye plane yet.
+  // FDS eye-height readings remain authoritative and are never converted into
+  // a fictitious upper layer.
+  const fdsEye = cell?.fdsFields?.includes('opticalDensityM1') ||
+    (!cell?.fdsFields && /fds/i.test(cell?.eyeLevelDataSource || cell?.smokeDataSource || ''));
+  const useUpperLayer = !fdsEye && layerDepth > 0 && upperK > eyeK;
+  const K = useUpperLayer ? upperK : eyeK;
+  const layerAbsent = layerDepth === 0 && !fdsEye;
+  const opacity = computeSmokeDisplayOpacity(
+    K,
+    layerAbsent ? 0 : (options.cellSizeMeters || .5),
+    {mode:settings.smokeDisplayMode,gamma:settings.analysisGamma}
+  );
+
+  const metricValue = settings.smokeMetric === 'source'
+    ? source
+    : displayMetricValue(cell,settings.smokeMetric,{upper:useUpperLayer});
+
+  return {
+    opacity,
+    source,
+    color:displayMetricColor(settings.smokeMetric, metricValue),
+    smokeUsesUpperLayer: useUpperLayer,
+    fire:createFireDisplayData(cell,{metric:settings.fireMetric,isFront:options.isFront})
+  };
 }
 
 function drawArrow(ctx, px, py, vx, vy, color, width = 0.35) {
