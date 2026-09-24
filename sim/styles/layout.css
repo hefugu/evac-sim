@@ -1,5 +1,6 @@
 #leftPanel {
-  width: 320px;
+  width: 350px;
+  min-width: 350px;
   padding: 10px 12px;
   background: linear-gradient(#150006, #050104);
   border-right: 1px solid #550011;
