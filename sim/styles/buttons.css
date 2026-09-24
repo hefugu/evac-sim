@@ -68,3 +68,21 @@ button.danger.modeActive {
 .pulse {
   animation: pulseWarn 1.2s infinite;
 }
+
+
+.primaryActions #btnStart {
+  flex: 1 1 100%;
+  min-height: 34px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.primaryActions #btnStop,
+.primaryActions #btnReset {
+  flex: 1 1 calc(50% - 4px);
+}
+
+.secondaryActions button {
+  flex: 1 1 calc(50% - 4px);
+  opacity: 0.9;
+}
