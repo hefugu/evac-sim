@@ -18,7 +18,7 @@ body {
   margin: 0;
   background: radial-gradient(circle at top left, #330000, #050104 60%);
   color: var(--text-main);
-  font-family: "Consolas", "Menlo", monospace;
+  font-family: "Noto Sans JP", "Yu Gothic UI", "Meiryo", sans-serif;
   height: 100vh;
   overflow: hidden;
   display: flex;
@@ -27,7 +27,6 @@ body {
 h1 {
   margin: 0 0 6px;
   font-size: 14px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  letter-spacing: 0.04em;
   color: var(--accent-warn);
 }
