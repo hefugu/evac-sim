@@ -58,3 +58,99 @@ input[type="range"] {
   font-size: 11px;
   color: var(--text-dim);
 }
+
+
+.quickGuide {
+  display: grid;
+  gap: 4px;
+  padding: 8px 9px;
+  border: 1px solid #704012;
+  border-radius: 5px;
+  background: linear-gradient(135deg, #241006, #120408);
+  color: #f2d5c1;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.quickGuide strong {
+  color: var(--accent-warn);
+  font-size: 12px;
+}
+
+.quickGuide span {
+  display: block;
+}
+
+.primaryBlock {
+  border-color: #6a1c16;
+}
+
+.primaryBlock .sectionTitle {
+  color: #efc1ae;
+  border-bottom-color: #6a1c16;
+}
+
+.advancedHeading {
+  margin: 3px 0 -2px;
+  padding: 4px 2px 0;
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+}
+
+details.block,
+details.inlineDetails {
+  overflow: visible;
+}
+
+details.block > summary,
+details.inlineDetails > summary {
+  cursor: pointer;
+  list-style: none;
+  color: #d5b0a5;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+details.block > summary::-webkit-details-marker,
+details.inlineDetails > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.block > summary::before,
+details.inlineDetails > summary::before {
+  content: "＋";
+  display: inline-block;
+  width: 1.3em;
+  color: var(--accent-warn);
+  font-weight: 700;
+}
+
+details.block[open] > summary::before,
+details.inlineDetails[open] > summary::before {
+  content: "－";
+}
+
+details.block[open] > summary {
+  padding-bottom: 5px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid #44000f;
+  color: #f1d6cf;
+}
+
+.inlineDetails {
+  margin-top: 7px;
+  padding-top: 5px;
+  border-top: 1px solid #3b1720;
+}
+
+.inlineDetails .advancedContent,
+.advancedBlock .advancedContent {
+  padding-top: 6px;
+}
+
+.mapLegend {
+  margin-top: 6px;
+  color: #d9b6aa;
+  font-size: 11px;
+}
