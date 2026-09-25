@@ -74,11 +74,11 @@ const DEFAULT_OPTIONS = Object.freeze({
   showSmokeLayerBounds: true,
   showStairSmokeTransfer: true,
   fireThreshold: 0.001,
-  background: "#f6f7f8",
-  floorColor: "#e8eaec",
-  alternateFloorColor: "#dde1e4",
-  wallColor: "#aab1b7",
-  wallEdgeColor: "rgba(82, 90, 98, 0.75)",
+  background: "#202327",
+  floorColor: "#5a6066",
+  alternateFloorColor: "#50565c",
+  wallColor: "#353a3f",
+  wallEdgeColor: "rgba(135, 143, 151, 0.65)",
   autoResize: true,
   autoStart: false,
   showControlsHint: true
@@ -1556,19 +1556,19 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
     const centerX = viewport.width * 0.5;
     const centerY = viewport.height * 0.5;
     context.save();
-    context.fillStyle = "rgba(255,255,255,0.92)";
-    context.strokeStyle = "#aeb5bc";
+    context.fillStyle = "rgba(42,45,49,0.94)";
+    context.strokeStyle = "#666d74";
     context.lineWidth = 1.25;
     const boxWidth = Math.min(440, Math.max(210, viewport.width - 48));
     const boxHeight = 112;
     context.fillRect(centerX - boxWidth * 0.5, centerY - boxHeight * 0.5, boxWidth, boxHeight);
     context.strokeRect(centerX - boxWidth * 0.5, centerY - boxHeight * 0.5, boxWidth, boxHeight);
-    context.fillStyle = "#30363b";
+    context.fillStyle = "#e0e3e6";
     context.font = "600 16px system-ui, sans-serif";
     context.textAlign = "center";
     context.textBaseline = "middle";
     context.fillText("3D表示用の校舎マップがありません", centerX, centerY - 16);
-    context.fillStyle = "#626a72";
+    context.fillStyle = "#aab0b6";
     context.font = "13px system-ui, sans-serif";
     context.fillText("2D画面でマップを読み込むか、3Fサンプルを選択してください。", centerX, centerY + 15);
     context.restore();
@@ -1773,7 +1773,6 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
       stairCells: stairStats.cells,
       stairRegions: stairStats.regions
     };
-    drawHud(snapshot, usableFloors, stats);
     lastRenderStats = stats;
     return { ...stats };
   }
