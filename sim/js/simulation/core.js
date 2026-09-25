@@ -62,6 +62,7 @@ import {
 import {
   FDS_EVAC_PERSON_TYPES,
   sampleFdsEvacPerson,
+  createPedestrianDynamicsWorkspace,
   stepPedestrianDynamics
 } from "./pedestrian-dynamics.js";
 import { buildWallSpatialIndex } from "./wall-index.js";
@@ -262,6 +263,7 @@ export function initSimulation() {
   let activeFireCount = 0;
   let totalFireHrrKw = 0;
   let wallSpatialIndex = null;
+  const pedestrianWorkspace = createPedestrianDynamicsWorkspace();
   let occupancyBuffers = [];
 
   function resetOccupancyBuffers() {
@@ -3536,7 +3538,8 @@ export function initSimulation() {
         const cy = Math.round(agent.y);
         return smokeMetricsAt(floor, cx, cy)?.extinctionCoefficientM1 || 0;
       },
-      canMove: agent => !!agent._socialMove
+      canMove: agent => !!agent._socialMove,
+      workspace: pedestrianWorkspace
     });
 
     // Update discrete statistics from the continuous positions. Cell occupancy
