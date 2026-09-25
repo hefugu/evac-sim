@@ -59,6 +59,10 @@ import {
   normalizeStairLinkEndpoints,
   stairLinkHash
 } from "./stairs.js";
+import {
+  FDS_EVAC_PERSON_TYPES,
+  sampleFdsEvacPerson
+} from "./pedestrian-dynamics.js";
 let runtimeControls = {
   start: null,
   stop: null,
@@ -401,13 +405,13 @@ export function initSimulation() {
   let mcTargetRuns = 100;
   let mcResults = [];
   const TYPE_META = {
-    adult: { label: "Adult", speed: 1.0, fallRisk: 1.0, panic: 0.0, color: "#ff3366" },
-    child: { label: "Child", speed: 0.74, fallRisk: 1.1, panic: 0.05, color: "#8ad8ff" },
-    elderly: { label: "Elderly", speed: 0.62, fallRisk: 1.85, panic: 0.03, color: "#ffd26b" },
-    panic: { label: "Panic", speed: 1.1, fallRisk: 1.35, panic: 0.3, color: "#ff66aa" },
-    leader: { label: "Leader", speed: 1.02, fallRisk: 0.9, panic: 0.02, color: "#66ffcc" },
-    teacher: { label: "Teacher", speed: 0.96, fallRisk: 0.92, panic: 0.01, color: "#66ccff" },
-    student: { label: "Student", speed: 0.72, fallRisk: 1.2, panic: 0.04, color: "#7bb8ff" }
+    adult: { label: "成人", physicalType: "adult", fallRisk: 1.0, panic: 0.0, color: "#ff3366" },
+    child: { label: "子供", physicalType: "child", fallRisk: 1.1, panic: 0.05, color: "#8ad8ff" },
+    elderly: { label: "高齢者", physicalType: "elderly", fallRisk: 1.85, panic: 0.03, color: "#ffd26b" },
+    panic: { label: "パニック", physicalType: "adult", fallRisk: 1.35, panic: 0.3, color: "#ff66aa" },
+    leader: { label: "リーダー", physicalType: "adult", fallRisk: 0.9, panic: 0.02, color: "#66ffcc" },
+    teacher: { label: "教師", physicalType: "adult", fallRisk: 0.92, panic: 0.01, color: "#66ccff" },
+    student: { label: "生徒", physicalType: "adult", fallRisk: 1.2, panic: 0.04, color: "#7bb8ff" }
   };
 
   function syncPublicState() {
@@ -2142,11 +2146,19 @@ export function initSimulation() {
         chosen = walkableCells[Math.floor(Math.random()*walkableCells.length)];
       }
 
-      // Speed variation
-      const k = (Math.random()*2-1) * (varPct/100);
+      // Physical population properties follow the published FDS+Evac
+      // distributions. The UI speed remains a scenario-level adult reference
+      // speed, so changing it scales all population distributions together.
       const type = weightedPick(typeRatios);
       const meta = TYPE_META[type] || TYPE_META.adult;
-      const speedMps = baseSpeed * (1 + k) * (meta.speed || 1); // m/s
+      const physical = sampleFdsEvacPerson(meta.physicalType || "adult");
+      const adultReference = FDS_EVAC_PERSON_TYPES.adult.speedMeanMps;
+      const scenarioSpeedScale = baseSpeed / Math.max(0.01, adultReference);
+      const extraVariation = (Math.random()*2-1) * (varPct/100);
+      const speedMps = Math.max(
+        0.15,
+        physical.desiredSpeedMps * scenarioSpeedScale * (1 + extraVariation)
+      );
       const speedCellsPerSec = speedMps / cellMeters;
       const seed = {
         id: i,
@@ -2169,6 +2181,14 @@ export function initSimulation() {
         x: chosen.cx,
         y: chosen.cy,
         v: speedCellsPerSec,
+        physicalType: physical.physicalType,
+        radiusM: physical.radiusM,
+        massKg: physical.massKg,
+        relaxationTimeS: physical.relaxationTimeS,
+        baseDesiredSpeedMps: speedMps,
+        desiredSpeedMps: speedMps,
+        vxMps: 0,
+        vyMps: 0,
         finished: false,
         startTime: simTime,
         finishTime: null,
