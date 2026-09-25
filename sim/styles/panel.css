@@ -1,18 +1,17 @@
 .sectionTitle {
   font-size: 11px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  border-bottom: 1px solid #44000f;
-  padding-bottom: 3px;
-  margin-bottom: 4px;
+  letter-spacing: 0.08em;
+  color: #c7ccd1;
+  border-bottom: 1px solid #3a4046;
+  padding-bottom: 4px;
+  margin-bottom: 6px;
 }
 
 .block {
   background: var(--panel);
-  border: 1px solid #44000f;
-  padding: 6px 7px;
-  box-shadow: 0 0 16px #000;
+  border: 1px solid #343a40;
+  padding: 7px 8px;
+  border-radius: 3px;
 }
 
 .row {
@@ -25,32 +24,32 @@
 }
 
 .row label {
-  flex: 0 0 100px;
+  flex: 0 0 108px;
 }
 
 .row input[type="number"],
 .row input[type="range"],
 .row select {
   flex: 1;
-  background: #120008;
+  background: #14181c;
   color: var(--text-main);
-  border: 1px solid #550011;
-  padding: 2px 4px;
-  border-radius: 3px;
+  border: 1px solid #42484f;
+  padding: 3px 5px;
+  border-radius: 2px;
   font-size: 11px;
 }
 
 input[type="range"] {
-  accent-color: var(--accent-warn);
+  accent-color: var(--accent);
 }
 
 #presetSelect {
   width: 100%;
-  background: #120008;
+  background: #14181c;
   color: var(--text-main);
-  border: 1px solid #550011;
-  padding: 2px 4px;
-  border-radius: 3px;
+  border: 1px solid #42484f;
+  padding: 3px 5px;
+  border-radius: 2px;
   font-size: 11px;
 }
 
@@ -59,21 +58,20 @@ input[type="range"] {
   color: var(--text-dim);
 }
 
-
 .quickGuide {
   display: grid;
   gap: 4px;
   padding: 8px 9px;
-  border: 1px solid #704012;
-  border-radius: 5px;
-  background: linear-gradient(135deg, #241006, #120408);
-  color: #f2d5c1;
+  border: 1px solid #3a4046;
+  border-radius: 3px;
+  background: #20252a;
+  color: #d8dce0;
   font-size: 11px;
   line-height: 1.45;
 }
 
 .quickGuide strong {
-  color: var(--accent-warn);
+  color: #f0f1f2;
   font-size: 12px;
 }
 
@@ -82,12 +80,12 @@ input[type="range"] {
 }
 
 .primaryBlock {
-  border-color: #6a1c16;
+  border-color: #434a51;
 }
 
 .primaryBlock .sectionTitle {
-  color: #efc1ae;
-  border-bottom-color: #6a1c16;
+  color: #d9dde1;
+  border-bottom-color: #434a51;
 }
 
 .advancedHeading {
@@ -95,7 +93,7 @@ input[type="range"] {
   padding: 4px 2px 0;
   color: var(--text-dim);
   font-size: 10px;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.08em;
 }
 
 details.block,
@@ -107,7 +105,7 @@ details.block > summary,
 details.inlineDetails > summary {
   cursor: pointer;
   list-style: none;
-  color: #d5b0a5;
+  color: #bfc5ca;
   font-size: 11px;
   line-height: 1.35;
 }
@@ -122,7 +120,7 @@ details.inlineDetails > summary::before {
   content: "＋";
   display: inline-block;
   width: 1.3em;
-  color: var(--accent-warn);
+  color: #8d969e;
   font-weight: 700;
 }
 
@@ -134,14 +132,14 @@ details.inlineDetails[open] > summary::before {
 details.block[open] > summary {
   padding-bottom: 5px;
   margin-bottom: 6px;
-  border-bottom: 1px solid #44000f;
-  color: #f1d6cf;
+  border-bottom: 1px solid #3a4046;
+  color: #e2e5e7;
 }
 
 .inlineDetails {
   margin-top: 7px;
   padding-top: 5px;
-  border-top: 1px solid #3b1720;
+  border-top: 1px solid #343a40;
 }
 
 .inlineDetails .advancedContent,
@@ -151,6 +149,6 @@ details.block[open] > summary {
 
 .mapLegend {
   margin-top: 6px;
-  color: #d9b6aa;
+  color: #bfc5ca;
   font-size: 11px;
 }
