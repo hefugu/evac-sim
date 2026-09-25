@@ -1,9 +1,9 @@
 #log {
   width: 100%;
   height: 150px;
-  background: #090006;
-  border: 1px solid #44000f;
-  color: #f3d0d0;
+  background: #12161a;
+  border: 1px solid #3a4046;
+  color: #d8dce0;
   font-size: 10px;
   padding: 4px;
   resize: none;
@@ -13,8 +13,8 @@
   position: absolute;
   right: 10px;
   bottom: 10px;
-  background: #150005dd;
-  border: 1px solid #550011;
+  background: #171b1fe8;
+  border: 1px solid #3e454c;
   padding: 6px 8px;
   font-size: 11px;
   min-width: 200px;
@@ -22,23 +22,22 @@
 }
 
 #overlayHUD strong {
-  color: var(--accent-warn);
+  color: #f0f1f2;
 }
 
 .badge {
   padding: 1px 4px;
-  border-radius: 999px;
-  border: 1px solid #660011;
+  border-radius: 2px;
+  border: 1px solid #4b535b;
   font-size: 9px;
-  text-transform: uppercase;
   margin-left: 4px;
-  color: #ffaaaa;
+  color: #c7ccd1;
 }
 
 #statusBar {
   font-size: 11px;
-  color: var(--accent-warn);
-  margin-top: 4px;
+  color: #cfd4d8;
+  margin-top: 6px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -54,7 +53,7 @@
 }
 
 .toggleRow input[type="checkbox"] {
-  accent-color: var(--accent-warn);
+  accent-color: var(--accent);
 }
 
 .hint {
