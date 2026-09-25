@@ -2,7 +2,7 @@
   width: 350px;
   min-width: 350px;
   padding: 10px 12px;
-  background: #ffffff;
+  background: #25282c;
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -20,5 +20,5 @@
 #mainArea {
   flex: 1;
   position: relative;
-  background: #eef0f2;
+  background: #1b1d20;
 }
