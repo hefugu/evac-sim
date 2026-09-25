@@ -262,6 +262,33 @@ test("reset clears smoke inventory, agent exposure and fire spread while keeping
   expect(after).toEqual({ time: 0, agents: 0, source: true, sourceAge: 0, sourceHrr: 0, spread: 0, soot: 0, co: 0, smoke: 0, exposure: 0 });
 });
 
+
+test("Start is enabled again after Stop and after normal completion", async ({ page }) => {
+  await configureAgent(page, "0.8");
+  await marker(page, "modeSpawn", 2, 2);
+  await marker(page, "modeExit", 17, 2);
+
+  const start = page.locator("#btnStart");
+  await expect(start).toBeEnabled();
+
+  await start.click();
+  await page.clock.runFor(400);
+  await page.locator("#btnStop").click();
+  await expect(start).toBeEnabled();
+
+  await start.click();
+  await page.evaluate(async () => {
+    const { state } = await import("/sim/js/state.js");
+    state.hazards.tenabilityOptions = {
+      ...(state.hazards.tenabilityOptions || {}),
+      maxSimulationTimeSec: 0.3
+    };
+  });
+  await page.clock.runFor(1_000);
+  await expect.poll(() => page.evaluate(async () => (await import("/sim/js/state.js")).state.sim.running)).toBe(false);
+  await expect(start).toBeEnabled();
+});
+
 test("an agent uses the UI-created stair connection and evacuates on the other floor", async ({ page }) => {
   await configureAgent(page);
   await page.locator("#floorCount").fill("2");
