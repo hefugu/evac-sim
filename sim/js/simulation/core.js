@@ -3602,6 +3602,27 @@ export function initSimulation() {
       const prevY = a.y;
       const prevFloor = floor;
 
+      const committedExit =
+        Number.isInteger(a.targetExitIndex) &&
+        a.targetExitIndex >= 0 &&
+        a.targetExitIndex < allExitPoints.length
+          ? allExitPoints[a.targetExitIndex]
+          : null;
+      const committedCellMeters = Math.max(
+        0.05,
+        Number(floorStates[floor]?.cellSizeMeters) ||
+        parseFloat(cellSizeMetersInput.value) ||
+        0.5
+      );
+      const committedDistanceMeters =
+        committedExit && committedExit.floor === floor
+          ? Math.hypot(committedExit.cx - a.x, committedExit.cy - a.y) * committedCellMeters
+          : Infinity;
+      const terminalExitApproach =
+        committedExit &&
+        committedExit.floor === floor &&
+        committedDistanceMeters <= EXIT_COMMIT_RADIUS_METERS;
+
       if (best.nf !== floor) {
         const rawLink = stairLinks.find(link => link.id === best.linkId);
         if (rawLink) {
@@ -3630,15 +3651,18 @@ export function initSimulation() {
           }
         }
       } else {
-        // Global routing decides where the pedestrian wants to go; local
-        // continuous motion is handled later for all agents simultaneously by
-        // the Social Force model. This avoids order-dependent pair forces.
-        const dx = best.nx - a.x;
-        const dy = best.ny - a.y;
+        // Within the final approach zone, head directly to the committed exit.
+        // This prevents teacher-following, panic noise, heading inertia or a
+        // discrete next-cell choice from steering a pedestrian around an exit.
+        const targetX = terminalExitApproach ? committedExit.cx : best.nx;
+        const targetY = terminalExitApproach ? committedExit.cy : best.ny;
+        const dx = targetX - a.x;
+        const dy = targetY - a.y;
         const mag = Math.hypot(dx, dy);
         a._desiredDirection = mag > 1e-9
           ? { x: dx / mag, y: dy / mag }
           : { x: 0, y: 0 };
+        a._terminalExitApproach = !!terminalExitApproach;
         a._socialMove = true;
         socialMovementStart.set(a.id, {
           x: prevX,
@@ -3705,6 +3729,7 @@ export function initSimulation() {
       const previous = socialMovementStart.get(a.id);
       if (!previous) {
         delete a._desiredDirection;
+        delete a._terminalExitApproach;
         delete a._socialMove;
         return;
       }
@@ -3766,6 +3791,7 @@ export function initSimulation() {
       }
 
       delete a._desiredDirection;
+      delete a._terminalExitApproach;
       delete a._socialMove;
     });
 
