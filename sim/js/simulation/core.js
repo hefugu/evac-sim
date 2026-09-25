@@ -294,12 +294,18 @@ export function initSimulation() {
   }
 
   function occupancyAt(buffers, floor, cx, cy) {
-    if (floor < 0 || floor >= buffers.length || !inBounds(cx, cy)) return 0;
+    if (
+      floor < 0 || floor >= buffers.length ||
+      cx < 0 || cy < 0 || cx >= gridW || cy >= gridH
+    ) return 0;
     return buffers[floor][cy * gridW + cx] || 0;
   }
 
   function addOccupancy(buffers, floor, cx, cy, delta) {
-    if (floor < 0 || floor >= buffers.length || !inBounds(cx, cy)) return 0;
+    if (
+      floor < 0 || floor >= buffers.length ||
+      cx < 0 || cy < 0 || cx >= gridW || cy >= gridH
+    ) return 0;
     const layer = buffers[floor];
     const index = cy * gridW + cx;
     const next = Math.max(0, Math.min(65535, (layer[index] || 0) + delta));
