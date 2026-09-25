@@ -24,6 +24,12 @@ async function loadRoom(page) {
 }
 
 async function loadScitech3F(page) {
+  // The default browser fixture is a small synthetic room. Reload first so
+  // the real 600x800 map is not correctly rejected as a mismatched floor size.
+  await page.goto("/sim/");
+  await page.locator("details").evaluateAll(elements => {
+    for (const element of elements) element.open = true;
+  });
   const base64 = await page.evaluate(async () => {
     const response = await fetch("/sim/assets/maps/scitech_3f_walkable.png.base64");
     if (!response.ok) throw new Error(`3F fixture fetch failed: ${response.status}`);
@@ -266,7 +272,7 @@ test('display controls and 2D/3D clicks inspect the same state without advancing
   });
   const before=await numericalState();
   await marker(page,'modeInspect',12,8);
-  await expect(page.locator('[data-inspector-location]')).toContainText('cx=12, cy=8');
+  await expect(page.locator('[data-inspector-location]')).toContainText('X=12, Y=8');
   await expect(page.locator('[data-field="hrrKw"]')).toContainText('kW');
   await expect(page.locator('[data-field="fireAgeSec"]')).not.toContainText('未取得');
   await page.getByRole('button',{name:'地点分析を閉じる'}).click();
@@ -286,7 +292,7 @@ test('display controls and 2D/3D clicks inspect the same state without advancing
   });
   const box=await page.locator('#simCanvas3d').boundingBox();
   await page.mouse.click(box.x+projected.x,box.y+projected.y);
-  await expect(page.locator('[data-inspector-location]')).toContainText('cx=12, cy=8');
+  await expect(page.locator('[data-inspector-location]')).toContainText('X=12, Y=8');
   await expect(page.locator('[data-field="hrrKw"]')).toContainText('簡易モデル');
   expect(await numericalState()).toBe(before);
   expect(errors).toEqual([]);
@@ -371,7 +377,8 @@ test("reset clears smoke inventory, agent exposure and fire spread while keeping
     };
   });
   expect(before.fireAge).toBeGreaterThan(0);
-  expect(before.spread).toBeGreaterThan(0);
+  // Material-independent flame spread is disabled by default.
+  expect(before.spread).toBe(0);
   expect(before.soot).toBeGreaterThan(0);
   expect(before.co).toBeGreaterThan(0);
   expect(before.exposure).toBeGreaterThan(0);
