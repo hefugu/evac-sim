@@ -1755,6 +1755,30 @@ export function initSimulation() {
     log("FDS CSVを解除しました。");
   });
 
+  function pruneSingleCellProfileSpurs(template, stairTemplate) {
+    const height = template?.length || 0;
+    const width = height ? template[0]?.length || 0 : 0;
+    if (!width || !height) return template;
+    const cleaned = template.map(row => row.slice());
+    const cardinal = [[1,0],[-1,0],[0,1],[0,-1]];
+    for (let cy = 0; cy < height; cy++) {
+      for (let cx = 0; cx < width; cx++) {
+        if (!template[cy][cx] || stairTemplate?.[cy]?.[cx]) continue;
+        let neighbors = 0;
+        for (const [dx,dy] of cardinal) {
+          const nx = cx + dx;
+          const ny = cy + dy;
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+          if (template[ny][nx]) neighbors++;
+        }
+        // On the calibrated 3F drawing these are isolated glyph pixels from
+        // room-number labels touching the corridor, not real floor area.
+        if (neighbors <= 1) cleaned[cy][cx] = false;
+      }
+    }
+    return cleaned;
+  }
+
   function extractWalkableTemplateFromImage(image, options = {}) {
     if (!image) return null;
     try {
@@ -1771,8 +1795,11 @@ export function initSimulation() {
           : (mapSampleModeInput?.value || "coverage"),
         whiteThreshold: parseInt(thrRange.value, 10)
       });
+      const calibratedTemplate = options.mapProfile === SCITECH_3F_PROFILE.id
+        ? pruneSingleCellProfileSpurs(parsed.walkableTemplate, parsed.stairTemplate)
+        : parsed.walkableTemplate;
       return {
-        template: parsed.walkableTemplate,
+        template: calibratedTemplate,
         stairTemplate: parsed.stairTemplate,
         exitTemplate: parsed.exitTemplate,
         exitPoints: parsed.exitPoints,
