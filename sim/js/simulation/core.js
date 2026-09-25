@@ -1670,7 +1670,6 @@ export function initSimulation() {
       // Dimensions narrow the check, while extracted green cells avoid treating
       // every unrelated 600x800 image as the bundled school-map profile.
       if (!mapProfile &&
-          targetFloor === SCITECH_3F_PROFILE.floorIndex &&
           img.width === SCITECH_3F_PROFILE.sourceWidthPx &&
           img.height === SCITECH_3F_PROFILE.sourceHeightPx) {
         try {
@@ -1764,7 +1763,12 @@ export function initSimulation() {
         : clamp(Math.floor(parseNum(mapCellPixelsInput, 4)), 1, 32);
       const parsed = extractColorMapGrid(image, {
         cellPixels,
-        sampleMode: mapSampleModeInput?.value || "coverage",
+        // The calibrated 3F map is defined against center-pixel extraction.
+        // Coverage sampling grows walls/corridors by partial-cell bleed and
+        // changes the verified topology counts.
+        sampleMode: options.mapProfile === SCITECH_3F_PROFILE.id
+          ? "center"
+          : (mapSampleModeInput?.value || "coverage"),
         whiteThreshold: parseInt(thrRange.value, 10)
       });
       return {
