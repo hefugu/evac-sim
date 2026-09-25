@@ -106,12 +106,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
       layerCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
       layerCtx.clearRect(0, 0, rect.width, rect.height);
       const { scale, ox, oy } = scene.layout;
-      layerCtx.fillStyle = "#1b1d20";
-      layerCtx.fillRect(0, 0, rect.width, rect.height);
-      layerCtx.save();
-      layerCtx.globalAlpha = 0.24;
       layerCtx.drawImage(baseImage, ox, oy, baseImage.width * scale, baseImage.height * scale);
-      layerCtx.restore();
 
       if (grid) {
         layerCtx.save();
@@ -175,12 +170,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
 
     const cachedStatic = drawStaticBase(scene);
     if (!cachedStatic) {
-      ctx.save();
-      ctx.fillStyle = "#1b1d20";
-      ctx.fillRect(0, 0, cvs.getBoundingClientRect().width, cvs.getBoundingClientRect().height);
-      ctx.globalAlpha = 0.24;
       ctx.drawImage(baseImage, ox, oy, baseImage.width * scale, baseImage.height * scale);
-      ctx.restore();
     }
 
     if (!grid) return true;
