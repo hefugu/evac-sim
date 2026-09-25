@@ -227,6 +227,17 @@ export function initSimulation() {
   let fireAvoidanceMasks = [];
   let fireAvoidanceIndicesByFloor = [];
   let activeFireIndicesByFloor = [];
+
+  function setActiveFireIndex(floor, cx, cy, active) {
+    while (activeFireIndicesByFloor.length < floorCount) {
+      activeFireIndicesByFloor.push([]);
+    }
+    const list = activeFireIndicesByFloor[floor] || (activeFireIndicesByFloor[floor] = []);
+    const index = cy * gridW + cx;
+    const position = list.indexOf(index);
+    if (active && position < 0) list.push(index);
+    if (!active && position >= 0) list.splice(position, 1);
+  }
   let fireDistanceFields = [];
   let multiCombinedPotential = null; // [floor][y][x]
   let stairTrafficState = createStairTrafficState([]);
@@ -1955,6 +1966,7 @@ export function initSimulation() {
       cellObj.stairType = null;
       cellObj.walkable = false;
       cellObj.wall = false;
+      setActiveFireIndex(currentFloor, cx, cy, true);
       removeStairLinksByCell(currentFloor, cx, cy);
       log(`火元を追加: ${currentFloor + 1}F (${cx},${cy})`);
     } else if (mode === "erase") {
@@ -1979,6 +1991,7 @@ export function initSimulation() {
       delete cellObj.fireSource;
       delete cellObj.fireInitialIntensity;
       delete cellObj.fireDataSource;
+      setActiveFireIndex(currentFloor, cx, cy, false);
       cellObj.stair = false;
       cellObj.stairType = null;
       removeStairLinksByCell(currentFloor, cx, cy);
