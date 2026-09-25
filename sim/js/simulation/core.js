@@ -164,6 +164,7 @@ export function initSimulation() {
 
   const logEl = ui.logEl;
   const statusBar = ui.statusBar;
+  const performanceStatus = ui.performanceStatus;
   const floorLabel = ui.floorLabel;
   const presetNameInput = ui.presetNameInput;
   const presetSelect = ui.presetSelect;
@@ -346,6 +347,17 @@ export function initSimulation() {
     }
     state.render.performanceMode = renderQuality;
     state.render.minimumTargetProfile = MINIMUM_TARGET_PROFILE;
+    if (performanceStatus) {
+      const label = renderQuality === "performance"
+        ? "軽量"
+        : (renderQuality === "balanced" ? "標準" : "高品質");
+      performanceStatus.textContent =
+        `7730U基準 / 描画=${label} / RAF ${Number(snapshot.fps || 0).toFixed(0)} FPS / ` +
+        `2D描画 ${Number(snapshot.renderFps || 0).toFixed(0)} FPS / ` +
+        `Agents ${Number(snapshot.agentMs || 0).toFixed(1)} ms / ` +
+        `Smoke ${Number(snapshot.smokeMs || 0).toFixed(1)} ms / ` +
+        `Draw ${Number(snapshot.renderMs || 0).toFixed(1)} ms`;
+    }
   }
 
   function updatePerfProfile(nowMs) {
