@@ -619,8 +619,18 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
     drawHUD(scene);
   }
 
+  function setCellSizePx(value) {
+    const next = Number(value);
+    if (!Number.isFinite(next) || next <= 0 || next === cellSizePx) return cellSizePx;
+    cellSizePx = next;
+    staticLayer = null;
+    staticLayerKey = "";
+    return cellSizePx;
+  }
+
   return {
     render,
+    setCellSizePx,
     drawGrid,
     drawAgents,
     drawSmoke,
