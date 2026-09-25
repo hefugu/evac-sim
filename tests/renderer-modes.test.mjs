@@ -116,7 +116,7 @@ test("renderer draws layers, FDS points and stair transfer from frozen shared st
     assert.ok(Math.abs(stats.maxLayerDepthMeters - 0.8) < 1e-12);
   }
   assert.ok(drawing.some(item => item.stroke === "#55e4ff" && item.method === "arc"), "cyan ring for FDS point");
-  assert.ok(drawing.some(item => item.stroke === "#ffbd67" && item.method === "lineTo"), "amber stair flow arrow");
+  assert.ok(drawing.some(item => item.stroke === "#68737d" && item.method === "lineTo"), "stair flow arrow");
   assert.equal(JSON.stringify(state), before);
   renderer.setSmokeLayerBounds(false);
   assert.equal(renderer.setSmokeVisualizationMode("unknown"), "extinction");
