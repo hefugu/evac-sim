@@ -262,6 +262,37 @@ export function initSimulation() {
   let activeFireCount = 0;
   let totalFireHrrKw = 0;
   let wallSpatialIndex = null;
+  let occupancyBuffers = [];
+
+  function resetOccupancyBuffers() {
+    const size = Math.max(0, gridW * gridH);
+    if (
+      occupancyBuffers.length !== floorCount ||
+      occupancyBuffers.some(layer => layer.length !== size)
+    ) {
+      occupancyBuffers = Array.from(
+        { length: floorCount },
+        () => new Uint16Array(size)
+      );
+    } else {
+      occupancyBuffers.forEach(layer => layer.fill(0));
+    }
+    return occupancyBuffers;
+  }
+
+  function occupancyAt(buffers, floor, cx, cy) {
+    if (floor < 0 || floor >= buffers.length || !inBounds(cx, cy)) return 0;
+    return buffers[floor][cy * gridW + cx] || 0;
+  }
+
+  function addOccupancy(buffers, floor, cx, cy, delta) {
+    if (floor < 0 || floor >= buffers.length || !inBounds(cx, cy)) return 0;
+    const layer = buffers[floor];
+    const index = cy * gridW + cx;
+    const next = Math.max(0, Math.min(65535, (layer[index] || 0) + delta));
+    layer[index] = next;
+    return next;
+  }
   let simulationAccumulatorSec = 0;
   let smokeAccumulatorSec = 0;
   const SMOKE_FIXED_STEP_SEC = 0.1;
@@ -2957,33 +2988,14 @@ export function initSimulation() {
       return { blocked: false, penalty, visibilityFactor, risk: er };
     }
 
-    const occupancyByFloor = new Array(floorCount).fill(null).map(() => makeScalarGrid(0));
+    const occupancyDynamicByFloor = resetOccupancyBuffers();
     agents.forEach(a => {
       if (a.finished || a.dead) return;
       const f = clamp(Math.floor(a.floor ?? 0), 0, floorCount - 1);
       const cx = Math.round(a.x);
       const cy = Math.round(a.y);
-      if (inBounds(cx, cy)) occupancyByFloor[f][cy][cx] += 1;
+      addOccupancy(occupancyDynamicByFloor, f, cx, cy, 1);
     });
-    const occupancyDynamicByFloor = occupancyByFloor.map(layer => layer.map(row => row.slice()));
-
-    function localDensity(floor, cx, cy) {
-      let cnt = 0;
-      let cells = 0;
-      const fGrid = floorStates[floor]?.grid;
-      if (!fGrid) return 0;
-      for (let dy = -DENSITY_RADIUS; dy <= DENSITY_RADIUS; dy++) {
-        for (let dx = -DENSITY_RADIUS; dx <= DENSITY_RADIUS; dx++) {
-          const nx = cx + dx;
-          const ny = cy + dy;
-          if (!inBounds(nx, ny)) continue;
-          if (!fGrid[ny][nx].walkable) continue;
-          cnt += occupancyDynamicByFloor[floor][ny][nx];
-          cells++;
-        }
-      }
-      return cells > 0 ? cnt / cells : 0;
-    }
 
     const byId = new Map();
     agents.forEach(a => byId.set(a.id, a));
@@ -3186,13 +3198,13 @@ export function initSimulation() {
             if (
               inBounds(ncx, ncy) &&
               !floorStates[floor].grid[ncy][ncx].fire &&
-              (same || occupancyDynamicByFloor[floor][ncy][ncx] < MAX_OCCUPANCY_PER_CELL)
+              (same || occupancyAt(occupancyDynamicByFloor, floor, ncx, ncy) < MAX_OCCUPANCY_PER_CELL)
             ) {
               a.x = nxp;
               a.y = nyp;
               if (!same) {
-                occupancyDynamicByFloor[floor][cy][cx] = Math.max(0, occupancyDynamicByFloor[floor][cy][cx] - 1);
-                occupancyDynamicByFloor[floor][ncy][ncx] += 1;
+                addOccupancy(occupancyDynamicByFloor, floor, cx, cy, -1);
+                addOccupancy(occupancyDynamicByFloor, floor, ncx, ncy, 1);
               }
             }
           }
@@ -3220,14 +3232,13 @@ export function initSimulation() {
         a.finished = true;
         a.finishTime = simTime;
         evacCount++;
-        occupancyDynamicByFloor[floor][cy][cx] = Math.max(0, occupancyDynamicByFloor[floor][cy][cx] - 1);
+        addOccupancy(occupancyDynamicByFloor, floor, cx, cy, -1);
         return;
       }
 
       const localSmoke = smokeAt(floor, cx, cy);
       const localFire = fireRiskAt(floor, cx, cy);
       a.visibility = Math.max(MIN_VISIBILITY, 1 - localSmoke * VISIBILITY_SMOKE_COEF);
-      const densityHere = localDensity(floor, cx, cy);
       const prevCell = a.prevCell;
 
       let leaderTarget = null;
@@ -3325,10 +3336,6 @@ export function initSimulation() {
         const nextPot = potentialField?.[nf]?.[ny]?.[nx];
         if (!isFinite(nextPot)) continue;
 
-        const rawOcc = occupancyDynamicByFloor[nf][ny][nx];
-        const occ = (nf === floor && nx === cx && ny === cy) ? Math.max(0, rawOcc - 1) : rawOcc;
-
-        const densityTarget = localDensity(nf, nx, ny);
         const smokeTarget = smokeAt(nf, nx, ny);
         const fireTarget = fireRiskAt(nf, nx, ny);
         const currentFireDistance = fireDistanceAt(
@@ -3366,7 +3373,7 @@ export function initSimulation() {
         const uphill = Math.max(0, nextPot - curPot);
         const isBacktrack = !!(prevCell && prevCell.floor === nf && prevCell.cx === nx && prevCell.cy === ny);
         evaluated.push({
-          c, nx, ny, nf, occ, densityTarget, smokeTarget, heatPenalty,
+          c, nx, ny, nf, smokeTarget, heatPenalty,
           fireHeat: fireTarget.heat,
           fireAvoid: fireTarget.heat > 1e-9,
           fireApproach,
@@ -3534,13 +3541,13 @@ export function initSimulation() {
 
     // Update discrete statistics from the continuous positions. Cell occupancy
     // is now an observation, not a hard movement constraint.
-    occupancyDynamicByFloor.forEach(layer => layer.forEach(row => row.fill(0)));
+    occupancyDynamicByFloor.forEach(layer => layer.fill(0));
     agents.forEach(a => {
       if (!a.dead && !a.finished) {
         const floor = clamp(Math.floor(a.floor ?? 0), 0, floorCount - 1);
         const cx = Math.round(a.x);
         const cy = Math.round(a.y);
-        if (inBounds(cx, cy)) occupancyDynamicByFloor[floor][cy][cx] += 1;
+        addOccupancy(occupancyDynamicByFloor, floor, cx, cy, 1);
       }
 
       const previous = socialMovementStart.get(a.id);
@@ -3617,15 +3624,14 @@ export function initSimulation() {
       const floorOccupancy = {};
       for (let f = 0; f < floorCount; f++) {
         let floorTotal = 0;
-        for (let y = 0; y < gridH; y++) {
-          for (let x = 0; x < gridW; x++) {
-            const o = occupancyDynamicByFloor[f][y][x];
-            if (o > 0) {
-              occupiedCells++;
-              occSum += o;
-              floorTotal += o;
-              if (o > maxOcc) maxOcc = o;
-            }
+        const layer = occupancyDynamicByFloor[f];
+        for (let index = 0; index < layer.length; index++) {
+          const o = layer[index];
+          if (o > 0) {
+            occupiedCells++;
+            occSum += o;
+            floorTotal += o;
+            if (o > maxOcc) maxOcc = o;
           }
         }
         floorOccupancy[f] = floorTotal;
