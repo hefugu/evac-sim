@@ -113,7 +113,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
         layerCtx.translate(ox, oy);
         layerCtx.scale(scale, scale);
 
-        layerCtx.strokeStyle = "rgba(80,0,40,0.25)";
+        layerCtx.strokeStyle = "rgba(132,138,145,0.18)";
         layerCtx.lineWidth = 0.2;
         for (let y = 0; y <= gridH; y++) {
           layerCtx.beginPath();
@@ -128,7 +128,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
           layerCtx.stroke();
         }
 
-        layerCtx.fillStyle = "rgba(80,220,255,0.42)";
+        layerCtx.fillStyle = "rgba(150,156,162,0.18)";
         for (let y = 0; y < gridH; y++) {
           for (let x = 0; x < gridW; x++) {
             if (grid[y][x].stair) {
@@ -161,9 +161,9 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
 
     if (!baseImage) {
       const rect = cvs.getBoundingClientRect();
-      ctx.strokeStyle = "#330011";
+      ctx.strokeStyle = "#596068";
       ctx.strokeRect(20, 20, rect.width - 40, rect.height - 40);
-      ctx.fillStyle = "#501020";
+      ctx.fillStyle = "#aeb4ba";
       ctx.fillText("マップ画像を読み込んでください", 40, 50);
       return false;
     }
@@ -179,7 +179,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
     ctx.scale(scale, scale);
 
     if (!cachedStatic) {
-      ctx.strokeStyle = "rgba(80,0,40,0.25)";
+      ctx.strokeStyle = "rgba(132,138,145,0.18)";
       ctx.lineWidth = 0.2;
       for (let y = 0; y <= gridH; y++) {
         ctx.beginPath();
@@ -194,7 +194,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
         ctx.stroke();
       }
 
-      ctx.fillStyle = "rgba(80,220,255,0.42)";
+      ctx.fillStyle = "rgba(150,156,162,0.18)";
       for (let y = 0; y < gridH; y++) {
         for (let x = 0; x < gridW; x++) {
           if (grid[y][x].stair) ctx.fillRect(x * cellSizePx, y * cellSizePx, cellSizePx, cellSizePx);
@@ -203,8 +203,8 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
     }
 
     if (stairLinks.length) {
-      ctx.strokeStyle = "rgba(120,255,220,0.95)";
-      ctx.fillStyle = "rgba(200,255,245,0.95)";
+      ctx.strokeStyle = "rgba(70,80,90,0.9)";
+      ctx.fillStyle = "rgba(45,50,55,0.95)";
       ctx.lineWidth = 0.45;
       ctx.font = `${Math.max(6, cellSizePx * 0.7)}px Consolas`;
       ctx.textAlign = "left";
@@ -276,7 +276,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
             if (best.gain > 0.01) {
               const px = (x + 0.5) * cellSizePx;
               const py = (y + 0.5) * cellSizePx;
-              drawArrow(ctx, px, py, best.dx * 1.2, best.dy * 1.2, "rgba(180,255,255,0.7)", 0.3);
+              drawArrow(ctx, px, py, best.dx * 1.2, best.dy * 1.2, "rgba(60,90,120,0.7)", 0.3);
             }
           }
         }
@@ -347,50 +347,47 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
     const drawCell = (cell, x, y) => {
       const view = derive2DCellDisplay(cell,{...settings,isFront:isFireSpreadFront(scene.grid,x,y)});
       const px=(x+.5)*cellSizePx, py=(y+.5)*cellSizePx;
-      if (view.fire.active) {
-        const radius=cellSizePx*(.18+.3*Math.min(1,view.fire.flameHeightMeters/2.32));
-        const glow=ctx.createRadialGradient(px,py,0,px,py,radius);
-        glow.addColorStop(0,'rgba(255,245,190,.95)');
-        glow.addColorStop(.35,view.fire.color); glow.addColorStop(1,'rgba(255,80,20,0)');
-        ctx.save(); ctx.globalAlpha=.3+.7*view.fire.strength; ctx.fillStyle=glow;
-        ctx.fillRect(px-radius,py-radius,radius*2,radius*2); ctx.restore();
-        if (view.fire.origin === 'source') {
-          const markerRadius = Math.max(cellSizePx * 0.42, 1.8);
-          ctx.save();
-          ctx.strokeStyle = '#2b1208';
-          ctx.lineWidth = Math.max(1.2, cellSizePx * 0.22);
-          ctx.strokeRect(
-            px - markerRadius,
-            py - markerRadius,
-            markerRadius * 2,
-            markerRadius * 2
-          );
-          const innerRadius = markerRadius * 0.78;
-          ctx.strokeStyle = '#ff5a1f';
-          ctx.lineWidth = Math.max(0.8, cellSizePx * 0.14);
-          ctx.strokeRect(
-            px - innerRadius,
-            py - innerRadius,
-            innerRadius * 2,
-            innerRadius * 2
-          );
-          ctx.beginPath();
-          ctx.moveTo(px - innerRadius * 0.65, py);
-          ctx.lineTo(px + innerRadius * 0.65, py);
-          ctx.moveTo(px, py - innerRadius * 0.65);
-          ctx.lineTo(px, py + innerRadius * 0.65);
-          ctx.stroke();
-          ctx.restore();
+      const isExplicitSource = !!cell?.fire && cell?.fireSource !== "spread";
+      const hrrKw = Number(cell?.hrrKw) || 0;
+      const fireAgeSec = Number(cell?.fireAgeSec) || 0;
+      const isBurning = view.fire.active && (hrrKw > 0.1 || fireAgeSec > 0.05);
+
+      if (isExplicitSource || isBurning) {
+        ctx.save();
+        const isSource = isExplicitSource || view.fire.origin === 'source';
+
+        if (isBurning) {
+          const visibleStrength = Math.max(0.18, Number(view.fire.strength) || 0);
+          ctx.fillStyle = `rgba(190,36,36,${0.14 + 0.28 * visibleStrength})`;
+          ctx.fillRect(x * cellSizePx, y * cellSizePx, cellSizePx, cellSizePx);
+          ctx.strokeStyle = isSource ? '#c44d4d' : '#d26464';
         } else {
-          ctx.strokeStyle = '#ffad55';
-          ctx.lineWidth = Math.max(0.5, cellSizePx * 0.1);
+          ctx.strokeStyle = '#9aa1a8';
+        }
+
+        ctx.lineWidth = Math.max(0.7, cellSizePx * 0.12);
+        const markerInset = isSource ? 0.05 : 0.3;
+        ctx.strokeRect(
+          x * cellSizePx + markerInset,
+          y * cellSizePx + markerInset,
+          Math.max(0, cellSizePx - markerInset * 2),
+          Math.max(0, cellSizePx - markerInset * 2)
+        );
+        if (isSource) {
+          const r = Math.max(1.2, cellSizePx * 0.30);
           ctx.beginPath();
-          ctx.arc(px, py, Math.max(cellSizePx * 0.28, 1.2), 0, Math.PI * 2);
+          ctx.moveTo(px - r, py);
+          ctx.lineTo(px + r, py);
+          ctx.moveTo(px, py - r);
+          ctx.lineTo(px, py + r);
           ctx.stroke();
         }
-        if(settings.fireMetric==='spread_front' && view.fire.isFront) {
-          ctx.strokeStyle='#ff503d';ctx.lineWidth=.8;ctx.strokeRect(x*cellSizePx,y*cellSizePx,cellSizePx,cellSizePx);
+        if (settings.fireMetric === 'spread_front' && view.fire.isFront) {
+          ctx.strokeStyle = '#ff8a80';
+          ctx.lineWidth = Math.max(1, cellSizePx * 0.16);
+          ctx.strokeRect(x * cellSizePx, y * cellSizePx, cellSizePx, cellSizePx);
         }
+        ctx.restore();
       }
       if (sourceOverlayMatches(settings.dataSourceOverlay,view.source)) {
         ctx.strokeStyle=SOURCE_COLORS[view.source];ctx.lineWidth=.45;
@@ -422,46 +419,60 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
       const endpoint=(transfer.from?.floorIndex ?? transfer.from?.floor)===scene.currentFloor ? transfer.from :
         (transfer.to?.floorIndex ?? transfer.to?.floor)===scene.currentFloor ? transfer.to : null;
       if(!endpoint) continue;
-      drawArrow(ctx,(endpoint.cx+.5)*cellSizePx,(endpoint.cy+.5)*cellSizePx,0,-cellSizePx*.9,'#ffbd67',.65);
+      drawArrow(ctx,(endpoint.cx+.5)*cellSizePx,(endpoint.cy+.5)*cellSizePx,0,-cellSizePx*.9,'#66717b',.65);
     }
   }
 
   function drawAgents(scene) {
     const { exits, spawns, allExitPoints, currentFloor, vizTrails, agents, vizFlow, flowField, gridW, gridH } = scene;
-    ctx.fillStyle = "#ffdd33";
+    ctx.fillStyle = "#ffffff";
     exits.forEach((p, idx) => {
       const px = (p.cx + 0.5) * cellSizePx;
       const py = (p.cy + 0.5) * cellSizePx;
       ctx.beginPath();
       ctx.arc(px, py, cellSizePx * 0.6, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = "#3b2200";
+      ctx.strokeStyle = "#202428";
+      ctx.lineWidth = Math.max(0.8, cellSizePx * 0.12);
+      ctx.stroke();
+      ctx.fillStyle = "#202428";
       ctx.font = `${Math.max(6, cellSizePx * 0.8)}px Consolas`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       const globalIndex = allExitPoints.findIndex((e) => e.floor === currentFloor && e.cx === p.cx && e.cy === p.cy);
       ctx.fillText(String((globalIndex >= 0 ? globalIndex : idx) + 1), px, py);
-      ctx.fillStyle = "#ffdd33";
+      ctx.fillStyle = "#ffffff";
     });
 
-    ctx.fillStyle = "#33ffaa";
+    ctx.fillStyle = "#ffffff";
     spawns.forEach((p) => {
       const px = (p.cx + 0.5) * cellSizePx;
       const py = (p.cy + 0.5) * cellSizePx;
       ctx.beginPath();
       ctx.arc(px, py, cellSizePx * 0.6, 0, Math.PI * 2);
       ctx.fill();
+      ctx.strokeStyle = "#2f5f8f";
+      ctx.lineWidth = Math.max(0.8, cellSizePx * 0.12);
+      ctx.stroke();
     });
 
     if (vizTrails && agents.length) {
-      agents.forEach((a) => {
-        if (!a.trail || a.trail.length < 2 || a.dead) return;
+      const quality = scene.renderQuality || "full";
+      const maxTrailAgents = quality === "performance" ? 120 : (quality === "balanced" ? 320 : Infinity);
+      const agentStride = Number.isFinite(maxTrailAgents)
+        ? Math.max(1, Math.ceil(agents.length / maxTrailAgents))
+        : 1;
+      const pointStride = quality === "performance" ? 3 : (quality === "balanced" ? 2 : 1);
+
+      for (let ai = 0; ai < agents.length; ai += agentStride) {
+        const a = agents[ai];
+        if (!a.trail || a.trail.length < 2 || a.dead) continue;
         const baseColor = typeMeta[a.type]?.color || "#ff3366";
         ctx.strokeStyle = baseColor;
         ctx.globalAlpha = 0.22;
         ctx.lineWidth = 0.45;
         let drawing = false;
-        for (let i = 0; i < a.trail.length; i++) {
+        for (let i = 0; i < a.trail.length; i += pointStride) {
           const t = a.trail[i];
           if ((t.floor ?? a.floor) !== currentFloor) {
             drawing = false;
@@ -479,11 +490,12 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
           }
         }
         ctx.globalAlpha = 1;
-      });
+      }
     }
 
     if (vizFlow && flowField) {
-      const stride = 4;
+      const quality = scene.renderQuality || "full";
+      const stride = quality === "performance" ? 8 : (quality === "balanced" ? 6 : 4);
       for (let y = 1; y < gridH - 1; y += stride) {
         for (let x = 1; x < gridW - 1; x += stride) {
           const f = flowField[y][x];
@@ -502,11 +514,11 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
 
     if (!agents.length) return;
     agents.forEach((a) => {
-      if (a.floor !== currentFloor) return;
+      if (a.floor !== currentFloor || a.finished) return;
       const px = (a.x + 0.5) * cellSizePx;
       const py = (a.y + 0.5) * cellSizePx;
       if (a.dead) ctx.fillStyle = "#1a1a1a";
-      else if (a.fallen) ctx.fillStyle = "#ff9900";
+      else if (a.fallen) ctx.fillStyle = "#8b4a4a";
       else if (a.helpingId != null) ctx.fillStyle = "#33ccff";
       else if (a.finished) ctx.fillStyle = "#8888ff";
       else ctx.fillStyle = typeMeta[a.type]?.color || "#ff3366";
@@ -539,11 +551,10 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
     if (!scene.simRunning && scene.maxHeatCell && scene.maxHeatValue > 5) {
       const px = (scene.maxHeatCell.x + 0.5) * cellSizePx;
       const py = (scene.maxHeatCell.y + 0.5) * cellSizePx;
-      const pulse = 0.5 + 0.5 * Math.sin(scene.simTime * 4);
-      ctx.strokeStyle = `rgba(255,120,0,${pulse})`;
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(126,166,199,0.8)';
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.arc(px, py, cellSizePx * (1.2 + pulse), 0, Math.PI * 2);
+      ctx.arc(px, py, cellSizePx * 0.75, 0, Math.PI * 2);
       ctx.stroke();
     }
   }
@@ -553,7 +564,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
     const lines=[`${scene.currentFloor+1}F | ${settings.smokeDisplayMode} | alpha=1-exp(-K L)${settings.smokeDisplayMode==='analysis'?' ^ gamma=0.55':''}`,
       `Eye 1.6m / L=${Number(scene.cellSizeMeters || .5).toFixed(2)} m; ${displayLegend(settings.smokeMetric)}`,
       `${displayLegend(settings.fireMetric)}; source □ / spread ○`,
-      'FDS cyan ○ / fallback gray / mixed purple; stair smoke amber →'];
+      'FDS cyan ○ / fallback gray / mixed purple; stair smoke transfer →'];
     if(scene.riskOverlay) {
       lines.push(`2D map: ${scene.riskOverlay.legend}`);
       const {minValue,maxValue,unit}=scene.riskOverlay;
@@ -562,7 +573,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
     if(scene.profiler) {
       const p=scene.profiler;
       lines.push(
-        `PERF ${Number(p.fps || 0).toFixed(1)} FPS | frame ${Number(p.frameWorkMs || 0).toFixed(1)} ms | draw ${Number(p.renderMs || 0).toFixed(1)} ms`
+        `PERF ${Number(p.fps || 0).toFixed(1)} RAF / ${Number(p.renderFps || 0).toFixed(1)} draw FPS | frame ${Number(p.frameWorkMs || 0).toFixed(1)} ms | draw ${Number(p.renderMs || 0).toFixed(1)} ms | ${scene.renderQuality || "full"}`
       );
       lines.push(
         `Smoke ${Number(p.smokeMs || 0).toFixed(2)} ms/tick | substeps ${Number(p.smokeSubsteps || 0).toFixed(1)} | active ${p.activeSmokeCells || 0}/${p.totalGridCells || 0}`
@@ -594,8 +605,13 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
       }
       wrapped.push(current);
     }
-    ctx.fillStyle='rgba(5,13,18,.88)';ctx.fillRect(5,top-5,Math.min(rect.width-10,800),wrapped.length*16+8);
-    ctx.fillStyle='#d9eef5';wrapped.forEach((line,i)=>ctx.fillText(line,12,top+i*16));
+    ctx.fillStyle='rgba(255,255,255,.94)';
+    ctx.fillRect(5,top-5,Math.min(rect.width-10,800),wrapped.length*16+8);
+    ctx.strokeStyle='#b8bec4';
+    ctx.lineWidth=1;
+    ctx.strokeRect(5,top-5,Math.min(rect.width-10,800),wrapped.length*16+8);
+    ctx.fillStyle='#30363b';
+    wrapped.forEach((line,i)=>ctx.fillText(line,12,top+i*16));
     ctx.restore();
   }
 
@@ -612,15 +628,24 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
     drawAgents(scene);
     drawHeatmap(scene);
     if(scene.selectedCell?.floorIndex===scene.currentFloor) {
-      ctx.strokeStyle='#ffffff';ctx.lineWidth=.8;
+      ctx.strokeStyle='#202428';ctx.lineWidth=.8;
       ctx.strokeRect(scene.selectedCell.cx*cellSizePx,scene.selectedCell.cy*cellSizePx,cellSizePx,cellSizePx);
     }
     ctx.restore();
-    drawHUD(scene);
+  }
+
+  function setCellSizePx(value) {
+    const next = Number(value);
+    if (!Number.isFinite(next) || next <= 0 || next === cellSizePx) return cellSizePx;
+    cellSizePx = next;
+    staticLayer = null;
+    staticLayerKey = "";
+    return cellSizePx;
   }
 
   return {
     render,
+    setCellSizePx,
     drawGrid,
     drawAgents,
     drawSmoke,

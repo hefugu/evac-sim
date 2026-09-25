@@ -1,5 +1,6 @@
 import { getCellHazardInspection, DEFAULT_HAZARD_DISPLAY } from './hazard-display.js';
 const panels = new WeakMap();
+const sourceLabel = source => ({ fds: 'FDS', fallback: '簡易モデル', mixed: '混在', none: '未取得' }[source] || source || '未取得');
 const formatValue = value => value == null ? '未取得' : typeof value === 'number'
   ? Number.isFinite(value) ? Number(value.toPrecision(5)).toString() : '未取得'
   : typeof value === 'object' ? JSON.stringify(value) : String(value);
@@ -20,11 +21,11 @@ export function getInspectionPanel(state) {
       if (encoded === last) return;
       last = encoded;
       host.querySelector('[data-inspector-location]').textContent = result
-        ? `${result.floorIndex + 1}F / floor=${result.floorIndex} / cx=${result.cx}, cy=${result.cy} / ${result.source}` : '選択セルがありません';
+        ? `${result.floorIndex + 1}階 / セル X=${result.cx}, Y=${result.cy} / データ由来: ${sourceLabel(result.source)}` : '選択セルがありません';
       const body = host.querySelector('tbody'); body.replaceChildren();
       for (const row of result?.rows || []) {
         const tr = document.createElement('tr'); tr.dataset.field = row.key;
-        for (const value of [row.label, `${formatValue(row.value)}${row.unit ? ' ' + row.unit : ''}`, row.value == null ? '—' : row.source]) {
+        for (const value of [row.label, `${formatValue(row.value)}${row.unit ? ' ' + row.unit : ''}`, row.value == null ? '—' : sourceLabel(row.source)]) {
           const td = document.createElement('td'); td.textContent = value; tr.append(td);
         }
         body.append(tr);

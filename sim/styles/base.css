@@ -1,12 +1,16 @@
 :root {
-  --bg: #050104;
-  --panel: #220007dd;
-  --accent: #e0002a;
-  --accent-soft: #aa0022;
-  --accent-warn: #ff6600;
-  --text-main: #f4f0f0;
-  --text-dim: #b08080;
-  --grid-line: #440011;
+  --bg: #1f2124;
+  --panel: #26292d;
+  --surface: #2b2e32;
+  --surface-strong: #32363b;
+  --border: #44484e;
+  --border-strong: #5a6068;
+  --accent: #6f9dca;
+  --accent-soft: #2d3b49;
+  --danger: #d05a5a;
+  --text-main: #e3e6e9;
+  --text-dim: #a7adb4;
+  --grid-line: #474c52;
 }
 
 * {
@@ -16,9 +20,9 @@
 
 body {
   margin: 0;
-  background: radial-gradient(circle at top left, #330000, #050104 60%);
+  background: var(--bg);
   color: var(--text-main);
-  font-family: "Consolas", "Menlo", monospace;
+  font-family: "Noto Sans JP", "Yu Gothic UI", "Meiryo", Arial, sans-serif;
   height: 100vh;
   overflow: hidden;
   display: flex;
@@ -27,7 +31,7 @@ body {
 h1 {
   margin: 0 0 6px;
   font-size: 14px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--accent-warn);
+  font-weight: 600;
+  letter-spacing: 0;
+  color: #eef0f2;
 }

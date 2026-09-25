@@ -6,7 +6,10 @@ import {
   isFireAvoidanceBlocked,
   extendPotentialIntoFireAvoidanceZone,
   chooseFireSafeExitField,
-  routeChoiceForExit
+  routeChoiceForExit,
+  buildNearestFireDistanceFields,
+  fireDistanceAt,
+  moveApproachesFire
 } from "../sim/js/simulation/routing.js";
 
 function fieldAt(score) {

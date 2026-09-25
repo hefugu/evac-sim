@@ -8,63 +8,67 @@
 
 button {
   cursor: pointer;
-  border-radius: 3px;
-  border: 1px solid #550011;
-  background: #190008;
-  color: var(--text-main);
-  padding: 4px 6px;
+  border-radius: 2px;
+  border: 1px solid var(--border-strong);
+  background: #2b2f34;
+  color: #e1e4e7;
+  padding: 4px 7px;
   font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  transition: all 0.12s ease-out;
+  letter-spacing: 0;
+  transition: background 0.08s ease, border-color 0.08s ease;
   position: relative;
-  overflow: hidden;
+  box-shadow: none;
 }
 
 button::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(120deg, transparent, #ff003022, transparent);
-  transform: translateX(-120%);
-  transition: transform 0.25s linear;
-}
-
-button:hover::before {
-  transform: translateX(120%);
+  content: none;
 }
 
 button:hover {
-  border-color: var(--accent);
-  box-shadow: 0 0 12px #ff002044;
-  background: #26000c;
+  border-color: #747c85;
+  background: #343940;
 }
 
 button.modeActive {
   background: var(--accent-soft);
   border-color: var(--accent);
-  box-shadow: 0 0 10px #ff003055;
+  color: #dceaf6;
 }
 
 button.danger {
-  border-color: var(--accent-warn);
-  color: var(--accent-warn);
+  border-color: #765252;
+  color: #e0b6b6;
 }
 
 button.danger.modeActive {
-  background: #661a00;
-  color: #ffe0c0;
-}
-
-@keyframes pulseWarn {
-  0%, 100% {
-    box-shadow: 0 0 6px #ff660033;
-  }
-  50% {
-    box-shadow: 0 0 16px #ff6600aa;
-  }
+  background: #3b2a2a;
+  border-color: var(--danger);
+  color: #f0cccc;
 }
 
 .pulse {
-  animation: pulseWarn 1.2s infinite;
+  animation: none;
+}
+
+.primaryActions #btnStart {
+  flex: 1 1 100%;
+  min-height: 34px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #30353a;
+  border-color: #68717a;
+  color: #eef0f2;
+}
+
+.primaryActions #btnStart:hover {
+  background: #393f45;
+}
+
+.primaryActions #btnStop,
+.primaryActions #btnReset {
+  flex: 1 1 calc(50% - 4px);
+}
+
+.secondaryActions button {
+  flex: 1 1 calc(50% - 4px);
 }

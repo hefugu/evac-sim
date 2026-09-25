@@ -23,6 +23,30 @@ async function loadRoom(page) {
   })).toBe(true);
 }
 
+async function loadScitech3F(page) {
+  // The default browser fixture is a small synthetic room. Reload first so
+  // the real 600x800 map is not correctly rejected as a mismatched floor size.
+  await page.goto("/sim/");
+  await page.locator("details").evaluateAll(elements => {
+    for (const element of elements) element.open = true;
+  });
+  const base64 = await page.evaluate(async () => {
+    const response = await fetch("/sim/assets/maps/scitech_3f_walkable.png.base64");
+    if (!response.ok) throw new Error(`3F fixture fetch failed: ${response.status}`);
+    return (await response.text()).trim();
+  });
+  await page.locator("#mapFile").setInputFiles({
+    name: "3F.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(base64, "base64")
+  });
+  await expect.poll(() => page.evaluate(async () => {
+    const { state } = await import("/sim/js/state.js");
+    const floor = state.map.floorStates[state.map.currentFloor];
+    return floor?.mapProfile || null;
+  })).toBe("scitech-3f");
+}
+
 async function marker(page, mode, cx, cy) {
   await page.evaluate(async ({ mode, cx, cy }) => {
     const { state } = await import("/sim/js/state.js");
@@ -61,7 +85,224 @@ test.beforeEach(async ({ page }) => {
   await page.clock.install();
   await page.goto("/sim/");
   await loadRoom(page);
+  await page.locator("details").evaluateAll(elements => {
+    for (const element of elements) element.open = true;
+  });
 });
+
+
+test("real 3F map loads with calibrated topology and scale", async ({ page }) => {
+  await loadScitech3F(page);
+
+  const topology = await page.evaluate(async () => {
+    const { state } = await import("/sim/js/state.js");
+    const floor = state.map.floorStates[state.map.currentFloor];
+    let walkable = 0;
+    let stairs = 0;
+    for (const row of floor.grid) {
+      for (const cell of row) {
+        if (cell.walkable) walkable++;
+        if (cell.stair) stairs++;
+      }
+    }
+    return {
+      profile: floor.mapProfile,
+      width: floor.gridWidth,
+      height: floor.gridHeight,
+      cellSizeMeters: floor.cellSizeMeters,
+      walkable,
+      stairs,
+      imageWidth: floor.baseImage?.width,
+      imageHeight: floor.baseImage?.height
+    };
+  });
+
+  expect(topology).toEqual({
+    profile: "scitech-3f",
+    width: 150,
+    height: 200,
+    cellSizeMeters: 0.42,
+    walkable: 2886,
+    stairs: 640,
+    imageWidth: 600,
+    imageHeight: 800
+  });
+});
+
+
+test("real 3F map runs fire and smoke physics without geometry corruption", async ({ page }) => {
+  const errors = [];
+  page.on("pageerror", error => errors.push(String(error)));
+
+  await loadScitech3F(page);
+  await configureAgent(page, "1.2");
+  await marker(page, "modeSpawn", 118, 154);
+  await marker(page, "modeExit", 138, 154);
+  await marker(page, "modeFire", 104, 120);
+
+  await page.locator("#btnStart").click();
+  await page.clock.runFor(5_000);
+
+  const result = await page.evaluate(async () => {
+    const { state } = await import("/sim/js/state.js");
+    const floor = state.map.floorStates[state.map.currentFloor];
+    const source = floor.grid[120][104];
+    return {
+      sourceFire: !!source.fire,
+      sourceAge: Number(source.fireAgeSec) || 0,
+      sourceHrrKw: Number(source.hrrKw) || 0,
+      spreadCells: floor.grid.flat().filter(cell => cell.fireSource === "spread").length,
+      sootKg: [...floor.smokePhysics.sootMassKg].reduce((sum, value) => sum + value, 0),
+      coKg: [...floor.smokePhysics.coMassKg].reduce((sum, value) => sum + value, 0),
+      activeSmokeCells: floor.smokePhysics.activeIndices?.length || 0,
+      width: floor.gridWidth,
+      height: floor.gridHeight,
+      walkable: floor.grid.flat().filter(cell => cell.walkable).length
+    };
+  });
+
+  expect(result.sourceFire).toBe(true);
+  expect(result.sourceAge).toBeGreaterThan(0);
+  expect(result.sourceHrrKw).toBeGreaterThan(0);
+  expect(result.spreadCells).toBe(0);
+  expect(result.sootKg).toBeGreaterThan(0);
+  expect(result.coKg).toBeGreaterThan(0);
+  expect(result.activeSmokeCells).toBeGreaterThan(0);
+  expect(result.width).toBe(150);
+  expect(result.height).toBe(200);
+  expect(errors).toEqual([]);
+});
+
+test("real 3F map evacuates a small crowd through a corridor exit without stragglers", async ({ page }) => {
+  await loadScitech3F(page);
+  await configureAgent(page, "1.2");
+  await page.locator("#numAgents").fill("12");
+  await page.locator("#agentPreset").selectOption("default");
+
+  // Lower-right horizontal corridor: 20 cells ~= 8.4 m at the calibrated scale.
+  await marker(page, "modeSpawn", 118, 153);
+  await marker(page, "modeSpawn", 118, 154);
+  await marker(page, "modeSpawn", 118, 155);
+  await marker(page, "modeExit", 138, 154);
+
+  await page.locator("#btnStart").click();
+  await page.clock.runFor(30_000);
+
+  const result = await page.evaluate(async () => {
+    const { state } = await import("/sim/js/state.js");
+    return {
+      running: state.sim.running,
+      evacuated: state.agents.filter(a => a.finished).length,
+      active: state.agents.filter(a => !a.finished && !a.dead).map(a => ({
+        id: a.id,
+        x: a.x,
+        y: a.y,
+        type: a.type,
+        targetExitIndex: a.targetExitIndex
+      })),
+      dead: state.agents.filter(a => a.dead).length
+    };
+  });
+
+  expect(result.dead).toBe(0);
+  expect(result.active).toEqual([]);
+  expect(result.evacuated).toBe(12);
+});
+
+test("real 3F map completes a long route with turns without wandering", async ({ page }) => {
+  await loadScitech3F(page);
+  await configureAgent(page, "1.2");
+
+  // From the upper corridor to the lower-right corridor. This crosses the
+  // long central connection and exercises potential guidance + Social Force.
+  await marker(page, "modeSpawn", 100, 62);
+  await marker(page, "modeExit", 138, 154);
+
+  await page.locator("#btnStart").click();
+  await page.clock.runFor(75_000);
+
+  const result = await page.evaluate(async () => {
+    const { state } = await import("/sim/js/state.js");
+    const agent = state.agents[0];
+    return {
+      running: state.sim.running,
+      finished: !!agent?.finished,
+      dead: !!agent?.dead,
+      finishTime: agent?.finishTime ?? null,
+      x: agent?.x ?? null,
+      y: agent?.y ?? null,
+      stuckCount: agent?.stuckCount ?? 0
+    };
+  });
+
+  expect(result.dead).toBe(false);
+  expect(result.finished).toBe(true);
+  expect(result.finishTime).not.toBeNull();
+  expect(result.finishTime).toBeLessThan(75);
+});
+
+test("manual fire source is neutral before combustion and red after ignition", async ({ page }) => {
+  await configureAgent(page, "0.8");
+  await marker(page, "modeSpawn", 2, 2);
+  await marker(page, "modeExit", 17, 2);
+  await marker(page, "modeFire", 12, 8);
+
+  const sampleFireMarker = () => page.evaluate(async () => {
+    const { state } = await import("/sim/js/state.js");
+    const floor = state.map.floorStates[state.map.currentFloor];
+    const canvas = document.querySelector("#simCanvas");
+    const rect = canvas.getBoundingClientRect();
+    const image = floor.baseImage;
+    const scale = Math.min(rect.width / image.width, rect.height / image.height);
+    const offsetX = (rect.width - image.width * scale) / 2;
+    const offsetY = (rect.height - image.height * scale) / 2;
+    const cssX = offsetX + (12.5 * 4 * scale);
+    const cssY = offsetY + (8.5 * 4 * scale);
+    const dprX = canvas.width / rect.width;
+    const dprY = canvas.height / rect.height;
+    const ctx = canvas.getContext("2d");
+    const sample = ctx.getImageData(
+      Math.max(0, Math.round(cssX * dprX) - 3),
+      Math.max(0, Math.round(cssY * dprY) - 3),
+      7,
+      7
+    ).data;
+
+    let redDominantPixels = 0;
+    let neutralMarkerPixels = 0;
+    for (let i = 0; i < sample.length; i += 4) {
+      const r = sample[i];
+      const g = sample[i + 1];
+      const b = sample[i + 2];
+      if (r > g + 35 && r > b + 35) redDominantPixels++;
+      if (Math.max(r,g,b) - Math.min(r,g,b) < 18 && r >= 90 && r <= 190) neutralMarkerPixels++;
+    }
+
+    return {
+      fire: !!floor.grid?.[8]?.[12]?.fire,
+      source: floor.grid?.[8]?.[12]?.fireSource,
+      hrrKw: Number(floor.grid?.[8]?.[12]?.hrrKw) || 0,
+      redDominantPixels,
+      neutralMarkerPixels
+    };
+  });
+
+  const before = await sampleFireMarker();
+  expect(before.fire).toBe(true);
+  expect(before.source).toBe("manual");
+  expect(before.hrrKw).toBe(0);
+  expect(before.redDominantPixels).toBe(0);
+  expect(before.neutralMarkerPixels).toBeGreaterThan(0);
+
+  await page.locator("#btnStart").click();
+  await page.clock.runFor(1000);
+  await page.locator("#btnStop").click();
+
+  const after = await sampleFireMarker();
+  expect(after.hrrKw).toBeGreaterThan(0);
+  expect(after.redDominantPixels).toBeGreaterThan(0);
+});
+
 
 test('display controls and 2D/3D clicks inspect the same state without advancing hazards', async ({page}) => {
   const errors=[];page.on('pageerror',e=>errors.push(String(e)));
@@ -75,7 +316,7 @@ test('display controls and 2D/3D clicks inspect the same state without advancing
   });
   const before=await numericalState();
   await marker(page,'modeInspect',12,8);
-  await expect(page.locator('[data-inspector-location]')).toContainText('cx=12, cy=8');
+  await expect(page.locator('[data-inspector-location]')).toContainText('X=12, Y=8');
   await expect(page.locator('[data-field="hrrKw"]')).toContainText('kW');
   await expect(page.locator('[data-field="fireAgeSec"]')).not.toContainText('未取得');
   await page.getByRole('button',{name:'地点分析を閉じる'}).click();
@@ -95,8 +336,8 @@ test('display controls and 2D/3D clicks inspect the same state without advancing
   });
   const box=await page.locator('#simCanvas3d').boundingBox();
   await page.mouse.click(box.x+projected.x,box.y+projected.y);
-  await expect(page.locator('[data-inspector-location]')).toContainText('cx=12, cy=8');
-  await expect(page.locator('[data-field="hrrKw"]')).toContainText('fallback');
+  await expect(page.locator('[data-inspector-location]')).toContainText('X=12, Y=8');
+  await expect(page.locator('[data-field="hrrKw"]')).toContainText('簡易モデル');
   expect(await numericalState()).toBe(before);
   expect(errors).toEqual([]);
 });
@@ -106,9 +347,9 @@ test('inspector keeps FDS provenance per field and live standalone view returns 
   await page.locator('#fdsCsvFile').setInputFiles({name:'inspect.csv',mimeType:'text/csv',buffer:Buffer.from(csv)});
   await marker(page,'modeInspect',5,5);
   await expect(page.locator('[data-field="coPpm"]')).toContainText('600 ppm');
-  await expect(page.locator('[data-field="coPpm"]')).toContainText('fds');
+  await expect(page.locator('[data-field="coPpm"]')).toContainText('FDS');
   await expect(page.locator('[data-field="eyeLevelTemperatureC"]')).toContainText('85 °C');
-  await expect(page.locator('[data-field="upperLayerCoPpm"]')).toContainText('fallback');
+  await expect(page.locator('[data-field="upperLayerCoPpm"]')).toContainText('簡易モデル');
   const standalone=await context.newPage();await standalone.goto('/sim/3d.html?live=1');
   await page.evaluate(async()=>(await import('/sim/js/view3d.js')).init3DView().publisher.publishNow(true));
   await expect(standalone.locator('#standaloneConnection')).toContainText('同期中');
@@ -118,7 +359,7 @@ test('inspector keeps FDS provenance per field and live standalone view returns 
   expect(transferred.coPpm).toBe(600);expect(transferred.eyeLevelTemperatureC).toBe(85);
   expect(transferred.fdsFields).toContain('coPpm');expect(transferred.fdsSamples).toHaveLength(2);
   await page.locator('#btnClearFdsCsv').click();
-  await expect(page.locator('[data-field="coPpm"]')).toContainText('fallback');
+  await expect(page.locator('[data-field="coPpm"]')).toContainText('簡易モデル');
   await page.evaluate(async()=>(await import('/sim/js/view3d.js')).init3DView().publisher.publishNow());
   await expect.poll(()=>standalone.evaluate(async()=> (await import('/sim/js/state.js')).state.map.floorStates[0].grid[5][5].fdsFields ?? null)).toBeNull();
   await standalone.close();
@@ -180,7 +421,8 @@ test("reset clears smoke inventory, agent exposure and fire spread while keeping
     };
   });
   expect(before.fireAge).toBeGreaterThan(0);
-  expect(before.spread).toBeGreaterThan(0);
+  // Material-independent flame spread is disabled by default.
+  expect(before.spread).toBe(0);
   expect(before.soot).toBeGreaterThan(0);
   expect(before.co).toBeGreaterThan(0);
   expect(before.exposure).toBeGreaterThan(0);
@@ -200,6 +442,67 @@ test("reset clears smoke inventory, agent exposure and fire spread while keeping
     };
   });
   expect(after).toEqual({ time: 0, agents: 0, source: true, sourceAge: 0, sourceHrr: 0, spread: 0, soot: 0, co: 0, smoke: 0, exposure: 0 });
+});
+
+
+
+test("crowd near a single exit does not leave stragglers wandering past it", async ({ page }) => {
+  await configureAgent(page, "1.2");
+  await page.locator("#numAgents").fill("12");
+  await page.locator("#agentPreset").selectOption("default");
+  await marker(page, "modeSpawn", 12, 1);
+  await marker(page, "modeSpawn", 12, 2);
+  await marker(page, "modeSpawn", 12, 3);
+  await marker(page, "modeExit", 17, 2);
+
+  await page.locator("#btnStart").click();
+  await page.clock.runFor(12_000);
+
+  const result = await page.evaluate(async () => {
+    const { state } = await import("/sim/js/state.js");
+    return {
+      running: state.sim.running,
+      active: state.agents.filter(a => !a.finished && !a.dead).map(a => ({
+        id: a.id,
+        x: a.x,
+        y: a.y,
+        type: a.type,
+        targetExitIndex: a.targetExitIndex
+      })),
+      evacuated: state.agents.filter(a => a.finished).length,
+      dead: state.agents.filter(a => a.dead).length
+    };
+  });
+
+  expect(result.dead).toBe(0);
+  expect(result.active).toEqual([]);
+  expect(result.evacuated).toBe(12);
+});
+
+test("Start is enabled again after Stop and after normal completion", async ({ page }) => {
+  await configureAgent(page, "0.8");
+  await marker(page, "modeSpawn", 2, 2);
+  await marker(page, "modeExit", 17, 2);
+
+  const start = page.locator("#btnStart");
+  await expect(start).toBeEnabled();
+
+  await start.click();
+  await page.clock.runFor(400);
+  await page.locator("#btnStop").click();
+  await expect(start).toBeEnabled();
+
+  await start.click();
+  await page.evaluate(async () => {
+    const { state } = await import("/sim/js/state.js");
+    state.hazards.tenabilityOptions = {
+      ...(state.hazards.tenabilityOptions || {}),
+      maxSimulationTimeSec: 0.3
+    };
+  });
+  await page.clock.runFor(1_000);
+  await expect.poll(() => page.evaluate(async () => (await import("/sim/js/state.js")).state.sim.running)).toBe(false);
+  await expect(start).toBeEnabled();
 });
 
 test("an agent uses the UI-created stair connection and evacuates on the other floor", async ({ page }) => {
