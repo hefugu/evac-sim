@@ -1665,7 +1665,7 @@ export function initSimulation() {
     syncPublicState();
     drawScene();
     if (fdsCsvStatus) {
-      fdsCsvStatus.textContent = "未読込。FDS値は使わず、研究式ベースの軽量煙モデルを使います。";
+      fdsCsvStatus.textContent = "未読込";
     }
     if (fdsCsvStats) fdsCsvStats.textContent = "FDS統計: 未読込";
     log("FDS CSVを解除しました。");
