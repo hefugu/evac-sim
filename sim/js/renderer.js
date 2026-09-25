@@ -514,7 +514,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
 
     if (!agents.length) return;
     agents.forEach((a) => {
-      if (a.floor !== currentFloor) return;
+      if (a.floor !== currentFloor || a.finished) return;
       const px = (a.x + 0.5) * cellSizePx;
       const py = (a.y + 0.5) * cellSizePx;
       if (a.dead) ctx.fillStyle = "#1a1a1a";
