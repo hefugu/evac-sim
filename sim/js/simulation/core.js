@@ -2509,7 +2509,7 @@ export function initSimulation() {
     maxHeatValue = 0;
 
     // UI state
-    btnStart.disabled = null;
+    btnStart.disabled = false;
     btnStart.classList.add("pulse");
 
     syncPublicState();
@@ -2652,6 +2652,7 @@ export function initSimulation() {
     mcRunning = false;
     if (simulationAnimationFrameId != null) cancelAnimationFrame(simulationAnimationFrameId);
     simulationAnimationFrameId = null;
+    btnStart.disabled = false;
     syncPublicState();
     summarize();
     setStatus("シミュレーションを停止しました。");
@@ -3672,6 +3673,7 @@ export function initSimulation() {
     const completionReason = simulationObservationComplete(agents, simTime, state.hazards.tenabilityOptions);
     if (completionReason) {
       simRunning = false;
+      btnStart.disabled = false;
       syncPublicState();
       if (completionReason === "observation_window") {
         setStatus("観測時間終了（未避難者を打切り記録）。");
