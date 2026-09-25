@@ -503,7 +503,7 @@ export function initSimulation() {
   function setMode(m) {
     if (mode === "stairLink" && m !== "stairLink" && pendingStairLink) {
       pendingStairLink = null;
-      setStatus("Stair link selection cancelled.");
+      setStatus("階段リンクの選択をキャンセルしました。");
     }
     mode = m;
     Object.entries(modeButtons).forEach(([k,btn]) => {
@@ -1141,11 +1141,11 @@ export function initSimulation() {
     const vis = stats.minVisibilityM == null ? "--" : `${stats.minVisibilityM.toFixed(1)}m`;
     const temp = stats.maxTemperatureC == null ? "--" : `${stats.maxTemperatureC.toFixed(1)}℃`;
     return (
-      `FDS統計: rows=${stats.rows}, times=${stats.timeCount}, ` +
-      `max HeatFlux=${stats.maxHeatFluxKwM2.toFixed(1)}kW/m², ` +
-      `max K=${stats.maxOpticalDensityM1.toFixed(2)}1/m, ` +
-      `max CO=${stats.maxCoPpm.toFixed(0)}ppm, ` +
-      `min Visibility=${vis}, max Temp=${temp}`
+      `FDS統計: 行数=${stats.rows}, 時刻数=${stats.timeCount}, ` +
+      `最大熱流束=${stats.maxHeatFluxKwM2.toFixed(1)}kW/m², ` +
+      `最大K=${stats.maxOpticalDensityM1.toFixed(2)}1/m, ` +
+      `最大CO=${stats.maxCoPpm.toFixed(0)}ppm, ` +
+      `最小視界=${vis}, 最高温度=${temp}`
     );
   }
 
@@ -2339,7 +2339,7 @@ export function initSimulation() {
 
     //HUDreset
     hudTime.textContent = "0.0 s";
-    hudEvac.textContent = "0 避難 / critical経験 0 / 0";
+    hudEvac.textContent = "0 避難 / 危険域経験 0 / 0";
     hudAvg.textContent = "--";
     hudMax.textContent = "--";
 
@@ -2402,7 +2402,7 @@ export function initSimulation() {
     allSpawnPoints = collectAllSpawns();
     syncPotentialExitIndexControl();
     rebuildPotentialCache();
-    log(`Cleared markers on floor ${currentFloor + 1}F`);
+    log(`${currentFloor + 1}階の配置マーカーを消去しました。`);
     state.render.geometryRevision = (state.render.geometryRevision || 0) + 1;
     syncPublicState();
     drawScene();
@@ -2419,7 +2419,7 @@ export function initSimulation() {
   mcRuns = 0;
   mcResults = [];
 
-  log(`Monte Carlo開始: ${mcTargetRuns}回`);
+  log(`モンテカルロ法を開始: ${mcTargetRuns}回`);
 
   startSimulationCore();
 
@@ -2428,7 +2428,7 @@ export function initSimulation() {
   btnApplyFloors.addEventListener("click", () => {
     syncActiveFloorState();
     applyFloorSetup(true);
-    log(`Applied floor setup: ${floorCount} floor(s)`);
+    log(`階数設定を反映しました: ${floorCount}階`);
     setStatus(`フロア設定を反映しました: ${floorCount}階。`);
   });
   currentFloorSelect.addEventListener("change", () => {
@@ -2443,7 +2443,7 @@ export function initSimulation() {
       loadFloorState(target);
     }
     if (mode === "stairLink" && pendingStairLink) {
-      setStatus(`Moved to floor ${target + 1}F. Stair link selection remains active.`);
+      setStatus(`${target + 1}階へ移動しました。階段リンク選択は継続中です。`);
     } else {
       setStatus(`フロアを ${target + 1}F に切り替えました。`);
     }
@@ -2492,7 +2492,7 @@ export function initSimulation() {
     btnStart.disabled = true;
     btnStart.classList.remove("pulse");
     const startRuleLabel = (startRuleInput?.value === "far_first") ? "far_first" : "simultaneous";
-    setStatus(`Simulation running. start_rule=${startRuleLabel}`);
+    setStatus(`シミュレーション実行中。開始方式=${startRuleLabel === "far_first" ? "遠方優先" : "一斉開始"}`);
     scheduleSimulationFrame();
 
     return true;
@@ -2508,8 +2508,8 @@ export function initSimulation() {
     simulationAnimationFrameId = null;
     syncPublicState();
     summarize();
-    setStatus("Simulation stopped.");
-    log("Simulation stopped.");
+    setStatus("シミュレーションを停止しました。");
+    log("シミュレーションを停止しました。");
     return true;
   }
   // ==== Main Loop ====
@@ -3519,7 +3519,7 @@ export function initSimulation() {
 
     hudTime.textContent = simTime.toFixed(1) + " s";
     const exposureMetrics = summarizeAgentMetrics(agents);
-    hudEvac.textContent = `${evacCount} 避難 / critical経験 ${exposureMetrics.worstTenabilityCounts.critical} / ${agents.length}`;
+    hudEvac.textContent = `${evacCount} 避難 / 危険域経験 ${exposureMetrics.worstTenabilityCounts.critical} / ${agents.length}`;
 
     const completionReason = simulationObservationComplete(agents, simTime, state.hazards.tenabilityOptions);
     if (completionReason) {
@@ -3762,7 +3762,7 @@ export function initSimulation() {
     hudAvg.textContent = times.length ? `${avgT.toFixed(1)} s` : "--";
     hudMax.textContent = times.length ? `${maxT.toFixed(1)} s` : "--";
 
-    log(`Summary: agents=${agents.length}, evacuated=${evacuated.length}, unresolved=${unresolved.length}, ` +
+    log(`集計: 避難者数=${agents.length}, 避難完了=${evacuated.length}, 未完了=${unresolved.length}, ` +
       `worst_tenability=${JSON.stringify(agentMetrics.worstTenabilityCounts)}, ` +
       `completed_only_avg=${times.length ? avgT.toFixed(2) : "N/A"}s, reason=${completionReason}`);
     log(
@@ -3846,8 +3846,8 @@ export function initSimulation() {
         const maxAll = completedRuns.length ? Math.max(...completedRuns.map(result => result.max)).toFixed(2) : "N/A";
         const critical = mcResults.reduce((sum, result) => sum + result.worstTenabilityCounts.critical, 0);
         const censored = mcResults.reduce((sum, result) => sum + result.censored, 0);
-        log(`MC complete: completed-only run mean=${avgAll}s, max=${maxAll}s, critical=${critical}, censored=${censored}`);
-        setStatus("Monte Carlo complete.");
+        log(`モンテカルロ法完了: 完了ケース平均=${avgAll}s, 最大=${maxAll}s, 危険域経験=${critical}, 未完了=${censored}`);
+        setStatus("モンテカルロ法の100回試行が完了しました。");
       }
     }
   }
@@ -3972,8 +3972,8 @@ export function initSimulation() {
     onStop: () => stopSimulationCore(),
     onReset: () => {
       resetSimulationCore();
-      log("Simulation reset.");
-      setStatus("Simulation reset.");
+      log("シミュレーションをリセットしました。");
+      setStatus("シミュレーションをリセットしました。");
     },
     onModeChange: (nextMode) => setMode(nextMode)
   });
@@ -3987,7 +3987,7 @@ export function initSimulation() {
   syncPotentialExitIndexControl();
   setMode("spawn");
   resizeCanvas();
-  setStatus("Load a map, place spawn/exit/fire points, then start simulation.");
+  setStatus("マップを読み込み、開始位置・出口・必要なら火元を配置してから開始してください。");
 }
 
 
