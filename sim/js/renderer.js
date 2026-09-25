@@ -348,49 +348,34 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
       const view = derive2DCellDisplay(cell,{...settings,isFront:isFireSpreadFront(scene.grid,x,y)});
       const px=(x+.5)*cellSizePx, py=(y+.5)*cellSizePx;
       if (view.fire.active) {
-        const radius=cellSizePx*(.18+.3*Math.min(1,view.fire.flameHeightMeters/2.32));
-        const glow=ctx.createRadialGradient(px,py,0,px,py,radius);
-        glow.addColorStop(0,'rgba(255,245,190,.95)');
-        glow.addColorStop(.35,view.fire.color); glow.addColorStop(1,'rgba(255,80,20,0)');
-        ctx.save(); ctx.globalAlpha=.3+.7*view.fire.strength; ctx.fillStyle=glow;
-        ctx.fillRect(px-radius,py-radius,radius*2,radius*2); ctx.restore();
+        // Engineering display: burning area is a red cell overlay. No glow or
+        // animated flame is used, so color retains a single hazard meaning.
+        ctx.save();
+        ctx.fillStyle = `rgba(210,47,47,${0.16 + 0.34 * view.fire.strength})`;
+        ctx.fillRect(x * cellSizePx, y * cellSizePx, cellSizePx, cellSizePx);
+        ctx.strokeStyle = view.fire.origin === 'source' ? '#b71c1c' : '#d95c5c';
+        ctx.lineWidth = Math.max(0.7, cellSizePx * 0.12);
+        ctx.strokeRect(
+          x * cellSizePx + 0.3,
+          y * cellSizePx + 0.3,
+          Math.max(0, cellSizePx - 0.6),
+          Math.max(0, cellSizePx - 0.6)
+        );
         if (view.fire.origin === 'source') {
-          const markerRadius = Math.max(cellSizePx * 0.42, 1.8);
-          ctx.save();
-          ctx.strokeStyle = '#2b1208';
-          ctx.lineWidth = Math.max(1.2, cellSizePx * 0.22);
-          ctx.strokeRect(
-            px - markerRadius,
-            py - markerRadius,
-            markerRadius * 2,
-            markerRadius * 2
-          );
-          const innerRadius = markerRadius * 0.78;
-          ctx.strokeStyle = '#ff5a1f';
-          ctx.lineWidth = Math.max(0.8, cellSizePx * 0.14);
-          ctx.strokeRect(
-            px - innerRadius,
-            py - innerRadius,
-            innerRadius * 2,
-            innerRadius * 2
-          );
+          const r = Math.max(1.2, cellSizePx * 0.30);
           ctx.beginPath();
-          ctx.moveTo(px - innerRadius * 0.65, py);
-          ctx.lineTo(px + innerRadius * 0.65, py);
-          ctx.moveTo(px, py - innerRadius * 0.65);
-          ctx.lineTo(px, py + innerRadius * 0.65);
-          ctx.stroke();
-          ctx.restore();
-        } else {
-          ctx.strokeStyle = '#ffad55';
-          ctx.lineWidth = Math.max(0.5, cellSizePx * 0.1);
-          ctx.beginPath();
-          ctx.arc(px, py, Math.max(cellSizePx * 0.28, 1.2), 0, Math.PI * 2);
+          ctx.moveTo(px - r, py);
+          ctx.lineTo(px + r, py);
+          ctx.moveTo(px, py - r);
+          ctx.lineTo(px, py + r);
           ctx.stroke();
         }
-        if(settings.fireMetric==='spread_front' && view.fire.isFront) {
-          ctx.strokeStyle='#ff503d';ctx.lineWidth=.8;ctx.strokeRect(x*cellSizePx,y*cellSizePx,cellSizePx,cellSizePx);
+        if (settings.fireMetric === 'spread_front' && view.fire.isFront) {
+          ctx.strokeStyle = '#ff8a80';
+          ctx.lineWidth = Math.max(1, cellSizePx * 0.16);
+          ctx.strokeRect(x * cellSizePx, y * cellSizePx, cellSizePx, cellSizePx);
         }
+        ctx.restore();
       }
       if (sourceOverlayMatches(settings.dataSourceOverlay,view.source)) {
         ctx.strokeStyle=SOURCE_COLORS[view.source];ctx.lineWidth=.45;
@@ -539,11 +524,10 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
     if (!scene.simRunning && scene.maxHeatCell && scene.maxHeatValue > 5) {
       const px = (scene.maxHeatCell.x + 0.5) * cellSizePx;
       const py = (scene.maxHeatCell.y + 0.5) * cellSizePx;
-      const pulse = 0.5 + 0.5 * Math.sin(scene.simTime * 4);
-      ctx.strokeStyle = `rgba(255,120,0,${pulse})`;
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(126,166,199,0.8)';
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.arc(px, py, cellSizePx * (1.2 + pulse), 0, Math.PI * 2);
+      ctx.arc(px, py, cellSizePx * 0.75, 0, Math.PI * 2);
       ctx.stroke();
     }
   }
