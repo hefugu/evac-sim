@@ -56,7 +56,7 @@ test('renderer uses shared cells and makes balanced canvas transforms for all ne
     renderer.render({...scene,hazardDisplay:{smokeMetric:metric,smokeDisplayMode:'analysis',dataSourceOverlay:'mixed'}});
   }
   assert.equal(JSON.stringify(cell),before);assert.equal(saved.length,0);
-  assert.ok(calls.some(c=>c.key==='lineTo' && c.stroke==='#ffbd67'),'actual stair transfer arrow');
+  assert.ok(calls.some(c=>c.key==='lineTo' && c.stroke==='#66717b'),'actual stair transfer arrow');
 });
 test('manual 2D fire source remains visibly marked before HRR rises', () => {
   const calls=[], saved=[];
