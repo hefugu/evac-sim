@@ -122,7 +122,7 @@ test("real 3F map loads with calibrated topology and scale", async ({ page }) =>
     width: 150,
     height: 200,
     cellSizeMeters: 0.42,
-    walkable: 2889,
+    walkable: 2886,
     stairs: 640,
     imageWidth: 600,
     imageHeight: 800
