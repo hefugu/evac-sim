@@ -2,14 +2,14 @@
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
-  color: #343a40;
+  color: #d8dce0;
   border-bottom: 1px solid var(--border);
   padding-bottom: 4px;
   margin-bottom: 6px;
 }
 
 .block {
-  background: #ffffff;
+  background: var(--panel);
   border: 1px solid var(--border);
   padding: 7px 8px;
   border-radius: 2px;
@@ -35,7 +35,7 @@
 .row select {
   flex: 1;
   min-width: 0;
-  background: #ffffff;
+  background: #1f2226;
   color: var(--text-main);
   border: 1px solid var(--border-strong);
   padding: 3px 5px;
@@ -49,7 +49,7 @@ input[type="range"] {
 
 #presetSelect {
   width: 100%;
-  background: #ffffff;
+  background: #1f2226;
   color: var(--text-main);
   border: 1px solid var(--border-strong);
   padding: 3px 5px;
@@ -57,39 +57,19 @@ input[type="range"] {
   font-size: 11px;
 }
 
-#floorLabel {
+#floorLabel,
+.mapLegend {
+  margin-top: 6px;
   font-size: 11px;
   color: var(--text-dim);
 }
 
-.quickGuide {
-  display: grid;
-  gap: 4px;
-  padding: 8px 9px;
-  border: 1px solid var(--border);
-  border-radius: 2px;
-  background: #f8f9fa;
-  color: #343a40;
-  font-size: 11px;
-  line-height: 1.45;
-}
-
-.quickGuide strong {
-  color: #202428;
-  font-size: 12px;
-}
-
-.quickGuide span {
-  display: block;
-}
-
 .primaryBlock {
-  border-color: var(--border-strong);
+  border-color: #51575e;
 }
 
 .primaryBlock .sectionTitle {
-  color: #202428;
-  border-bottom-color: var(--border);
+  color: #eef0f2;
 }
 
 .advancedHeading {
@@ -109,7 +89,7 @@ details.block > summary,
 details.inlineDetails > summary {
   cursor: pointer;
   list-style: none;
-  color: #454c53;
+  color: #c1c6cb;
   font-size: 11px;
   line-height: 1.35;
 }
@@ -124,7 +104,7 @@ details.inlineDetails > summary::before {
   content: "＋";
   display: inline-block;
   width: 1.3em;
-  color: #68717a;
+  color: #90979f;
   font-weight: 700;
 }
 
@@ -137,22 +117,16 @@ details.block[open] > summary {
   padding-bottom: 5px;
   margin-bottom: 6px;
   border-bottom: 1px solid var(--border);
-  color: #202428;
+  color: #eef0f2;
 }
 
 .inlineDetails {
   margin-top: 7px;
   padding-top: 5px;
-  border-top: 1px solid #dde1e5;
+  border-top: 1px solid var(--border);
 }
 
 .inlineDetails .advancedContent,
 .advancedBlock .advancedContent {
   padding-top: 6px;
-}
-
-.mapLegend {
-  margin-top: 6px;
-  color: #454c53;
-  font-size: 11px;
 }
