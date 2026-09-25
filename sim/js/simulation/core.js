@@ -64,6 +64,7 @@ import {
   sampleFdsEvacPerson,
   stepPedestrianDynamics
 } from "./pedestrian-dynamics.js";
+import { buildWallSpatialIndex } from "./wall-index.js";
 let runtimeControls = {
   start: null,
   stop: null,
@@ -259,6 +260,7 @@ export function initSimulation() {
   let lastFireStepAt = 0;
   let activeFireCount = 0;
   let totalFireHrrKw = 0;
+  let wallSpatialIndex = null;
   let simulationAccumulatorSec = 0;
   let smokeAccumulatorSec = 0;
   const SMOKE_FIXED_STEP_SEC = 0.1;
@@ -2123,6 +2125,9 @@ export function initSimulation() {
       return abortSpawn("開始位置と出口を少なくとも1つずつ配置してください。");
     }
     const n = Math.max(1, Math.floor(parseInt(numAgentsInput.value, 10) || 1));
+    // Static physical geometry is indexed once per run. This keeps Social Force
+    // wall interactions cheap on the 7730U-class minimum target.
+    wallSpatialIndex = buildWallSpatialIndex(floorStates, { bucketSizeM: 1.0 });
     const baseSpeed = parseFloat(speedInput.value) || 1.0;
     const varPct = Math.max(0, Math.min(100, parseFloat(speedVarInput.value) || 0));
     const cellMeters = parseFloat(cellSizeMetersInput.value) || 0.5;
@@ -3443,9 +3448,12 @@ export function initSimulation() {
     // evaluating every pair on the floor.
     stepPedestrianDynamics(agents, dt, {
       cellSizeMeters: cellMeters,
-      isWalkable: (floor, cx, cy) =>
-        isAgentTraversableCell(floor, cx, cy) &&
-        !routeRiskAt(floor, cx, cy).blocked,
+      isWalkable: (floor, cx, cy) => {
+        const cell = floorStates[floor]?.grid?.[cy]?.[cx];
+        return !!(cell && cell.walkable);
+      },
+      isPositionAllowed: (floor, cx, cy) => isAgentTraversableCell(floor, cx, cy),
+      wallIndex: wallSpatialIndex,
       desiredDirectionFor: agent => agent._desiredDirection || { x: 0, y: 0 },
       extinctionAt: agent => {
         const floor = clamp(Math.floor(agent.floor ?? 0), 0, floorCount - 1);
