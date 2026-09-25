@@ -1,12 +1,12 @@
 :root {
-  --bg: #050104;
-  --panel: #220007dd;
-  --accent: #e0002a;
-  --accent-soft: #aa0022;
-  --accent-warn: #ff6600;
-  --text-main: #f4f0f0;
-  --text-dim: #b08080;
-  --grid-line: #440011;
+  --bg: #15181c;
+  --panel: #1d2126;
+  --accent: #4b83b2;
+  --accent-soft: #294b66;
+  --accent-warn: #d95757;
+  --text-main: #e7e9eb;
+  --text-dim: #9ca3aa;
+  --grid-line: #343a40;
 }
 
 * {
@@ -16,7 +16,7 @@
 
 body {
   margin: 0;
-  background: radial-gradient(circle at top left, #330000, #050104 60%);
+  background: var(--bg);
   color: var(--text-main);
   font-family: "Noto Sans JP", "Yu Gothic UI", "Meiryo", sans-serif;
   height: 100vh;
@@ -28,5 +28,5 @@ h1 {
   margin: 0 0 6px;
   font-size: 14px;
   letter-spacing: 0.04em;
-  color: var(--accent-warn);
+  color: #f0f1f2;
 }
