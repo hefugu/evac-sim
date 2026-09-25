@@ -61,7 +61,8 @@ import {
 } from "./stairs.js";
 import {
   FDS_EVAC_PERSON_TYPES,
-  sampleFdsEvacPerson
+  sampleFdsEvacPerson,
+  stepPedestrianDynamics
 } from "./pedestrian-dynamics.js";
 let runtimeControls = {
   start: null,
@@ -3059,6 +3060,7 @@ export function initSimulation() {
 
     let evacCount = 0;
     let deadCount = 0;
+    const socialMovementStart = new Map();
 
     agents.forEach(a => {
       if (a.dead) {
@@ -3241,7 +3243,6 @@ export function initSimulation() {
 
         const rawOcc = occupancyDynamicByFloor[nf][ny][nx];
         const occ = (nf === floor && nx === cx && ny === cy) ? Math.max(0, rawOcc - 1) : rawOcc;
-        if (!(nf === floor && nx === cx && ny === cy) && occ >= MAX_OCCUPANCY_PER_CELL) continue;
 
         const densityTarget = localDensity(nf, nx, ny);
         const smokeTarget = smokeAt(nf, nx, ny);
@@ -3330,8 +3331,6 @@ export function initSimulation() {
         } = e;
         let score = potGain * POTENTIAL_GAIN_WEIGHT;
         score -= uphill * UPHILL_PENALTY_WEIGHT;
-        score -= occ * CONGESTION_PENALTY_WEIGHT;
-        score -= densityTarget * CONGESTION_PENALTY_WEIGHT;
         score -= smokeTarget * SMOKE_AVOID_WEIGHT;
         score -= fireHeat * FIRE_AVOID_WEIGHT;
         score += Math.max(0, fireEscapeGain) * 4.0;
@@ -3376,17 +3375,6 @@ export function initSimulation() {
         if (score > best.score) best = { dx: c.dx, dy: c.dy, nx, ny, nf, score, linkId: c.linkId || null };
       }
 
-      let speedFactor = 1;
-      speedFactor *= Math.max(MIN_SPEED_FACTOR, 1 - localSmoke * 0.35);
-      speedFactor *= 1 / (1 + densityHere * DENSITY_SPEED_COEF);
-      speedFactor *= (0.45 + 0.55 * a.visibility);
-      speedFactor *= Math.max(0.5, 1 - localFire.heat * 0.12);
-      if (a.recoveredUntil && simTime < a.recoveredUntil) speedFactor *= 0.85;
-      if (a.visibility < 0.2 && Math.random() < 0.3) speedFactor *= 0.25;
-      if (a.type === "elderly") speedFactor *= 0.9;
-      if (a.panicFactor > 0) speedFactor *= (0.86 + Math.random() * 0.5);
-      if (a.type === "student" && leaderTarget) speedFactor *= 1.03;
-
       const prevX = a.x;
       const prevY = a.y;
       const prevFloor = floor;
@@ -3419,41 +3407,79 @@ export function initSimulation() {
           }
         }
       } else {
-        const stepCells = a.v * speedFactor * dt;
-        const vx = best.nx - a.x;
-        const vy = best.ny - a.y;
-        const dist = Math.hypot(vx, vy);
-        if (dist > 0.0001) {
-          const step = Math.min(stepCells, dist);
-          a.x += (vx / dist) * step;
-          a.y += (vy / dist) * step;
-        }
+        // Global routing decides where the pedestrian wants to go; local
+        // continuous motion is handled later for all agents simultaneously by
+        // the Social Force model. This avoids order-dependent pair forces.
+        const dx = best.nx - a.x;
+        const dy = best.ny - a.y;
+        const mag = Math.hypot(dx, dy);
+        a._desiredDirection = mag > 1e-9
+          ? { x: dx / mag, y: dy / mag }
+          : { x: 0, y: 0 };
+        a._socialMove = true;
+        socialMovementStart.set(a.id, {
+          x: prevX,
+          y: prevY,
+          floor: prevFloor,
+          cx,
+          cy
+        });
+      }
+    });
 
-        const nx = Math.round(a.x);
-        const ny = Math.round(a.y);
-        if (inBounds(nx, ny) && (nx !== cx || ny !== cy)) {
-          if (occupancyDynamicByFloor[floor][ny][nx] >= MAX_OCCUPANCY_PER_CELL) {
-            a.x = cx;
-            a.y = cy;
-          } else {
-            occupancyDynamicByFloor[floor][cy][cx] = Math.max(0, occupancyDynamicByFloor[floor][cy][cx] - 1);
-            occupancyDynamicByFloor[floor][ny][nx] += 1;
-          }
-        }
+    // Continuous FDS+Evac-style pedestrian dynamics. Pair interactions use a
+    // spatial hash, so the common case scales with local neighbours instead of
+    // evaluating every pair on the floor.
+    stepPedestrianDynamics(agents, dt, {
+      cellSizeMeters: cellMeters,
+      isWalkable: (floor, cx, cy) =>
+        isAgentTraversableCell(floor, cx, cy) &&
+        !routeRiskAt(floor, cx, cy).blocked,
+      desiredDirectionFor: agent => agent._desiredDirection || { x: 0, y: 0 },
+      extinctionAt: agent => {
+        const floor = clamp(Math.floor(agent.floor ?? 0), 0, floorCount - 1);
+        const cx = Math.round(agent.x);
+        const cy = Math.round(agent.y);
+        return smokeMetricsAt(floor, cx, cy)?.extinctionCoefficientM1 || 0;
+      },
+      canMove: agent => !!agent._socialMove
+    });
+
+    // Update discrete statistics from the continuous positions. Cell occupancy
+    // is now an observation, not a hard movement constraint.
+    occupancyDynamicByFloor.forEach(layer => layer.forEach(row => row.fill(0)));
+    agents.forEach(a => {
+      if (!a.dead && !a.finished) {
+        const floor = clamp(Math.floor(a.floor ?? 0), 0, floorCount - 1);
+        const cx = Math.round(a.x);
+        const cy = Math.round(a.y);
+        if (inBounds(cx, cy)) occupancyDynamicByFloor[floor][cy][cx] += 1;
       }
 
-      const nowFloor = clamp(Math.floor(a.floor ?? floor), 0, floorCount - 1);
+      const previous = socialMovementStart.get(a.id);
+      if (!previous) {
+        delete a._desiredDirection;
+        delete a._socialMove;
+        return;
+      }
+
+      const nowFloor = clamp(Math.floor(a.floor ?? previous.floor), 0, floorCount - 1);
       const gx2 = Math.round(a.x);
       const gy2 = Math.round(a.y);
-      if (nowFloor !== floor || gx2 !== cx || gy2 !== cy) {
-        a.prevCell = { floor, cx, cy };
+      a.cx = gx2;
+      a.cy = gy2;
+
+      const movedX = a.x - previous.x;
+      const movedY = a.y - previous.y;
+      const movedDistCells = Math.hypot(movedX, movedY);
+      const movedDistMeters = movedDistCells * cellMeters;
+
+      if (movedDistMeters > 0.02 || nowFloor !== previous.floor) {
+        a.prevCell = { floor: previous.floor, cx: previous.cx, cy: previous.cy };
         a.stuckTime = 0;
         a.stuckEventLatched = false;
-        if (nowFloor === floor) {
-          const mdx = gx2 - cx;
-          const mdy = gy2 - cy;
-          const m = Math.hypot(mdx, mdy);
-          if (m > 0.001) a.moveDir = { dx: mdx / m, dy: mdy / m };
+        if (nowFloor === previous.floor && movedDistCells > 1e-9) {
+          a.moveDir = { dx: movedX / movedDistCells, dy: movedY / movedDistCells };
         } else {
           a.moveDir = null;
         }
@@ -3464,18 +3490,19 @@ export function initSimulation() {
           a.stuckEventLatched = true;
         }
       }
+
       if (inBounds(gx2, gy2)) {
         floorStates[nowFloor].heatmap[gy2][gx2] += 1;
       }
 
-      const movedX = a.x - prevX;
-      const movedY = a.y - prevY;
-      const movedDist = Math.hypot(movedX, movedY);
-      if (movedDist > 0.02) {
-        const fx = Math.round(prevX);
-        const fy = Math.round(prevY);
-        if (inBounds(fx, fy) && floorStates[prevFloor]?.flowField?.[fy]?.[fx]) {
-          const fref = floorStates[prevFloor].flowField[fy][fx];
+      if (movedDistCells > 0.02) {
+        const fx = Math.round(previous.x);
+        const fy = Math.round(previous.y);
+        if (
+          inBounds(fx, fy) &&
+          floorStates[previous.floor]?.flowField?.[fy]?.[fx]
+        ) {
+          const fref = floorStates[previous.floor].flowField[fy][fx];
           fref.vx += movedX;
           fref.vy += movedY;
           fref.n += 1;
@@ -3483,25 +3510,17 @@ export function initSimulation() {
       }
 
       a.trailTick = (a.trailTick || 0) + dt;
-      if (a.trail && (a.trailTick > 0.2 || movedDist > 0.4 || nowFloor !== prevFloor)) {
+      if (
+        a.trail &&
+        (a.trailTick > 0.2 || movedDistMeters > 0.4 || nowFloor !== previous.floor)
+      ) {
         a.trail.push({ floor: nowFloor, x: a.x, y: a.y, t: simTime });
         if (a.trail.length > 260) a.trail.shift();
         a.trailTick = 0;
       }
 
-      if (inBounds(gx2, gy2)) {
-        const smoke = smokeAt(nowFloor, gx2, gy2);
-        const density = localDensity(nowFloor, gx2, gy2);
-        if (smoke >= FALL_SMOKE_THRESHOLD) {
-          const smokeFactor = Math.min(3.0, smoke / FALL_SMOKE_THRESHOLD);
-          const p = FALL_RATE_PER_SEC * smokeFactor * (1 + density * 0.35) * (a.fallRiskMult || 1) * dt;
-          if (Math.random() < p) {
-            a.fallen = true;
-            a.rescue = null;
-            a.helpingId = null;
-          }
-        }
-      }
+      delete a._desiredDirection;
+      delete a._socialMove;
     });
 
     if (simTime >= nextCongestionSampleAt) {
