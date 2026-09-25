@@ -19,7 +19,7 @@ function decodeImageFile(file) {
     };
     image.onerror = () => {
       URL.revokeObjectURL(url);
-      reject(new Error("sample image decode failed"));
+      reject(new Error("サンプル画像を読み込めませんでした"));
     };
     image.src = url;
   });
