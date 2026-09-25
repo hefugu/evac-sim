@@ -10,6 +10,10 @@ import {
   potentialDesiredDirection,
   stepPedestrianDynamics
 } from "../sim/js/simulation/pedestrian-dynamics.js";
+import {
+  buildWallSpatialIndex,
+  queryWallSegments
+} from "../sim/js/simulation/wall-index.js";
 
 const nearly = (actual, expected, tolerance = 1e-9) =>
   assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} != ${expected}`);
@@ -149,4 +153,66 @@ test("hard wall constraint prevents numerical penetration", () => {
     maxAccelerationMps2: SOCIAL_FORCE_DEFAULTS.maxAccelerationMps2
   });
   assert.ok(Math.round(agents[0].x) <= 0);
+});
+
+test("wall index contains only physical map boundaries, not fire hazards", () => {
+  const floor = {
+    floorIndex: 0,
+    cellSizeMeters: 0.5,
+    walkableTemplate: [
+      [false, false, false, false],
+      [false, true, true, false],
+      [false, true, true, false],
+      [false, false, false, false]
+    ],
+    grid: [
+      [{}, {}, {}, {}],
+      [{}, { walkable: true, fire: false }, { walkable: true, fire: true }, {}],
+      [{}, { walkable: true, fire: false }, { walkable: true, fire: false }, {}],
+      [{}, {}, {}, {}]
+    ]
+  };
+  const index = buildWallSpatialIndex([floor], { bucketSizeM: 1 });
+  assert.equal(index.segmentCount, 8);
+  const near = queryWallSegments(index, 0, 0.5, 0.5, 0.8);
+  assert.ok(near.length > 0);
+  assert.ok(index.segmentCount < 16, "interior fire must not become a wall surface");
+});
+
+test("indexed wall forces keep a walker out of a solid boundary", () => {
+  const floor = {
+    floorIndex: 0,
+    cellSizeMeters: 0.5,
+    walkableTemplate: [
+      [false, false, false],
+      [false, true, false],
+      [false, false, false]
+    ]
+  };
+  const wallIndex = buildWallSpatialIndex([floor], { bucketSizeM: 0.5 });
+  const agents = [{
+    id: 0,
+    floor: 0,
+    x: 1,
+    y: 1,
+    radiusM: 0.255,
+    massKg: 80,
+    baseDesiredSpeedMps: 1.25,
+    relaxationTimeS: 0.8,
+    vxMps: 0,
+    vyMps: 0
+  }];
+  stepPedestrianDynamics(agents, 0.5, {
+    cellSizeMeters: 0.5,
+    wallIndex,
+    isWalkable: (_floor, cx, cy) => cx === 1 && cy === 1,
+    isPositionAllowed: (_floor, cx, cy) => cx === 1 && cy === 1,
+    desiredDirectionFor: () => ({ x: 1, y: 0 }),
+    extinctionAt: () => 0,
+    random: () => 0.5
+  }, {
+    randomAccelerationStdMps2: 0
+  });
+  assert.equal(Math.round(agents[0].x), 1);
+  assert.equal(Math.round(agents[0].y), 1);
 });
