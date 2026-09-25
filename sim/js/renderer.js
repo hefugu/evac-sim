@@ -440,14 +440,22 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
     });
 
     if (vizTrails && agents.length) {
-      agents.forEach((a) => {
-        if (!a.trail || a.trail.length < 2 || a.dead) return;
+      const quality = scene.renderQuality || "full";
+      const maxTrailAgents = quality === "performance" ? 120 : (quality === "balanced" ? 320 : Infinity);
+      const agentStride = Number.isFinite(maxTrailAgents)
+        ? Math.max(1, Math.ceil(agents.length / maxTrailAgents))
+        : 1;
+      const pointStride = quality === "performance" ? 3 : (quality === "balanced" ? 2 : 1);
+
+      for (let ai = 0; ai < agents.length; ai += agentStride) {
+        const a = agents[ai];
+        if (!a.trail || a.trail.length < 2 || a.dead) continue;
         const baseColor = typeMeta[a.type]?.color || "#ff3366";
         ctx.strokeStyle = baseColor;
         ctx.globalAlpha = 0.22;
         ctx.lineWidth = 0.45;
         let drawing = false;
-        for (let i = 0; i < a.trail.length; i++) {
+        for (let i = 0; i < a.trail.length; i += pointStride) {
           const t = a.trail[i];
           if ((t.floor ?? a.floor) !== currentFloor) {
             drawing = false;
@@ -465,11 +473,12 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
           }
         }
         ctx.globalAlpha = 1;
-      });
+      }
     }
 
     if (vizFlow && flowField) {
-      const stride = 4;
+      const quality = scene.renderQuality || "full";
+      const stride = quality === "performance" ? 8 : (quality === "balanced" ? 6 : 4);
       for (let y = 1; y < gridH - 1; y += stride) {
         for (let x = 1; x < gridW - 1; x += stride) {
           const f = flowField[y][x];
@@ -547,7 +556,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
     if(scene.profiler) {
       const p=scene.profiler;
       lines.push(
-        `PERF ${Number(p.fps || 0).toFixed(1)} FPS | frame ${Number(p.frameWorkMs || 0).toFixed(1)} ms | draw ${Number(p.renderMs || 0).toFixed(1)} ms`
+        `PERF ${Number(p.fps || 0).toFixed(1)} RAF / ${Number(p.renderFps || 0).toFixed(1)} draw FPS | frame ${Number(p.frameWorkMs || 0).toFixed(1)} ms | draw ${Number(p.renderMs || 0).toFixed(1)} ms | ${scene.renderQuality || "full"}`
       );
       lines.push(
         `Smoke ${Number(p.smokeMs || 0).toFixed(2)} ms/tick | substeps ${Number(p.smokeSubsteps || 0).toFixed(1)} | active ${p.activeSmokeCells || 0}/${p.totalGridCells || 0}`
