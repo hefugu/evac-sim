@@ -116,24 +116,41 @@ function hashKey(floor, bx, by) {
 
 export function buildAgentSpatialHash(
   agents,
-  { bucketSizeM = SOCIAL_FORCE_DEFAULTS.interactionRangeM, cellSizeMeters = 0.5 } = {}
+  {
+    bucketSizeM = SOCIAL_FORCE_DEFAULTS.interactionRangeM,
+    cellSizeMeters = 0.5,
+    workspace = null
+  } = {}
 ) {
   const size = Math.max(0.25, finite(bucketSizeM, 1.2));
   const meters = Math.max(0.01, finite(cellSizeMeters, 0.5));
-  const buckets = new Map();
+  const buckets = workspace?.agentBuckets instanceof Map
+    ? workspace.agentBuckets
+    : new Map();
+  buckets.clear();
+
+  const bucketPool = Array.isArray(workspace?.agentBucketPool)
+    ? workspace.agentBucketPool
+    : [];
+  let bucketPoolUsed = 0;
 
   for (let index = 0; index < (agents?.length || 0); index++) {
     const agent = agents[index];
     if (!agent || agent.dead || agent.finished || agent.stairTransition) continue;
     const floor = Math.floor(finite(agent.floor, 0));
-    const xM = finite(agent.x) * meters;
-    const yM = finite(agent.y) * meters;
+    const xM = Number.isFinite(agent.xM) ? agent.xM : finite(agent.x) * meters;
+    const yM = Number.isFinite(agent.yM) ? agent.yM : finite(agent.y) * meters;
     const bx = Math.floor(xM / size);
     const by = Math.floor(yM / size);
     const key = hashKey(floor, bx, by);
-    const bucket = buckets.get(key);
-    if (bucket) bucket.push(index);
-    else buckets.set(key, [index]);
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = bucketPool[bucketPoolUsed] || [];
+      bucket.length = 0;
+      bucketPool[bucketPoolUsed++] = bucket;
+      buckets.set(key, bucket);
+    }
+    bucket.push(index);
   }
 
   return { buckets, bucketSizeM: size, cellSizeMeters: meters };
@@ -356,7 +373,9 @@ export function createPedestrianDynamicsWorkspace(capacity = 0) {
     nextVx: new Float64Array(size),
     nextVy: new Float64Array(size),
     nextDesiredSpeed: new Float64Array(size),
-    movable: new Uint8Array(size)
+    movable: new Uint8Array(size),
+    agentBuckets: new Map(),
+    agentBucketPool: []
   };
 }
 
@@ -446,7 +465,8 @@ export function stepPedestrianDynamics(
 
     const hash = buildAgentSpatialHash(active, {
       bucketSizeM: cfg.interactionRangeM,
-      cellSizeMeters
+      cellSizeMeters,
+      workspace
     });
     movable.fill(0, 0, agents.length);
 
@@ -478,16 +498,26 @@ export function stepPedestrianDynamics(
       let fx = mass * (desiredVx - a.vxMps) / tau;
       let fy = mass * (desiredVy - a.vyMps) / tau;
 
-      const nearby = queryNearbyAgentIndices(hash, a, cfg.interactionRangeM);
-      for (const otherIndex of nearby) {
-        if (otherIndex === index) continue;
-        const b = active[otherIndex];
-        if (!b || b.floor !== a.floor) continue;
-        const distance = Math.hypot(a.xM - b.xM, a.yM - b.yM);
-        if (distance > cfg.interactionRangeM + a.radiusM + b.radiusM) continue;
-        const force = interactionForce(a, b, desiredDirection, cfg);
-        fx += force.x;
-        fy += force.y;
+      const hashSize = hash.bucketSizeM;
+      const bx = Math.floor(a.xM / hashSize);
+      const by = Math.floor(a.yM / hashSize);
+      const reach = Math.max(1, Math.ceil(cfg.interactionRangeM / hashSize));
+      for (let oy = -reach; oy <= reach; oy++) {
+        for (let ox = -reach; ox <= reach; ox++) {
+          const bucket = hash.buckets.get(hashKey(a.floor, bx + ox, by + oy));
+          if (!bucket) continue;
+          for (let bucketIndex = 0; bucketIndex < bucket.length; bucketIndex++) {
+            const otherIndex = bucket[bucketIndex];
+            if (otherIndex === index) continue;
+            const b = active[otherIndex];
+            if (!b || b.floor !== a.floor) continue;
+            const distance = Math.hypot(a.xM - b.xM, a.yM - b.yM);
+            if (distance > cfg.interactionRangeM + a.radiusM + b.radiusM) continue;
+            const force = interactionForce(a, b, desiredDirection, cfg);
+            fx += force.x;
+            fy += force.y;
+          }
+        }
       }
 
       const wallForce = wallForceForAgent(a, simContext, cfg, desiredDirection);
