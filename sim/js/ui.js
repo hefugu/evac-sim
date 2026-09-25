@@ -10,6 +10,8 @@ export function getUIRefs() {
     simCanvas: byId("simCanvas"),
     mapFileInput: byId("mapFile"),
     thrRange: byId("thrRange"),
+    mapCellPixelsInput: byId("mapCellPixels"),
+    mapSampleModeInput: byId("mapSampleMode"),
     numAgentsInput: byId("numAgents"),
     speedInput: byId("speed"),
     speedVarInput: byId("speedVar"),
