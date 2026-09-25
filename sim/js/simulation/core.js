@@ -4030,7 +4030,7 @@ export function initSimulation() {
       fireAvoidanceMask: fireAvoidanceMasks[currentFloor] || null,
       fireAvoidanceIndices: fireAvoidanceIndicesByFloor[currentFloor] || [],
       agents,
-      routeDebug: (() => {
+      routeDebug: renderQuality === "full" ? (() => {
         const byExit = new Map();
         let active = 0;
         let fallback = 0;
@@ -4072,7 +4072,7 @@ export function initSimulation() {
           byExit: [...byExit.entries()].sort((a, b) => a[0] - b[0]),
           safeByExit
         };
-      })(),
+      })() : null,
       flowField,
       simRunning,
       simTime,
