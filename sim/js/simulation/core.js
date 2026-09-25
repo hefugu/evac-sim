@@ -517,13 +517,13 @@ export function initSimulation() {
   let mcTargetRuns = 100;
   let mcResults = [];
   const TYPE_META = {
-    adult: { label: "成人", physicalType: "adult", fallRisk: 1.0, panic: 0.0, color: "#ff3366" },
-    child: { label: "子供", physicalType: "child", fallRisk: 1.1, panic: 0.05, color: "#8ad8ff" },
-    elderly: { label: "高齢者", physicalType: "elderly", fallRisk: 1.85, panic: 0.03, color: "#ffd26b" },
-    panic: { label: "パニック", physicalType: "adult", fallRisk: 1.35, panic: 0.3, color: "#ff66aa" },
-    leader: { label: "リーダー", physicalType: "adult", fallRisk: 0.9, panic: 0.02, color: "#66ffcc" },
-    teacher: { label: "教師", physicalType: "adult", fallRisk: 0.92, panic: 0.01, color: "#66ccff" },
-    student: { label: "生徒", physicalType: "adult", fallRisk: 1.2, panic: 0.04, color: "#7bb8ff" }
+    adult: { label: "成人", physicalType: "adult", fallRisk: 1.0, panic: 0.0, color: "#4f6f8f" },
+    child: { label: "子供", physicalType: "child", fallRisk: 1.1, panic: 0.05, color: "#7897b3" },
+    elderly: { label: "高齢者", physicalType: "elderly", fallRisk: 1.85, panic: 0.03, color: "#7a7f85" },
+    panic: { label: "パニック", physicalType: "adult", fallRisk: 1.35, panic: 0.3, color: "#a33a3a" },
+    leader: { label: "リーダー", physicalType: "adult", fallRisk: 0.9, panic: 0.02, color: "#3f6b61" },
+    teacher: { label: "教師", physicalType: "adult", fallRisk: 0.92, panic: 0.01, color: "#345f82" },
+    student: { label: "生徒", physicalType: "adult", fallRisk: 1.2, panic: 0.04, color: "#6685a1" }
   };
 
   function syncPublicState() {
