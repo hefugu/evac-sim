@@ -2,8 +2,8 @@
   width: 350px;
   min-width: 350px;
   padding: 10px 12px;
-  background: #191d21;
-  border-right: 1px solid #343a40;
+  background: #ffffff;
+  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -20,5 +20,5 @@
 #mainArea {
   flex: 1;
   position: relative;
-  background: #111418;
+  background: #eef0f2;
 }
