@@ -8,6 +8,7 @@ import "./hazard-display.test.mjs";
 import "./renderer-2d.test.mjs";
 import "./routing.test.mjs";
 import "./potential.test.mjs";
+import "./pedestrian-dynamics.test.mjs";
 import assert from "node:assert/strict";
 
 import {
