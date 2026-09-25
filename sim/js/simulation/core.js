@@ -221,6 +221,7 @@ export function initSimulation() {
   let stairLinkIndex = new Map(); // key -> [{floor,cx,cy}]
   let pendingStairLink = null;    // {floor,cx,cy}
   let allExitPoints = [];   // {floor,cx,cy}
+  let exitPointsByFloor = [];
   let allSpawnPoints = [];  // {floor,cx,cy}
   let multiPotentialByExit = []; // [exit][floor][y][x]
   let multiFireSafePotentialByExit = []; // same shape, but fire danger buffer is impassable
@@ -971,12 +972,44 @@ export function initSimulation() {
 
   function collectAllExits() {
     const arr = [];
+    exitPointsByFloor = Array.from({ length: floorStates.length }, () => []);
     for (let f = 0; f < floorStates.length; f++) {
       const fs = floorStates[f];
       if (!fs) continue;
-      fs.exits.forEach(e => arr.push({ floor: f, cx: e.cx, cy: e.cy }));
+      fs.exits.forEach(e => {
+        const exit = { floor: f, cx: e.cx, cy: e.cy };
+        arr.push(exit);
+        exitPointsByFloor[f].push(exit);
+      });
     }
     return arr;
+  }
+
+  function isInsideExitCaptureRegion(agent, floor) {
+    const exitsOnFloor = exitPointsByFloor[floor] || [];
+    if (!exitsOnFloor.length) return false;
+
+    const cellMeters = Math.max(
+      0.05,
+      Number(floorStates[floor]?.cellSizeMeters) ||
+      parseFloat(cellSizeMetersInput.value) ||
+      0.5
+    );
+    const radiusMeters = Math.max(0.22, Number(agent.radiusM) || 0.255);
+
+    // An exit cell represents a finite opening, not a mathematical point.
+    // Finish once the pedestrian's body reaches the exit-cell area. This is
+    // especially important for continuous Social Force motion, where crowd
+    // repulsion can keep centres from landing exactly on the seed coordinate.
+    const captureMeters = cellMeters * 0.5 + radiusMeters;
+    const captureCells = captureMeters / cellMeters;
+
+    for (const exit of exitsOnFloor) {
+      if (Math.hypot(agent.x - exit.cx, agent.y - exit.cy) <= captureCells) {
+        return true;
+      }
+    }
+    return false;
   }
 
   function collectAllSpawns() {
@@ -3250,9 +3283,12 @@ export function initSimulation() {
         a.stuckTime = (a.stuckTime || 0) + dt;
         return;
       }
-      if (curPot < 0.01) {
+      if (isInsideExitCaptureRegion(a, floor) || curPot < 0.01) {
         a.finished = true;
         a.finishTime = simTime;
+        a.behaviorState = "evacuated";
+        a.vxMps = 0;
+        a.vyMps = 0;
         evacCount++;
         addOccupancy(occupancyDynamicByFloor, floor, cx, cy, -1);
         return;
