@@ -63,6 +63,50 @@ test.beforeEach(async ({ page }) => {
   await loadRoom(page);
 });
 
+test("manual fire source is visible in 2D immediately before simulation starts", async ({ page }) => {
+  await marker(page, "modeFire", 12, 8);
+
+  const result = await page.evaluate(async () => {
+    const { state } = await import("/sim/js/state.js");
+    const floor = state.map.floorStates[state.map.currentFloor];
+    const canvas = document.querySelector("#simCanvas");
+    const rect = canvas.getBoundingClientRect();
+    const image = floor.baseImage;
+    const scale = Math.min(rect.width / image.width, rect.height / image.height);
+    const offsetX = (rect.width - image.width * scale) / 2;
+    const offsetY = (rect.height - image.height * scale) / 2;
+    const cssX = offsetX + (12.5 * 4 * scale);
+    const cssY = offsetY + (8.5 * 4 * scale);
+    const dprX = canvas.width / rect.width;
+    const dprY = canvas.height / rect.height;
+    const ctx = canvas.getContext("2d");
+    const sample = ctx.getImageData(
+      Math.max(0, Math.round(cssX * dprX) - 2),
+      Math.max(0, Math.round(cssY * dprY) - 2),
+      5,
+      5
+    ).data;
+
+    let redDominantPixels = 0;
+    for (let i = 0; i < sample.length; i += 4) {
+      const r = sample[i];
+      const g = sample[i + 1];
+      const b = sample[i + 2];
+      if (r > g + 35 && r > b + 35) redDominantPixels++;
+    }
+
+    return {
+      fire: !!floor.grid?.[8]?.[12]?.fire,
+      source: floor.grid?.[8]?.[12]?.fireSource,
+      redDominantPixels
+    };
+  });
+
+  expect(result.fire).toBe(true);
+  expect(result.source).toBe("manual");
+  expect(result.redDominantPixels).toBeGreaterThan(0);
+});
+
 test('display controls and 2D/3D clicks inspect the same state without advancing hazards', async ({page}) => {
   const errors=[];page.on('pageerror',e=>errors.push(String(e)));
   await configureAgent(page,'0.2');
