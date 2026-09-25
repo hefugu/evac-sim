@@ -2,9 +2,8 @@
   width: 350px;
   min-width: 350px;
   padding: 10px 12px;
-  background: linear-gradient(#150006, #050104);
-  border-right: 1px solid #550011;
-  box-shadow: 0 0 20px #000;
+  background: #191d21;
+  border-right: 1px solid #343a40;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -15,16 +14,11 @@
 }
 
 #leftPanel::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border: 1px solid #550011;
-  pointer-events: none;
-  box-shadow: 0 0 25px #ff003044;
+  content: none;
 }
 
 #mainArea {
   flex: 1;
   position: relative;
-  background: #080509;
+  background: #111418;
 }
