@@ -1,3 +1,4 @@
+import { queryWallSegments, closestPointOnWallSegment } from "./wall-index.js";
 /*
  * Lightweight continuous pedestrian dynamics based on the Social Force family
  * used by FDS+Evac. This module is deliberately independent from DOM/rendering
@@ -204,54 +205,78 @@ function closestPointOnCell(xM, yM, cx, cy, cellSizeMeters) {
   };
 }
 
+function accumulateWallForce(fx, fy, agent, nearest, desiredDirection, cfg) {
+  const xM = finite(agent.xM);
+  const yM = finite(agent.yM);
+  const radius = Math.max(0.1, finite(agent.radiusM, 0.255));
+  let dx = xM - nearest.x;
+  let dy = yM - nearest.y;
+  let distance = Math.hypot(dx, dy);
+
+  if (distance <= EPS) {
+    dx = desiredDirection.x || 1;
+    dy = desiredDirection.y || 0;
+    distance = 1;
+  }
+
+  if (distance > radius + cfg.wallInteractionRangeM) return { x: fx, y: fy };
+  const nx = dx / distance;
+  const ny = dy / distance;
+  const gap = distance - radius;
+  const wallSocial = cfg.wallA_N * Math.exp(-gap / cfg.wallB_M);
+  fx += wallSocial * nx;
+  fy += wallSocial * ny;
+
+  const overlap = Math.max(0, radius - distance);
+  if (overlap > 0) {
+    fx += cfg.contactK_KgM2 * overlap * nx;
+    fy += cfg.contactK_KgM2 * overlap * ny;
+  }
+  return { x: fx, y: fy };
+}
+
 function wallForceForAgent(agent, context, cfg, desiredDirection) {
   const cellSize = context.cellSizeMeters;
   const floor = Math.floor(finite(agent.floor, 0));
-  const xM = finite(agent.x) * cellSize;
-  const yM = finite(agent.y) * cellSize;
+  const xM = finite(agent.xM, finite(agent.x) * cellSize);
+  const yM = finite(agent.yM, finite(agent.y) * cellSize);
   const radius = Math.max(0.1, finite(agent.radiusM, 0.255));
-  const rangeCells = Math.max(1, Math.ceil((radius + cfg.wallInteractionRangeM) / cellSize));
-  const cx0 = Math.round(finite(agent.x));
-  const cy0 = Math.round(finite(agent.y));
   let fx = 0;
   let fy = 0;
 
+  // Preferred path: physical wall surfaces are indexed once when geometry
+  // changes. Hazards are not included in this index because smoke/heat are not
+  // solid geometry.
+  if (context.wallIndex?.buckets) {
+    const segments = queryWallSegments(
+      context.wallIndex,
+      floor,
+      xM,
+      yM,
+      radius + cfg.wallInteractionRangeM
+    );
+    for (const segment of segments) {
+      const nearest = closestPointOnWallSegment(xM, yM, segment);
+      const next = accumulateWallForce(fx, fy, { ...agent, xM, yM }, nearest, desiredDirection, cfg);
+      fx = next.x;
+      fy = next.y;
+    }
+    return { x: fx, y: fy };
+  }
+
+  // Fallback for isolated unit tests and callers without a prebuilt index.
+  const rangeCells = Math.max(1, Math.ceil((radius + cfg.wallInteractionRangeM) / cellSize));
+  const cx0 = Math.round(finite(agent.x));
+  const cy0 = Math.round(finite(agent.y));
   for (let cy = cy0 - rangeCells; cy <= cy0 + rangeCells; cy++) {
     for (let cx = cx0 - rangeCells; cx <= cx0 + rangeCells; cx++) {
       if (context.isWalkable(floor, cx, cy)) continue;
       const nearest = closestPointOnCell(xM, yM, cx, cy, cellSize);
-      let dx = xM - nearest.x;
-      let dy = yM - nearest.y;
-      let distance = Math.hypot(dx, dy);
-
-      // If exactly on/inside the wall AABB, use direction away from wall-cell center.
-      if (distance <= EPS) {
-        dx = xM - cx * cellSize;
-        dy = yM - cy * cellSize;
-        distance = Math.hypot(dx, dy);
-        if (distance <= EPS) {
-          dx = desiredDirection.x || 1;
-          dy = desiredDirection.y || 0;
-          distance = 1;
-        }
-      }
-
-      if (distance > radius + cfg.wallInteractionRangeM) continue;
-      const nx = dx / distance;
-      const ny = dy / distance;
-      const gap = distance - radius;
-      const wallSocial = cfg.wallA_N * Math.exp(-gap / cfg.wallB_M);
-      fx += wallSocial * nx;
-      fy += wallSocial * ny;
-
-      const overlap = Math.max(0, radius - distance);
-      if (overlap > 0) {
-        fx += cfg.contactK_KgM2 * overlap * nx;
-        fy += cfg.contactK_KgM2 * overlap * ny;
-      }
+      const next = accumulateWallForce(fx, fy, { ...agent, xM, yM }, nearest, desiredDirection, cfg);
+      fx = next.x;
+      fy = next.y;
     }
   }
-
   return { x: fx, y: fy };
 }
 
@@ -319,7 +344,10 @@ function normalizeDirection(direction) {
 function positionIsWalkable(agent, xM, yM, context) {
   const cx = Math.round(xM / context.cellSizeMeters);
   const cy = Math.round(yM / context.cellSizeMeters);
-  return context.isWalkable(Math.floor(finite(agent.floor, 0)), cx, cy);
+  const predicate = typeof context.isPositionAllowed === "function"
+    ? context.isPositionAllowed
+    : context.isWalkable;
+  return predicate(Math.floor(finite(agent.floor, 0)), cx, cy);
 }
 
 export function stepPedestrianDynamics(
