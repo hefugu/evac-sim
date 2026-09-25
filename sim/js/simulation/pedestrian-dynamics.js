@@ -205,10 +205,7 @@ function closestPointOnCell(xM, yM, cx, cy, cellSizeMeters) {
   };
 }
 
-function accumulateWallForce(fx, fy, agent, nearest, desiredDirection, cfg) {
-  const xM = finite(agent.xM);
-  const yM = finite(agent.yM);
-  const radius = Math.max(0.1, finite(agent.radiusM, 0.255));
+function accumulateWallForce(fx, fy, xM, yM, radius, nearest, desiredDirection, cfg) {
   let dx = xM - nearest.x;
   let dy = yM - nearest.y;
   let distance = Math.hypot(dx, dy);
@@ -257,7 +254,7 @@ function wallForceForAgent(agent, context, cfg, desiredDirection) {
     );
     for (const segment of segments) {
       const nearest = closestPointOnWallSegment(xM, yM, segment);
-      const next = accumulateWallForce(fx, fy, { ...agent, xM, yM }, nearest, desiredDirection, cfg);
+      const next = accumulateWallForce(fx, fy, xM, yM, radius, nearest, desiredDirection, cfg);
       fx = next.x;
       fy = next.y;
     }
@@ -272,7 +269,7 @@ function wallForceForAgent(agent, context, cfg, desiredDirection) {
     for (let cx = cx0 - rangeCells; cx <= cx0 + rangeCells; cx++) {
       if (context.isWalkable(floor, cx, cy)) continue;
       const nearest = closestPointOnCell(xM, yM, cx, cy, cellSize);
-      const next = accumulateWallForce(fx, fy, { ...agent, xM, yM }, nearest, desiredDirection, cfg);
+      const next = accumulateWallForce(fx, fy, xM, yM, radius, nearest, desiredDirection, cfg);
       fx = next.x;
       fy = next.y;
     }
