@@ -1,16 +1,16 @@
 :root {
-  --bg: #f3f4f6;
-  --panel: #ffffff;
-  --surface: #f8f9fa;
-  --surface-strong: #eef1f4;
-  --border: #c9ced4;
-  --border-strong: #9da5ad;
-  --accent: #2f5f8f;
-  --accent-soft: #eaf1f7;
-  --danger: #b42318;
-  --text-main: #202428;
-  --text-dim: #606870;
-  --grid-line: #d9dde1;
+  --bg: #1f2124;
+  --panel: #26292d;
+  --surface: #2b2e32;
+  --surface-strong: #32363b;
+  --border: #44484e;
+  --border-strong: #5a6068;
+  --accent: #6f9dca;
+  --accent-soft: #2d3b49;
+  --danger: #d05a5a;
+  --text-main: #e3e6e9;
+  --text-dim: #a7adb4;
+  --grid-line: #474c52;
 }
 
 * {
@@ -33,5 +33,5 @@ h1 {
   font-size: 14px;
   font-weight: 600;
   letter-spacing: 0;
-  color: #202428;
+  color: #eef0f2;
 }
