@@ -3417,7 +3417,7 @@ export function initSimulation() {
 
       for (const e of evalPool) {
         const {
-          c, nx, ny, nf, occ, densityTarget, smokeTarget, heatPenalty,
+          c, nx, ny, nf, smokeTarget, heatPenalty,
           fireHeat, fireEscapeGain, routeRiskPenalty, routeVisibilityFactor, potGain, uphill, isBacktrack
         } = e;
         let score = potGain * POTENTIAL_GAIN_WEIGHT;
