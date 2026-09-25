@@ -106,14 +106,19 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
       layerCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
       layerCtx.clearRect(0, 0, rect.width, rect.height);
       const { scale, ox, oy } = scene.layout;
+      layerCtx.fillStyle = "#1b1d20";
+      layerCtx.fillRect(0, 0, rect.width, rect.height);
+      layerCtx.save();
+      layerCtx.globalAlpha = 0.24;
       layerCtx.drawImage(baseImage, ox, oy, baseImage.width * scale, baseImage.height * scale);
+      layerCtx.restore();
 
       if (grid) {
         layerCtx.save();
         layerCtx.translate(ox, oy);
         layerCtx.scale(scale, scale);
 
-        layerCtx.strokeStyle = "rgba(120,126,132,0.22)";
+        layerCtx.strokeStyle = "rgba(132,138,145,0.18)";
         layerCtx.lineWidth = 0.2;
         for (let y = 0; y <= gridH; y++) {
           layerCtx.beginPath();
@@ -128,7 +133,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
           layerCtx.stroke();
         }
 
-        layerCtx.fillStyle = "rgba(120,130,140,0.28)";
+        layerCtx.fillStyle = "rgba(150,156,162,0.18)";
         for (let y = 0; y < gridH; y++) {
           for (let x = 0; x < gridW; x++) {
             if (grid[y][x].stair) {
@@ -161,16 +166,21 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
 
     if (!baseImage) {
       const rect = cvs.getBoundingClientRect();
-      ctx.strokeStyle = "#9da5ad";
+      ctx.strokeStyle = "#596068";
       ctx.strokeRect(20, 20, rect.width - 40, rect.height - 40);
-      ctx.fillStyle = "#4e565e";
+      ctx.fillStyle = "#aeb4ba";
       ctx.fillText("マップ画像を読み込んでください", 40, 50);
       return false;
     }
 
     const cachedStatic = drawStaticBase(scene);
     if (!cachedStatic) {
+      ctx.save();
+      ctx.fillStyle = "#1b1d20";
+      ctx.fillRect(0, 0, cvs.getBoundingClientRect().width, cvs.getBoundingClientRect().height);
+      ctx.globalAlpha = 0.24;
       ctx.drawImage(baseImage, ox, oy, baseImage.width * scale, baseImage.height * scale);
+      ctx.restore();
     }
 
     if (!grid) return true;
@@ -179,7 +189,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
     ctx.scale(scale, scale);
 
     if (!cachedStatic) {
-      ctx.strokeStyle = "rgba(120,126,132,0.22)";
+      ctx.strokeStyle = "rgba(132,138,145,0.18)";
       ctx.lineWidth = 0.2;
       for (let y = 0; y <= gridH; y++) {
         ctx.beginPath();
@@ -194,7 +204,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
         ctx.stroke();
       }
 
-      ctx.fillStyle = "rgba(120,130,140,0.28)";
+      ctx.fillStyle = "rgba(150,156,162,0.18)";
       for (let y = 0; y < gridH; y++) {
         for (let x = 0; x < gridW; x++) {
           if (grid[y][x].stair) ctx.fillRect(x * cellSizePx, y * cellSizePx, cellSizePx, cellSizePx);
