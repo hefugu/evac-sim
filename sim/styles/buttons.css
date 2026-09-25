@@ -9,14 +9,15 @@
 button {
   cursor: pointer;
   border-radius: 2px;
-  border: 1px solid #464d54;
-  background: #252a30;
-  color: var(--text-main);
+  border: 1px solid var(--border-strong);
+  background: #ffffff;
+  color: #202428;
   padding: 4px 7px;
   font-size: 11px;
-  letter-spacing: 0.02em;
-  transition: background 0.1s ease, border-color 0.1s ease;
+  letter-spacing: 0;
+  transition: background 0.08s ease, border-color 0.08s ease;
   position: relative;
+  box-shadow: none;
 }
 
 button::before {
@@ -24,25 +25,25 @@ button::before {
 }
 
 button:hover {
-  border-color: #68717a;
-  background: #2e343a;
+  border-color: #707880;
+  background: #f3f4f5;
 }
 
 button.modeActive {
   background: var(--accent-soft);
   border-color: var(--accent);
-  color: #eef6fc;
+  color: #1f4f7c;
 }
 
 button.danger {
-  border-color: #a74848;
-  color: #f1c9c9;
+  border-color: #c7a29e;
+  color: var(--danger);
 }
 
 button.danger.modeActive {
-  background: #642d2d;
-  border-color: #d95757;
-  color: #ffffff;
+  background: #fff3f2;
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 .pulse {
@@ -53,14 +54,14 @@ button.danger.modeActive {
   flex: 1 1 100%;
   min-height: 34px;
   font-size: 12px;
-  font-weight: 700;
-  background: #2b4d66;
-  border-color: #4b83b2;
-  color: #f3f7fa;
+  font-weight: 600;
+  background: #f1f3f5;
+  border-color: #7d858d;
+  color: #202428;
 }
 
 .primaryActions #btnStart:hover {
-  background: #345c78;
+  background: #e8ebee;
 }
 
 .primaryActions #btnStop,
