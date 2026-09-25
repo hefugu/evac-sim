@@ -288,6 +288,7 @@ export function initSimulation() {
     activeSmokeCells: 0,
     snapshot: {
       fps: 0,
+      renderFps: 0,
       frameWorkMs: 0,
       renderMs: 0,
       smokeMs: 0,
@@ -299,11 +300,60 @@ export function initSimulation() {
     }
   };
 
+  const MINIMUM_TARGET_PROFILE = Object.freeze({
+    cpu: "Ryzen 7 7730U",
+    memoryGb: 16,
+    graphics: "Radeon integrated graphics",
+    target2DFps: 30
+  });
+  let renderQuality = "full";
+  let overloadSamples = 0;
+  let recoverySamples = 0;
+
+  function updateAdaptiveRenderQuality(snapshot) {
+    const overloaded =
+      (snapshot.fps > 0 && snapshot.fps < 28) ||
+      snapshot.frameWorkMs > 24 ||
+      snapshot.renderMs > 18 ||
+      snapshot.agentMs > 38;
+    const comfortable =
+      snapshot.fps >= 45 &&
+      snapshot.frameWorkMs < 12 &&
+      snapshot.renderMs < 9 &&
+      snapshot.agentMs < 18;
+
+    if (overloaded) {
+      overloadSamples += 1;
+      recoverySamples = 0;
+      if (overloadSamples >= 2) {
+        renderQuality = renderQuality === "full"
+          ? "balanced"
+          : (renderQuality === "balanced" ? "performance" : "performance");
+        overloadSamples = 0;
+      }
+    } else if (comfortable) {
+      recoverySamples += 1;
+      overloadSamples = 0;
+      if (recoverySamples >= 5) {
+        renderQuality = renderQuality === "performance"
+          ? "balanced"
+          : (renderQuality === "balanced" ? "full" : "full");
+        recoverySamples = 0;
+      }
+    } else {
+      overloadSamples = Math.max(0, overloadSamples - 1);
+      recoverySamples = 0;
+    }
+    state.render.performanceMode = renderQuality;
+    state.render.minimumTargetProfile = MINIMUM_TARGET_PROFILE;
+  }
+
   function updatePerfProfile(nowMs) {
     const elapsedMs = nowMs - perfProfile.windowStartMs;
     if (elapsedMs < 1000) return;
     perfProfile.snapshot = {
       fps: perfProfile.frames * 1000 / Math.max(1, elapsedMs),
+      renderFps: perfProfile.renderCalls * 1000 / Math.max(1, elapsedMs),
       frameWorkMs: perfProfile.frameWorkMs / Math.max(1, perfProfile.frames),
       renderMs: perfProfile.renderMs / Math.max(1, perfProfile.renderCalls),
       smokeMs: perfProfile.smokeMs / Math.max(1, perfProfile.smokeTicks),
@@ -313,6 +363,7 @@ export function initSimulation() {
       activeSmokeCells: perfProfile.activeSmokeCells,
       totalGridCells: Math.max(0, gridW * gridH * floorCount)
     };
+    updateAdaptiveRenderQuality(perfProfile.snapshot);
     perfProfile.windowStartMs = nowMs;
     perfProfile.frames = 0;
     perfProfile.steps = 0;
@@ -2597,7 +2648,12 @@ export function initSimulation() {
       syncPublicState();
 
       const viewMode = state.render.viewMode || "2d";
-      const min2DIntervalMs = viewMode === "split" ? 50 : 33.3;
+      const qualityIntervalMs = renderQuality === "performance"
+        ? 66.7
+        : (renderQuality === "balanced" ? 50 : 33.3);
+      const min2DIntervalMs = viewMode === "split"
+        ? Math.max(50, qualityIntervalMs)
+        : qualityIntervalMs;
       if (viewMode !== "3d" && now - last2DDrawMs >= min2DIntervalMs) {
         drawScene();
         last2DDrawMs = now;
@@ -4009,7 +4065,9 @@ export function initSimulation() {
       riskOverlayMode: riskViewModeInput?.value || "none",
       riskOverlay: buildAnalysisOverlay(grid, riskViewModeInput?.value || "none"),
       fdsStats: importedFdsRisk.stats,
-      profiler: perfProfile.snapshot
+      profiler: perfProfile.snapshot,
+      renderQuality,
+      minimumTargetProfile: MINIMUM_TARGET_PROFILE
     };
     state.render.lastScene = scene;
     renderer.render(scene);
