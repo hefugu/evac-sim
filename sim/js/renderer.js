@@ -113,7 +113,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
         layerCtx.translate(ox, oy);
         layerCtx.scale(scale, scale);
 
-        layerCtx.strokeStyle = "rgba(80,0,40,0.25)";
+        layerCtx.strokeStyle = "rgba(120,126,132,0.22)";
         layerCtx.lineWidth = 0.2;
         for (let y = 0; y <= gridH; y++) {
           layerCtx.beginPath();
@@ -128,7 +128,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
           layerCtx.stroke();
         }
 
-        layerCtx.fillStyle = "rgba(80,220,255,0.42)";
+        layerCtx.fillStyle = "rgba(120,130,140,0.28)";
         for (let y = 0; y < gridH; y++) {
           for (let x = 0; x < gridW; x++) {
             if (grid[y][x].stair) {
@@ -161,9 +161,9 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
 
     if (!baseImage) {
       const rect = cvs.getBoundingClientRect();
-      ctx.strokeStyle = "#330011";
+      ctx.strokeStyle = "#9da5ad";
       ctx.strokeRect(20, 20, rect.width - 40, rect.height - 40);
-      ctx.fillStyle = "#501020";
+      ctx.fillStyle = "#4e565e";
       ctx.fillText("マップ画像を読み込んでください", 40, 50);
       return false;
     }
@@ -179,7 +179,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
     ctx.scale(scale, scale);
 
     if (!cachedStatic) {
-      ctx.strokeStyle = "rgba(80,0,40,0.25)";
+      ctx.strokeStyle = "rgba(120,126,132,0.22)";
       ctx.lineWidth = 0.2;
       for (let y = 0; y <= gridH; y++) {
         ctx.beginPath();
@@ -194,7 +194,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
         ctx.stroke();
       }
 
-      ctx.fillStyle = "rgba(80,220,255,0.42)";
+      ctx.fillStyle = "rgba(120,130,140,0.28)";
       for (let y = 0; y < gridH; y++) {
         for (let x = 0; x < gridW; x++) {
           if (grid[y][x].stair) ctx.fillRect(x * cellSizePx, y * cellSizePx, cellSizePx, cellSizePx);
@@ -203,8 +203,8 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
     }
 
     if (stairLinks.length) {
-      ctx.strokeStyle = "rgba(120,255,220,0.95)";
-      ctx.fillStyle = "rgba(200,255,245,0.95)";
+      ctx.strokeStyle = "rgba(70,80,90,0.9)";
+      ctx.fillStyle = "rgba(45,50,55,0.95)";
       ctx.lineWidth = 0.45;
       ctx.font = `${Math.max(6, cellSizePx * 0.7)}px Consolas`;
       ctx.textAlign = "left";
@@ -276,7 +276,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
             if (best.gain > 0.01) {
               const px = (x + 0.5) * cellSizePx;
               const py = (y + 0.5) * cellSizePx;
-              drawArrow(ctx, px, py, best.dx * 1.2, best.dy * 1.2, "rgba(180,255,255,0.7)", 0.3);
+              drawArrow(ctx, px, py, best.dx * 1.2, best.dy * 1.2, "rgba(60,90,120,0.7)", 0.3);
             }
           }
         }
@@ -347,22 +347,25 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
     const drawCell = (cell, x, y) => {
       const view = derive2DCellDisplay(cell,{...settings,isFront:isFireSpreadFront(scene.grid,x,y)});
       const px=(x+.5)*cellSizePx, py=(y+.5)*cellSizePx;
-      if (view.fire.active) {
-        // Engineering display: burning area is a red cell overlay. No glow or
-        // animated flame is used, so color retains a single hazard meaning.
+      const isExplicitSource = !!cell?.fire && cell?.fireSource !== "spread";
+      if (view.fire.active || isExplicitSource) {
+        // Engineering display: burning area is a red cell overlay. A manually
+        // defined source remains visible even while HRR is still zero.
         ctx.save();
-        ctx.fillStyle = `rgba(210,47,47,${0.16 + 0.34 * view.fire.strength})`;
+        const visibleStrength = Math.max(0.18, Number(view.fire.strength) || 0);
+        ctx.fillStyle = `rgba(190,36,36,${0.14 + 0.28 * visibleStrength})`;
         ctx.fillRect(x * cellSizePx, y * cellSizePx, cellSizePx, cellSizePx);
-        ctx.strokeStyle = view.fire.origin === 'source' ? '#b71c1c' : '#d95c5c';
+        const isSource = isExplicitSource || view.fire.origin === 'source';
+        ctx.strokeStyle = isSource ? '#9f1d1d' : '#c94b4b';
         ctx.lineWidth = Math.max(0.7, cellSizePx * 0.12);
-        const markerInset = view.fire.origin === 'source' ? 0.1 : 0.3;
+        const markerInset = isSource ? 0.05 : 0.3;
         ctx.strokeRect(
           x * cellSizePx + markerInset,
           y * cellSizePx + markerInset,
           Math.max(0, cellSizePx - markerInset * 2),
           Math.max(0, cellSizePx - markerInset * 2)
         );
-        if (view.fire.origin === 'source') {
+        if (isSource) {
           const r = Math.max(1.2, cellSizePx * 0.30);
           ctx.beginPath();
           ctx.moveTo(px - r, py);
@@ -408,35 +411,41 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
       const endpoint=(transfer.from?.floorIndex ?? transfer.from?.floor)===scene.currentFloor ? transfer.from :
         (transfer.to?.floorIndex ?? transfer.to?.floor)===scene.currentFloor ? transfer.to : null;
       if(!endpoint) continue;
-      drawArrow(ctx,(endpoint.cx+.5)*cellSizePx,(endpoint.cy+.5)*cellSizePx,0,-cellSizePx*.9,'#ffbd67',.65);
+      drawArrow(ctx,(endpoint.cx+.5)*cellSizePx,(endpoint.cy+.5)*cellSizePx,0,-cellSizePx*.9,'#66717b',.65);
     }
   }
 
   function drawAgents(scene) {
     const { exits, spawns, allExitPoints, currentFloor, vizTrails, agents, vizFlow, flowField, gridW, gridH } = scene;
-    ctx.fillStyle = "#ffdd33";
+    ctx.fillStyle = "#ffffff";
     exits.forEach((p, idx) => {
       const px = (p.cx + 0.5) * cellSizePx;
       const py = (p.cy + 0.5) * cellSizePx;
       ctx.beginPath();
       ctx.arc(px, py, cellSizePx * 0.6, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = "#3b2200";
+      ctx.strokeStyle = "#202428";
+      ctx.lineWidth = Math.max(0.8, cellSizePx * 0.12);
+      ctx.stroke();
+      ctx.fillStyle = "#202428";
       ctx.font = `${Math.max(6, cellSizePx * 0.8)}px Consolas`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       const globalIndex = allExitPoints.findIndex((e) => e.floor === currentFloor && e.cx === p.cx && e.cy === p.cy);
       ctx.fillText(String((globalIndex >= 0 ? globalIndex : idx) + 1), px, py);
-      ctx.fillStyle = "#ffdd33";
+      ctx.fillStyle = "#ffffff";
     });
 
-    ctx.fillStyle = "#33ffaa";
+    ctx.fillStyle = "#ffffff";
     spawns.forEach((p) => {
       const px = (p.cx + 0.5) * cellSizePx;
       const py = (p.cy + 0.5) * cellSizePx;
       ctx.beginPath();
       ctx.arc(px, py, cellSizePx * 0.6, 0, Math.PI * 2);
       ctx.fill();
+      ctx.strokeStyle = "#2f5f8f";
+      ctx.lineWidth = Math.max(0.8, cellSizePx * 0.12);
+      ctx.stroke();
     });
 
     if (vizTrails && agents.length) {
@@ -588,8 +597,13 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
       }
       wrapped.push(current);
     }
-    ctx.fillStyle='rgba(5,13,18,.88)';ctx.fillRect(5,top-5,Math.min(rect.width-10,800),wrapped.length*16+8);
-    ctx.fillStyle='#d9eef5';wrapped.forEach((line,i)=>ctx.fillText(line,12,top+i*16));
+    ctx.fillStyle='rgba(255,255,255,.94)';
+    ctx.fillRect(5,top-5,Math.min(rect.width-10,800),wrapped.length*16+8);
+    ctx.strokeStyle='#b8bec4';
+    ctx.lineWidth=1;
+    ctx.strokeRect(5,top-5,Math.min(rect.width-10,800),wrapped.length*16+8);
+    ctx.fillStyle='#30363b';
+    wrapped.forEach((line,i)=>ctx.fillText(line,12,top+i*16));
     ctx.restore();
   }
 
