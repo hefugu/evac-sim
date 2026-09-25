@@ -347,6 +347,41 @@ function positionIsWalkable(agent, xM, yM, context) {
   return predicate(Math.floor(finite(agent.floor, 0)), cx, cy);
 }
 
+export function createPedestrianDynamicsWorkspace(capacity = 0) {
+  const size = Math.max(0, Math.floor(finite(capacity, 0)));
+  return {
+    active: [],
+    nextX: new Float64Array(size),
+    nextY: new Float64Array(size),
+    nextVx: new Float64Array(size),
+    nextVy: new Float64Array(size),
+    nextDesiredSpeed: new Float64Array(size),
+    movable: new Uint8Array(size)
+  };
+}
+
+function ensureWorkspaceCapacity(workspace, count) {
+  const needed = Math.max(0, Math.floor(finite(count, 0)));
+  const active = Array.isArray(workspace.active) ? workspace.active : [];
+  workspace.active = active;
+  active.length = needed;
+  for (let index = 0; index < needed; index++) {
+    if (!active[index]) active[index] = {};
+  }
+
+  if (!workspace.nextX || workspace.nextX.length < needed) {
+    let size = Math.max(16, workspace.nextX?.length || 0);
+    while (size < needed) size *= 2;
+    workspace.nextX = new Float64Array(size);
+    workspace.nextY = new Float64Array(size);
+    workspace.nextVx = new Float64Array(size);
+    workspace.nextVy = new Float64Array(size);
+    workspace.nextDesiredSpeed = new Float64Array(size);
+    workspace.movable = new Uint8Array(size);
+  }
+  return workspace;
+}
+
 export function stepPedestrianDynamics(
   agents,
   dt,
@@ -368,34 +403,64 @@ export function stepPedestrianDynamics(
   const random = typeof context?.random === "function" ? context.random : Math.random;
   const canMove = typeof context?.canMove === "function" ? context.canMove : () => true;
   const simContext = { ...context, cellSizeMeters, isWalkable };
+  const workspace = ensureWorkspaceCapacity(
+    context?.workspace || createPedestrianDynamicsWorkspace(agents.length),
+    agents.length
+  );
+  const active = workspace.active;
+  const nextX = workspace.nextX;
+  const nextY = workspace.nextY;
+  const nextVx = workspace.nextVx;
+  const nextVy = workspace.nextVy;
+  const nextDesiredSpeed = workspace.nextDesiredSpeed;
+  const movable = workspace.movable;
 
   const substeps = Math.max(1, Math.ceil(dt / Math.max(0.005, cfg.integrationMaxStepS)));
   const h = dt / substeps;
 
   for (let substep = 0; substep < substeps; substep++) {
-    const active = agents.map(agent => {
-      const clearDesired = Math.max(0, finite(agent.baseDesiredSpeedMps ?? agent.desiredSpeedMps, 1.25));
-      const extinction = Math.max(0, finite(extinctionAt(agent)));
-      return {
-        ...agent,
-        xM: finite(agent.x) * cellSizeMeters,
-        yM: finite(agent.y) * cellSizeMeters,
-        vxMps: finite(agent.vxMps),
-        vyMps: finite(agent.vyMps),
-        desiredSpeedMps: smokeAdjustedDesiredSpeed(clearDesired, extinction, cfg)
-      };
-    });
+    for (let index = 0; index < agents.length; index++) {
+      const source = agents[index];
+      const a = active[index];
+      const clearDesired = Math.max(
+        0,
+        finite(source.baseDesiredSpeedMps ?? source.desiredSpeedMps, 1.25)
+      );
+      const extinction = Math.max(0, finite(extinctionAt(source)));
+
+      a.id = source.id;
+      a.floor = source.floor;
+      a.x = finite(source.x);
+      a.y = finite(source.y);
+      a.xM = a.x * cellSizeMeters;
+      a.yM = a.y * cellSizeMeters;
+      a.vxMps = finite(source.vxMps);
+      a.vyMps = finite(source.vyMps);
+      a.radiusM = Math.max(0.1, finite(source.radiusM, 0.255));
+      a.massKg = Math.max(20, finite(source.massKg, 80));
+      a.desiredSpeedMps = smokeAdjustedDesiredSpeed(clearDesired, extinction, cfg);
+      a.dead = !!source.dead;
+      a.finished = !!source.finished;
+      a.stairTransition = source.stairTransition || null;
+    }
+
     const hash = buildAgentSpatialHash(active, {
       bucketSizeM: cfg.interactionRangeM,
       cellSizeMeters
     });
+    movable.fill(0, 0, agents.length);
 
-    const updates = new Array(agents.length);
     for (let index = 0; index < active.length; index++) {
       const a = active[index];
       const source = agents[index];
-      if (!source || source.dead || source.finished || source.fallen || source.stairTransition || !canMove(source)) {
-        updates[index] = null;
+      if (
+        !source ||
+        source.dead ||
+        source.finished ||
+        source.fallen ||
+        source.stairTransition ||
+        !canMove(source)
+      ) {
         continue;
       }
 
@@ -405,7 +470,7 @@ export function stepPedestrianDynamics(
         cfg.relaxationMinS * 0.5,
         cfg.relaxationMaxS * 2
       );
-      const mass = Math.max(20, finite(source.massKg, 80));
+      const mass = a.massKg;
       const desiredVx = desiredDirection.x * a.desiredSpeedMps;
       const desiredVy = desiredDirection.y * a.desiredSpeedMps;
 
@@ -420,17 +485,15 @@ export function stepPedestrianDynamics(
         if (!b || b.floor !== a.floor) continue;
         const distance = Math.hypot(a.xM - b.xM, a.yM - b.yM);
         if (distance > cfg.interactionRangeM + a.radiusM + b.radiusM) continue;
-        const f = interactionForce(a, b, desiredDirection, cfg);
-        fx += f.x;
-        fy += f.y;
+        const force = interactionForce(a, b, desiredDirection, cfg);
+        fx += force.x;
+        fy += force.y;
       }
 
       const wallForce = wallForceForAgent(a, simContext, cfg, desiredDirection);
       fx += wallForce.x;
       fy += wallForce.y;
 
-      // Small stochastic acceleration is part of FDS+Evac. It is bounded and
-      // can be disabled by setting randomAccelerationStdMps2=0 for regression tests.
       let ax = fx / mass + truncatedRandomAcceleration(random, cfg);
       let ay = fy / mass + truncatedRandomAcceleration(random, cfg);
       const acceleration = Math.hypot(ax, ay);
@@ -452,7 +515,6 @@ export function stepPedestrianDynamics(
       let nextXM = a.xM + vx * h;
       let nextYM = a.yM + vy * h;
 
-      // Walls remain hard constraints even if the force integration overshoots.
       if (!positionIsWalkable(a, nextXM, nextYM, simContext)) {
         const xOnly = positionIsWalkable(a, nextXM, a.yM, simContext);
         const yOnly = positionIsWalkable(a, a.xM, nextYM, simContext);
@@ -470,17 +532,22 @@ export function stepPedestrianDynamics(
         }
       }
 
-      updates[index] = {
-        x: nextXM / cellSizeMeters,
-        y: nextYM / cellSizeMeters,
-        vxMps: vx,
-        vyMps: vy,
-        desiredSpeedMps: a.desiredSpeedMps
-      };
+      nextX[index] = nextXM / cellSizeMeters;
+      nextY[index] = nextYM / cellSizeMeters;
+      nextVx[index] = vx;
+      nextVy[index] = vy;
+      nextDesiredSpeed[index] = a.desiredSpeedMps;
+      movable[index] = 1;
     }
 
     for (let index = 0; index < agents.length; index++) {
-      if (updates[index]) Object.assign(agents[index], updates[index]);
+      if (!movable[index]) continue;
+      const agent = agents[index];
+      agent.x = nextX[index];
+      agent.y = nextY[index];
+      agent.vxMps = nextVx[index];
+      agent.vyMps = nextVy[index];
+      agent.desiredSpeedMps = nextDesiredSpeed[index];
     }
   }
 
