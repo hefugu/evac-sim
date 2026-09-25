@@ -269,6 +269,40 @@ test("reset clears smoke inventory, agent exposure and fire spread while keeping
 });
 
 
+
+test("crowd near a single exit does not leave stragglers wandering past it", async ({ page }) => {
+  await configureAgent(page, "1.2");
+  await page.locator("#numAgents").fill("12");
+  await page.locator("#agentPreset").selectOption("default");
+  await marker(page, "modeSpawn", 12, 1);
+  await marker(page, "modeSpawn", 12, 2);
+  await marker(page, "modeSpawn", 12, 3);
+  await marker(page, "modeExit", 17, 2);
+
+  await page.locator("#btnStart").click();
+  await page.clock.runFor(12_000);
+
+  const result = await page.evaluate(async () => {
+    const { state } = await import("/sim/js/state.js");
+    return {
+      running: state.sim.running,
+      active: state.agents.filter(a => !a.finished && !a.dead).map(a => ({
+        id: a.id,
+        x: a.x,
+        y: a.y,
+        type: a.type,
+        targetExitIndex: a.targetExitIndex
+      })),
+      evacuated: state.agents.filter(a => a.finished).length,
+      dead: state.agents.filter(a => a.dead).length
+    };
+  });
+
+  expect(result.dead).toBe(0);
+  expect(result.active).toEqual([]);
+  expect(result.evacuated).toBe(12);
+});
+
 test("Start is enabled again after Stop and after normal completion", async ({ page }) => {
   await configureAgent(page, "0.8");
   await marker(page, "modeSpawn", 2, 2);
