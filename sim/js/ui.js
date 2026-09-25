@@ -56,6 +56,7 @@ export function getUIRefs() {
     optimizeReverseInput: byId("optimizeReverse"),
     logEl: byId("log"),
     statusBar: byId("statusBar"),
+    performanceStatus: byId("performanceStatus"),
     floorLabel: byId("floorLabel"),
     presetNameInput: byId("presetName"),
     presetSelect: byId("presetSelect"),
