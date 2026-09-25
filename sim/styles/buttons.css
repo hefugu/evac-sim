@@ -10,8 +10,8 @@ button {
   cursor: pointer;
   border-radius: 2px;
   border: 1px solid var(--border-strong);
-  background: #ffffff;
-  color: #202428;
+  background: #2b2f34;
+  color: #e1e4e7;
   padding: 4px 7px;
   font-size: 11px;
   letter-spacing: 0;
@@ -25,25 +25,25 @@ button::before {
 }
 
 button:hover {
-  border-color: #707880;
-  background: #f3f4f5;
+  border-color: #747c85;
+  background: #343940;
 }
 
 button.modeActive {
   background: var(--accent-soft);
   border-color: var(--accent);
-  color: #1f4f7c;
+  color: #dceaf6;
 }
 
 button.danger {
-  border-color: #c7a29e;
-  color: var(--danger);
+  border-color: #765252;
+  color: #e0b6b6;
 }
 
 button.danger.modeActive {
-  background: #fff3f2;
+  background: #3b2a2a;
   border-color: var(--danger);
-  color: var(--danger);
+  color: #f0cccc;
 }
 
 .pulse {
@@ -55,13 +55,13 @@ button.danger.modeActive {
   min-height: 34px;
   font-size: 12px;
   font-weight: 600;
-  background: #f1f3f5;
-  border-color: #7d858d;
-  color: #202428;
+  background: #30353a;
+  border-color: #68717a;
+  color: #eef0f2;
 }
 
 .primaryActions #btnStart:hover {
-  background: #e8ebee;
+  background: #393f45;
 }
 
 .primaryActions #btnStop,
