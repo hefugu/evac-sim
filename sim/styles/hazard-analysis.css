@@ -1,5 +1,6 @@
 #viewToolbar label.hazardControl { display: inline-flex; }
 #viewToolbar select { max-width: 160px; min-width: 0; }
+
 #hazardInspector {
   position: fixed;
   right: 12px;
@@ -7,19 +8,32 @@
   width: min(570px, calc(100vw - 28px));
   z-index: 20;
   max-height: 60vh;
-  color: #dde1e4;
-  background: #1a1f23f5;
-  border: 1px solid #4b535b;
-  border-radius: 3px;
+  color: #202428;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid var(--border-strong);
+  border-radius: 2px;
   padding: 10px;
   font: 11px system-ui, sans-serif;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
 }
+
 #hazardInspector[hidden] { display: none; }
 #hazardInspector header { display: flex; justify-content: space-between; align-items: center; }
 #hazardInspector button { width: auto; }
-#hazardInspector p { margin: 6px 0; }
+#hazardInspector p { margin: 6px 0; color: #4e565e; }
 #hazardInspector .inspectionTable { overflow: auto; max-height: 42vh; }
 #hazardInspector table { width: 100%; border-collapse: collapse; }
-#hazardInspector th { text-align: left; position: sticky; top: 0; background: #242a2f; }
-#hazardInspector td, #hazardInspector th { padding: 4px; border-bottom: 1px solid #3a4249; overflow-wrap: anywhere; }
-#hazardInspector td:first-child { color: #c6ccd1; }
+#hazardInspector th {
+  text-align: left;
+  position: sticky;
+  top: 0;
+  background: #f1f3f5;
+  color: #202428;
+}
+#hazardInspector td,
+#hazardInspector th {
+  padding: 4px;
+  border-bottom: 1px solid #dde1e5;
+  overflow-wrap: anywhere;
+}
+#hazardInspector td:first-child { color: #4e565e; }
