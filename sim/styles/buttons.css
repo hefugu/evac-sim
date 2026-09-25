@@ -8,73 +8,59 @@
 
 button {
   cursor: pointer;
-  border-radius: 3px;
-  border: 1px solid #550011;
-  background: #190008;
+  border-radius: 2px;
+  border: 1px solid #464d54;
+  background: #252a30;
   color: var(--text-main);
-  padding: 4px 6px;
+  padding: 4px 7px;
   font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  transition: all 0.12s ease-out;
+  letter-spacing: 0.02em;
+  transition: background 0.1s ease, border-color 0.1s ease;
   position: relative;
-  overflow: hidden;
 }
 
 button::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(120deg, transparent, #ff003022, transparent);
-  transform: translateX(-120%);
-  transition: transform 0.25s linear;
-}
-
-button:hover::before {
-  transform: translateX(120%);
+  content: none;
 }
 
 button:hover {
-  border-color: var(--accent);
-  box-shadow: 0 0 12px #ff002044;
-  background: #26000c;
+  border-color: #68717a;
+  background: #2e343a;
 }
 
 button.modeActive {
   background: var(--accent-soft);
   border-color: var(--accent);
-  box-shadow: 0 0 10px #ff003055;
+  color: #eef6fc;
 }
 
 button.danger {
-  border-color: var(--accent-warn);
-  color: var(--accent-warn);
+  border-color: #a74848;
+  color: #f1c9c9;
 }
 
 button.danger.modeActive {
-  background: #661a00;
-  color: #ffe0c0;
-}
-
-@keyframes pulseWarn {
-  0%, 100% {
-    box-shadow: 0 0 6px #ff660033;
-  }
-  50% {
-    box-shadow: 0 0 16px #ff6600aa;
-  }
+  background: #642d2d;
+  border-color: #d95757;
+  color: #ffffff;
 }
 
 .pulse {
-  animation: pulseWarn 1.2s infinite;
+  animation: none;
 }
-
 
 .primaryActions #btnStart {
   flex: 1 1 100%;
   min-height: 34px;
   font-size: 12px;
   font-weight: 700;
+  background: #2b4d66;
+  border-color: #4b83b2;
+  color: #f3f7fa;
+}
+
+.primaryActions #btnStart:hover {
+  background: #345c78;
 }
 
 .primaryActions #btnStop,
@@ -84,5 +70,4 @@ button.danger.modeActive {
 
 .secondaryActions button {
   flex: 1 1 calc(50% - 4px);
-  opacity: 0.9;
 }
