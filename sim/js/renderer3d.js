@@ -74,25 +74,25 @@ const DEFAULT_OPTIONS = Object.freeze({
   showSmokeLayerBounds: true,
   showStairSmokeTransfer: true,
   fireThreshold: 0.001,
-  background: "#07121a",
-  floorColor: "#d4d9dc",
-  alternateFloorColor: "#c4cdd2",
-  wallColor: "#17232b",
-  wallEdgeColor: "rgba(126, 151, 162, 0.82)",
+  background: "#f6f7f8",
+  floorColor: "#e8eaec",
+  alternateFloorColor: "#dde1e4",
+  wallColor: "#aab1b7",
+  wallEdgeColor: "rgba(82, 90, 98, 0.75)",
   autoResize: true,
   autoStart: false,
   showControlsHint: true
 });
 
 const AGENT_STYLES = Object.freeze({
-  teacher: Object.freeze({ color: "#66ccff", outline: "#e8fbff", height: 1.72, width: 0.46, shape: "teacher" }),
-  leader: Object.freeze({ color: "#66ffcc", outline: "#eafff9", height: 1.72, width: 0.46, shape: "teacher" }),
-  student: Object.freeze({ color: "#7bb8ff", outline: "#eef6ff", height: 1.38, width: 0.38, shape: "student" }),
-  child: Object.freeze({ color: "#8ad8ff", outline: "#f1fdff", height: 1.26, width: 0.36, shape: "student" }),
-  panic: Object.freeze({ color: "#ff4f9a", outline: "#fff0f7", height: 1.62, width: 0.48, shape: "panic" }),
-  elderly: Object.freeze({ color: "#ffd26b", outline: "#fff8dc", height: 1.58, width: 0.44, shape: "person" }),
-  adult: Object.freeze({ color: "#ff6688", outline: "#fff0f3", height: 1.68, width: 0.44, shape: "person" }),
-  default: Object.freeze({ color: "#ff6688", outline: "#fff0f3", height: 1.62, width: 0.42, shape: "person" })
+  teacher: Object.freeze({ color: "#345f82", outline: "#23435e", height: 1.72, width: 0.46, shape: "teacher" }),
+  leader: Object.freeze({ color: "#3f6b61", outline: "#2d5048", height: 1.72, width: 0.46, shape: "teacher" }),
+  student: Object.freeze({ color: "#6685a1", outline: "#46627a", height: 1.38, width: 0.38, shape: "student" }),
+  child: Object.freeze({ color: "#7897b3", outline: "#56748f", height: 1.26, width: 0.36, shape: "student" }),
+  panic: Object.freeze({ color: "#a33a3a", outline: "#772929", height: 1.62, width: 0.48, shape: "panic" }),
+  elderly: Object.freeze({ color: "#7a7f85", outline: "#555b61", height: 1.58, width: 0.44, shape: "person" }),
+  adult: Object.freeze({ color: "#4f6f8f", outline: "#35516c", height: 1.68, width: 0.44, shape: "person" }),
+  default: Object.freeze({ color: "#4f6f8f", outline: "#35516c", height: 1.62, width: 0.42, shape: "person" })
 });
 
 function finiteNumber(value, fallback = 0) {
@@ -1008,10 +1008,10 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
       const baseY = floor.elevation + 0.012;
       const topY = floor.elevation + clamp(cell * 0.28, 0.09, 0.16);
       const palette = region.type === "emergency"
-        ? { top: "#ffd34d", side: "#8a5a08", edge: "#fff4be", tread: "#5c3900" }
+        ? { top: "#d9dde1", side: "#8a9198", edge: "#5c636a", tread: "#737a81" }
         : (region.type === "outdoor"
-            ? { top: "#20d8c4", side: "#08766e", edge: "#d9fffb", tread: "#034a45" }
-            : { top: "#28e36f", side: "#08763a", edge: "#ddffe9", tread: "#034524" });
+            ? { top: "#e2e5e8", side: "#939aa1", edge: "#616970", tread: "#7d848b" }
+            : { top: "#d2d7db", side: "#858d94", edge: "#596168", tread: "#707880" });
       const topDepths = [];
 
       region.runs.forEach(run => {
@@ -1109,7 +1109,7 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
         { x: to.x, y: to.y + 0.16, z: to.z },
         basis,
         {
-          stroke: link.type === "outdoor" ? "#7de0ff" : (link.type === "emergency" ? "#ffd166" : "#54f2cf"),
+          stroke: link.type === "outdoor" ? "#6b7782" : (link.type === "emergency" ? "#7b858e" : "#59656f"),
           lineWidth: 2.25,
           alpha: 0.92,
           order: 3
@@ -1191,7 +1191,7 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
       pushLine(primitives,
         { x: from.x, y: from.y + floorByIndex.get(from.floorIndex).wallHeight * 0.85, z: from.z },
         { x: to.x, y: to.y + floorByIndex.get(to.floorIndex).wallHeight * 0.85, z: to.z },
-        basis, { stroke: "#ffbd67", lineWidth: 2 + Math.min(3, Math.log1p(quantity) * 3),
+        basis, { stroke: "#68737d", lineWidth: 2 + Math.min(3, Math.log1p(quantity) * 3),
           alpha: 0.9, arrow: true, order: 7 });
       count++;
     }
@@ -1392,12 +1392,12 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
     const x = primitive.top.x;
     const y = primitive.top.y;
     context.save();
-    context.fillStyle = "#ffdd33";
-    context.strokeStyle = "#fff7c2";
+    context.fillStyle = "#ffffff";
+    context.strokeStyle = "#30363b";
     context.lineWidth = 1;
     context.fillRect(x - width * 0.5, y, width, signHeight);
     context.strokeRect(x - width * 0.5, y, width, signHeight);
-    context.fillStyle = "#3b2200";
+    context.fillStyle = "#202428";
     context.font = `700 ${clamp(signHeight * 0.5, 7, 11)}px system-ui, sans-serif`;
     context.textAlign = "center";
     context.textBaseline = "middle";
@@ -1409,8 +1409,8 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
     const height = Math.max(6, primitive.base.y - primitive.top.y);
     const radius = clamp(height * 0.42, 4, 14);
     context.save();
-    context.strokeStyle = "#44f1c2";
-    context.fillStyle = "rgba(68, 241, 194, 0.18)";
+    context.strokeStyle = "#2f5f8f";
+    context.fillStyle = "rgba(47, 95, 143, 0.08)";
     context.lineWidth = 2;
     context.beginPath();
     context.arc(primitive.base.x, primitive.base.y, radius, 0, TAU);
@@ -1450,7 +1450,7 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
     context.globalAlpha = primitive.finished ? primitive.opacity * 0.42 : primitive.opacity;
     context.lineCap = "round";
     context.lineJoin = "round";
-    const color = primitive.dead ? "#25282b" : (primitive.fallen ? "#ff9f2f" : style.color);
+    const color = primitive.dead ? "#25282b" : (primitive.fallen ? "#8b4a4a" : style.color);
     const outline = primitive.dead ? "#c43b3b" : style.outline;
 
     if (style.shape === "panic") {
@@ -1548,10 +1548,7 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
     context.clearRect(0, 0, canvas.width, canvas.height);
     context.restore();
     context.setTransform(viewport.dpr, 0, 0, viewport.dpr, 0, 0);
-    const gradient = context.createLinearGradient(0, 0, 0, viewport.height);
-    gradient.addColorStop(0, config.background);
-    gradient.addColorStop(1, "#102732");
-    context.fillStyle = gradient;
+    context.fillStyle = config.background;
     context.fillRect(0, 0, viewport.width, viewport.height);
   }
 
@@ -1559,19 +1556,19 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
     const centerX = viewport.width * 0.5;
     const centerY = viewport.height * 0.5;
     context.save();
-    context.fillStyle = "rgba(173, 213, 226, 0.18)";
-    context.strokeStyle = "rgba(173, 213, 226, 0.48)";
+    context.fillStyle = "rgba(255,255,255,0.92)";
+    context.strokeStyle = "#aeb5bc";
     context.lineWidth = 1.25;
     const boxWidth = Math.min(440, Math.max(210, viewport.width - 48));
     const boxHeight = 112;
     context.fillRect(centerX - boxWidth * 0.5, centerY - boxHeight * 0.5, boxWidth, boxHeight);
     context.strokeRect(centerX - boxWidth * 0.5, centerY - boxHeight * 0.5, boxWidth, boxHeight);
-    context.fillStyle = "#e6f5fa";
+    context.fillStyle = "#30363b";
     context.font = "600 16px system-ui, sans-serif";
     context.textAlign = "center";
     context.textBaseline = "middle";
     context.fillText("3D表示用の校舎マップがありません", centerX, centerY - 16);
-    context.fillStyle = "#9fc2ce";
+    context.fillStyle = "#626a72";
     context.font = "13px system-ui, sans-serif";
     context.fillText("2D画面でマップを読み込むか、3Fサンプルを選択してください。", centerX, centerY + 15);
     context.restore();
@@ -1585,11 +1582,11 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
     context.textAlign = "left";
     context.textBaseline = "top";
     context.font = "12px ui-monospace, SFMono-Regular, Consolas, monospace";
-    context.fillStyle = "rgba(5, 13, 18, 0.72)";
+    context.fillStyle = "rgba(255,255,255,0.94)";
     context.fillRect(12, 12, 222, 46);
-    context.fillStyle = "#d9eef5";
+    context.fillStyle = "#30363b";
     context.fillText(`3D  floors ${floors.length}  agents ${agents.length}`, 22, 20);
-    context.fillStyle = "#8eb6c5";
+    context.fillStyle = "#626a72";
     context.fillText(`simulation t=${simTime.toFixed(1)}s`, 22, 39);
 
     if (layerVisibility.smoke) {
@@ -1598,10 +1595,10 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
         stats.layerInterfaceMinMeters==null?'No physical layer':`interface ${stats.layerInterfaceMinMeters.toFixed(2)}–${stats.layerInterfaceMaxMeters.toFixed(2)} m / depth ≤${stats.maxLayerDepthMeters.toFixed(2)} m`,
         `Max K=${stats.maxExtinctionPerM.toFixed(2)} 1/m / CO=${stats.maxCoPpm.toFixed(0)} ppm / T=${stats.maxTemperatureC.toFixed(1)} °C`,
         `FDS cyan ○ at sample height: ${stats.fdsSamples}; fallback gray / mixed purple`,
-        `Stair smoke amber → ${stats.stairSmokeTransfers} links (shared state)`,
+        `Stair smoke transfer → ${stats.stairSmokeTransfers} links (shared state)`,
         `Fire: ${displayLegend(config.fireVisualizationMode)}; source □ / spread ○`];
-      context.fillStyle='rgba(5,13,18,.84)';context.fillRect(12,66,Math.min(680,viewport.width-24),lines.length*17+10);
-      context.fillStyle='#d9eef5';lines.forEach((line,i)=>context.fillText(line,22,72+i*17,Math.max(40,viewport.width-44)));
+      context.fillStyle='rgba(255,255,255,.94)';context.fillRect(12,66,Math.min(680,viewport.width-24),lines.length*17+10);
+      context.fillStyle='#30363b';lines.forEach((line,i)=>context.fillText(line,22,72+i*17,Math.max(40,viewport.width-44)));
     }
 
     const legendY = viewport.height - 31;
