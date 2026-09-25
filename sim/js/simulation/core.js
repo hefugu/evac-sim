@@ -504,6 +504,7 @@ export function initSimulation() {
   const STUCK_BACKTRACK_RELEASE_SEC = 1.0;
   const STUCK_UPHILL_RELEASE_SEC = 1.6;
   const EXIT_SWITCH_MARGIN = 2.0;
+  const EXIT_COMMIT_RADIUS_METERS = 2.0;
   const MIN_SPEED_FACTOR = 0.12;
   const VISIBILITY_SMOKE_COEF = 0.33;
   const MIN_VISIBILITY = 0.1;
@@ -985,10 +986,7 @@ export function initSimulation() {
     return arr;
   }
 
-  function isInsideExitCaptureRegion(agent, floor) {
-    const exitsOnFloor = exitPointsByFloor[floor] || [];
-    if (!exitsOnFloor.length) return false;
-
+  function exitCaptureHalfExtentCells(agent, floor) {
     const cellMeters = Math.max(
       0.05,
       Number(floorStates[floor]?.cellSizeMeters) ||
@@ -996,20 +994,68 @@ export function initSimulation() {
       0.5
     );
     const radiusMeters = Math.max(0.22, Number(agent.radiusM) || 0.255);
+    return 0.5 + radiusMeters / cellMeters;
+  }
 
-    // An exit cell represents a finite opening, not a mathematical point.
-    // Finish once the pedestrian's body reaches the exit-cell area. This is
-    // especially important for continuous Social Force motion, where crowd
-    // repulsion can keep centres from landing exactly on the seed coordinate.
-    const captureMeters = cellMeters * 0.5 + radiusMeters;
-    const captureCells = captureMeters / cellMeters;
+  function pointInsideExpandedExitCell(x, y, exit, halfExtent) {
+    return (
+      x >= exit.cx - halfExtent &&
+      x <= exit.cx + halfExtent &&
+      y >= exit.cy - halfExtent &&
+      y <= exit.cy + halfExtent
+    );
+  }
 
-    for (const exit of exitsOnFloor) {
-      if (Math.hypot(agent.x - exit.cx, agent.y - exit.cy) <= captureCells) {
-        return true;
+  function segmentIntersectsExpandedExitCell(x0, y0, x1, y1, exit, halfExtent) {
+    const minX = exit.cx - halfExtent;
+    const maxX = exit.cx + halfExtent;
+    const minY = exit.cy - halfExtent;
+    const maxY = exit.cy + halfExtent;
+    let tMin = 0;
+    let tMax = 1;
+
+    const clipAxis = (start, delta, min, max) => {
+      if (Math.abs(delta) < 1e-12) {
+        return start >= min && start <= max;
       }
-    }
-    return false;
+      let t1 = (min - start) / delta;
+      let t2 = (max - start) / delta;
+      if (t1 > t2) {
+        const tmp = t1;
+        t1 = t2;
+        t2 = tmp;
+      }
+      tMin = Math.max(tMin, t1);
+      tMax = Math.min(tMax, t2);
+      return tMin <= tMax;
+    };
+
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    return (
+      clipAxis(x0, dx, minX, maxX) &&
+      clipAxis(y0, dy, minY, maxY)
+    );
+  }
+
+  function isInsideExitCaptureRegion(agent, floor) {
+    const exitsOnFloor = exitPointsByFloor[floor] || [];
+    if (!exitsOnFloor.length) return false;
+    const halfExtent = exitCaptureHalfExtentCells(agent, floor);
+    return exitsOnFloor.some(exit =>
+      pointInsideExpandedExitCell(agent.x, agent.y, exit, halfExtent)
+    );
+  }
+
+  function crossedExitCaptureRegion(agent, floor, fromX, fromY, toX, toY) {
+    const exitsOnFloor = exitPointsByFloor[floor] || [];
+    if (!exitsOnFloor.length) return false;
+    const halfExtent = exitCaptureHalfExtentCells(agent, floor);
+    return exitsOnFloor.some(exit =>
+      segmentIntersectsExpandedExitCell(
+        fromX, fromY, toX, toY, exit, halfExtent
+      )
+    );
   }
 
   function collectAllSpawns() {
@@ -3096,12 +3142,40 @@ export function initSimulation() {
           choice.idx >= 0 &&
           !choice.usesFireFallback &&
           currentChoice.usesFireFallback;
+        const currentExit =
+          Number.isInteger(a.targetExitIndex) &&
+          a.targetExitIndex >= 0 &&
+          a.targetExitIndex < allExitPoints.length
+            ? allExitPoints[a.targetExitIndex]
+            : null;
+        const cellMeters = Math.max(
+          0.05,
+          Number(floorStates[f]?.cellSizeMeters) ||
+          parseFloat(cellSizeMetersInput.value) ||
+          0.5
+        );
+        const currentExitDistanceMeters =
+          currentExit && currentExit.floor === f
+            ? Math.hypot(a.x - currentExit.cx, a.y - currentExit.cy) * cellMeters
+            : Infinity;
+        const currentExitReachable =
+          currentChoice.idx >= 0 &&
+          currentChoice.field &&
+          Number.isFinite(currentChoice.score);
+        const exitCommitted =
+          currentExitReachable &&
+          currentExitDistanceMeters <= EXIT_COMMIT_RADIUS_METERS;
         const shouldSwitch =
           (choice.idx >= 0) &&
           (choice.idx !== a.targetExitIndex) &&
           (
             safetyUpgrade ||
-            (panicMaySwitch && choice.score + switchMargin < currentChoice.score)
+            !currentExitReachable ||
+            (
+              !exitCommitted &&
+              panicMaySwitch &&
+              choice.score + switchMargin < currentChoice.score
+            )
           );
 
         if (choice.idx === a.targetExitIndex && choice.field) {
@@ -3596,6 +3670,25 @@ export function initSimulation() {
       },
       canMove: agent => !!agent._socialMove,
       workspace: pedestrianWorkspace
+    });
+
+    // Continuous motion can cross an exit between two simulation samples.
+    // Treat the swept path as evacuation so a fast/repelled pedestrian cannot
+    // tunnel through an exit and wander on the far side.
+    agents.forEach(a => {
+      if (a.dead || a.finished) return;
+      const previous = socialMovementStart.get(a.id);
+      if (!previous) return;
+      const nowFloor = clamp(Math.floor(a.floor ?? previous.floor), 0, floorCount - 1);
+      if (nowFloor !== previous.floor) return;
+      if (crossedExitCaptureRegion(a, nowFloor, previous.x, previous.y, a.x, a.y)) {
+        a.finished = true;
+        a.finishTime = simTime;
+        a.behaviorState = "evacuated";
+        a.vxMps = 0;
+        a.vyMps = 0;
+        evacCount++;
+      }
     });
 
     // Update discrete statistics from the continuous positions. Cell occupancy
