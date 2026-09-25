@@ -129,6 +129,50 @@ test("real 3F map loads with calibrated topology and scale", async ({ page }) =>
   });
 });
 
+
+test("real 3F map runs fire and smoke physics without geometry corruption", async ({ page }) => {
+  const errors = [];
+  page.on("pageerror", error => errors.push(String(error)));
+
+  await loadScitech3F(page);
+  await configureAgent(page, "1.2");
+  await marker(page, "modeSpawn", 118, 154);
+  await marker(page, "modeExit", 138, 154);
+  await marker(page, "modeFire", 104, 120);
+
+  await page.locator("#btnStart").click();
+  await page.clock.runFor(5_000);
+
+  const result = await page.evaluate(async () => {
+    const { state } = await import("/sim/js/state.js");
+    const floor = state.map.floorStates[state.map.currentFloor];
+    const source = floor.grid[120][104];
+    return {
+      sourceFire: !!source.fire,
+      sourceAge: Number(source.fireAgeSec) || 0,
+      sourceHrrKw: Number(source.hrrKw) || 0,
+      spreadCells: floor.grid.flat().filter(cell => cell.fireSource === "spread").length,
+      sootKg: [...floor.smokePhysics.sootMassKg].reduce((sum, value) => sum + value, 0),
+      coKg: [...floor.smokePhysics.coMassKg].reduce((sum, value) => sum + value, 0),
+      activeSmokeCells: floor.smokePhysics.activeIndices?.length || 0,
+      width: floor.gridWidth,
+      height: floor.gridHeight,
+      walkable: floor.grid.flat().filter(cell => cell.walkable).length
+    };
+  });
+
+  expect(result.sourceFire).toBe(true);
+  expect(result.sourceAge).toBeGreaterThan(0);
+  expect(result.sourceHrrKw).toBeGreaterThan(0);
+  expect(result.spreadCells).toBe(0);
+  expect(result.sootKg).toBeGreaterThan(0);
+  expect(result.coKg).toBeGreaterThan(0);
+  expect(result.activeSmokeCells).toBeGreaterThan(0);
+  expect(result.width).toBe(150);
+  expect(result.height).toBe(200);
+  expect(errors).toEqual([]);
+});
+
 test("real 3F map evacuates a small crowd through a corridor exit without stragglers", async ({ page }) => {
   await loadScitech3F(page);
   await configureAgent(page, "1.2");
