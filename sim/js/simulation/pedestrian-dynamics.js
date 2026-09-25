@@ -341,6 +341,7 @@ export function stepPedestrianDynamics(
     ? context.extinctionAt
     : () => 0;
   const random = typeof context?.random === "function" ? context.random : Math.random;
+  const canMove = typeof context?.canMove === "function" ? context.canMove : () => true;
   const simContext = { ...context, cellSizeMeters, isWalkable };
 
   const substeps = Math.max(1, Math.ceil(dt / Math.max(0.005, cfg.integrationMaxStepS)));
@@ -368,7 +369,7 @@ export function stepPedestrianDynamics(
     for (let index = 0; index < active.length; index++) {
       const a = active[index];
       const source = agents[index];
-      if (!source || source.dead || source.finished || source.fallen || source.stairTransition) {
+      if (!source || source.dead || source.finished || source.fallen || source.stairTransition || !canMove(source)) {
         updates[index] = null;
         continue;
       }
