@@ -661,6 +661,29 @@ test("base-10 optical density input converts to natural-log extinction", () => {
   assertNearlyEqual(record.opticalDensity, 0.1 * Math.LN10);
 });
 
+test("default fire model grows the prescribed source without inventing material spread", () => {
+  const sourceCell = legacyCell({ fire: true, fireIntensity: 0.05, fireAgeSec: 5 });
+  const targetCell = legacyCell();
+  const floors = [{
+    floorIndex: 0,
+    grid: [[sourceCell, targetCell]],
+    smokeMap: [[0, 0]],
+    walkableTemplate: [[true, true]],
+    cellSizeMeters: 0.5
+  }];
+
+  const result = stepLegacyFireSpreadInPlace(floors, 10, {
+    random: () => 0,
+    timeSec: 15,
+    activeIndicesByFloor: [[0]]
+  });
+
+  assert.equal(targetCell.fire, false);
+  assert.equal(result.ignitedCells.length, 0);
+  assert.equal(result.activeFireCount, 1);
+  assert.ok(sourceCell.hrrKw > 0);
+});
+
 test("fire grows, spreads deterministically and applies in place", () => {
   const sourceCell = legacyCell({ fire: true, fireIntensity: 1, fireAgeSec: 10 });
   const targetCell = legacyCell();
