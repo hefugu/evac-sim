@@ -510,7 +510,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
       const px = (a.x + 0.5) * cellSizePx;
       const py = (a.y + 0.5) * cellSizePx;
       if (a.dead) ctx.fillStyle = "#1a1a1a";
-      else if (a.fallen) ctx.fillStyle = "#ff9900";
+      else if (a.fallen) ctx.fillStyle = "#8b4a4a";
       else if (a.helpingId != null) ctx.fillStyle = "#33ccff";
       else if (a.finished) ctx.fillStyle = "#8888ff";
       else ctx.fillStyle = typeMeta[a.type]?.color || "#ff3366";
@@ -556,7 +556,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
     const lines=[`${scene.currentFloor+1}F | ${settings.smokeDisplayMode} | alpha=1-exp(-K L)${settings.smokeDisplayMode==='analysis'?' ^ gamma=0.55':''}`,
       `Eye 1.6m / L=${Number(scene.cellSizeMeters || .5).toFixed(2)} m; ${displayLegend(settings.smokeMetric)}`,
       `${displayLegend(settings.fireMetric)}; source □ / spread ○`,
-      'FDS cyan ○ / fallback gray / mixed purple; stair smoke amber →'];
+      'FDS cyan ○ / fallback gray / mixed purple; stair smoke transfer →'];
     if(scene.riskOverlay) {
       lines.push(`2D map: ${scene.riskOverlay.legend}`);
       const {minValue,maxValue,unit}=scene.riskOverlay;
@@ -620,7 +620,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
     drawAgents(scene);
     drawHeatmap(scene);
     if(scene.selectedCell?.floorIndex===scene.currentFloor) {
-      ctx.strokeStyle='#ffffff';ctx.lineWidth=.8;
+      ctx.strokeStyle='#202428';ctx.lineWidth=.8;
       ctx.strokeRect(scene.selectedCell.cx*cellSizePx,scene.selectedCell.cy*cellSizePx,cellSizePx,cellSizePx);
     }
     ctx.restore();
