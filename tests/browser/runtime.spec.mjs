@@ -23,6 +23,24 @@ async function loadRoom(page) {
   })).toBe(true);
 }
 
+async function loadScitech3F(page) {
+  const base64 = await page.evaluate(async () => {
+    const response = await fetch("/sim/assets/maps/scitech_3f_walkable.png.base64");
+    if (!response.ok) throw new Error(`3F fixture fetch failed: ${response.status}`);
+    return (await response.text()).trim();
+  });
+  await page.locator("#mapFile").setInputFiles({
+    name: "3F.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(base64, "base64")
+  });
+  await expect.poll(() => page.evaluate(async () => {
+    const { state } = await import("/sim/js/state.js");
+    const floor = state.map.floorStates[state.map.currentFloor];
+    return floor?.mapProfile || null;
+  })).toBe("scitech-3f");
+}
+
 async function marker(page, mode, cx, cy) {
   await page.evaluate(async ({ mode, cx, cy }) => {
     const { state } = await import("/sim/js/state.js");
@@ -64,6 +82,113 @@ test.beforeEach(async ({ page }) => {
   await page.locator("details").evaluateAll(elements => {
     for (const element of elements) element.open = true;
   });
+});
+
+
+test("real 3F map loads with calibrated topology and scale", async ({ page }) => {
+  await loadScitech3F(page);
+
+  const topology = await page.evaluate(async () => {
+    const { state } = await import("/sim/js/state.js");
+    const floor = state.map.floorStates[state.map.currentFloor];
+    let walkable = 0;
+    let stairs = 0;
+    for (const row of floor.grid) {
+      for (const cell of row) {
+        if (cell.walkable) walkable++;
+        if (cell.stair) stairs++;
+      }
+    }
+    return {
+      profile: floor.mapProfile,
+      width: floor.gridWidth,
+      height: floor.gridHeight,
+      cellSizeMeters: floor.cellSizeMeters,
+      walkable,
+      stairs,
+      imageWidth: floor.baseImage?.width,
+      imageHeight: floor.baseImage?.height
+    };
+  });
+
+  expect(topology).toEqual({
+    profile: "scitech-3f",
+    width: 150,
+    height: 200,
+    cellSizeMeters: 0.42,
+    walkable: 2889,
+    stairs: 640,
+    imageWidth: 600,
+    imageHeight: 800
+  });
+});
+
+test("real 3F map evacuates a small crowd through a corridor exit without stragglers", async ({ page }) => {
+  await loadScitech3F(page);
+  await configureAgent(page, "1.2");
+  await page.locator("#numAgents").fill("12");
+  await page.locator("#agentPreset").selectOption("default");
+
+  // Lower-right horizontal corridor: 20 cells ~= 8.4 m at the calibrated scale.
+  await marker(page, "modeSpawn", 118, 153);
+  await marker(page, "modeSpawn", 118, 154);
+  await marker(page, "modeSpawn", 118, 155);
+  await marker(page, "modeExit", 138, 154);
+
+  await page.locator("#btnStart").click();
+  await page.clock.runFor(30_000);
+
+  const result = await page.evaluate(async () => {
+    const { state } = await import("/sim/js/state.js");
+    return {
+      running: state.sim.running,
+      evacuated: state.agents.filter(a => a.finished).length,
+      active: state.agents.filter(a => !a.finished && !a.dead).map(a => ({
+        id: a.id,
+        x: a.x,
+        y: a.y,
+        type: a.type,
+        targetExitIndex: a.targetExitIndex
+      })),
+      dead: state.agents.filter(a => a.dead).length
+    };
+  });
+
+  expect(result.dead).toBe(0);
+  expect(result.active).toEqual([]);
+  expect(result.evacuated).toBe(12);
+});
+
+test("real 3F map completes a long route with turns without wandering", async ({ page }) => {
+  await loadScitech3F(page);
+  await configureAgent(page, "1.2");
+
+  // From the upper corridor to the lower-right corridor. This crosses the
+  // long central connection and exercises potential guidance + Social Force.
+  await marker(page, "modeSpawn", 100, 62);
+  await marker(page, "modeExit", 138, 154);
+
+  await page.locator("#btnStart").click();
+  await page.clock.runFor(75_000);
+
+  const result = await page.evaluate(async () => {
+    const { state } = await import("/sim/js/state.js");
+    const agent = state.agents[0];
+    return {
+      running: state.sim.running,
+      finished: !!agent?.finished,
+      dead: !!agent?.dead,
+      finishTime: agent?.finishTime ?? null,
+      x: agent?.x ?? null,
+      y: agent?.y ?? null,
+      stuckCount: agent?.stuckCount ?? 0
+    };
+  });
+
+  expect(result.dead).toBe(false);
+  expect(result.finished).toBe(true);
+  expect(result.finishTime).not.toBeNull();
+  expect(result.finishTime).toBeLessThan(75);
 });
 
 test("manual fire source is neutral before combustion and red after ignition", async ({ page }) => {
