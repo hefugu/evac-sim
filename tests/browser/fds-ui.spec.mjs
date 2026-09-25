@@ -4,6 +4,9 @@ test("old/new FDS CSV, eye-height partial overlay and release restore fallback",
   const errors = [];
   page.on("pageerror", error => errors.push(String(error)));
   await page.goto("/sim/");
+  await page.locator("details").evaluateAll(elements => {
+    for (const element of elements) element.open = true;
+  });
   const png = await page.evaluate(() => {
     const canvas = document.createElement("canvas");
     canvas.width = 80; canvas.height = 48;
