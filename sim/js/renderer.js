@@ -355,11 +355,12 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
         ctx.fillRect(x * cellSizePx, y * cellSizePx, cellSizePx, cellSizePx);
         ctx.strokeStyle = view.fire.origin === 'source' ? '#b71c1c' : '#d95c5c';
         ctx.lineWidth = Math.max(0.7, cellSizePx * 0.12);
+        const markerInset = view.fire.origin === 'source' ? 0.1 : 0.3;
         ctx.strokeRect(
-          x * cellSizePx + 0.3,
-          y * cellSizePx + 0.3,
-          Math.max(0, cellSizePx - 0.6),
-          Math.max(0, cellSizePx - 0.6)
+          x * cellSizePx + markerInset,
+          y * cellSizePx + markerInset,
+          Math.max(0, cellSizePx - markerInset * 2),
+          Math.max(0, cellSizePx - markerInset * 2)
         );
         if (view.fire.origin === 'source') {
           const r = Math.max(1.2, cellSizePx * 0.30);
