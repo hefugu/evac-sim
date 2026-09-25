@@ -63,10 +63,10 @@ test.beforeEach(async ({ page }) => {
   await loadRoom(page);
 });
 
-test("manual fire source is visible in 2D immediately before simulation starts", async ({ page }) => {
+test("manual fire source is neutral before combustion and red after ignition", async ({ page }) => {
   await marker(page, "modeFire", 12, 8);
 
-  const result = await page.evaluate(async () => {
+  const sampleFireMarker = () => page.evaluate(async () => {
     const { state } = await import("/sim/js/state.js");
     const floor = state.map.floorStates[state.map.currentFloor];
     const canvas = document.querySelector("#simCanvas");
@@ -81,31 +81,47 @@ test("manual fire source is visible in 2D immediately before simulation starts",
     const dprY = canvas.height / rect.height;
     const ctx = canvas.getContext("2d");
     const sample = ctx.getImageData(
-      Math.max(0, Math.round(cssX * dprX) - 2),
-      Math.max(0, Math.round(cssY * dprY) - 2),
-      5,
-      5
+      Math.max(0, Math.round(cssX * dprX) - 3),
+      Math.max(0, Math.round(cssY * dprY) - 3),
+      7,
+      7
     ).data;
 
     let redDominantPixels = 0;
+    let neutralMarkerPixels = 0;
     for (let i = 0; i < sample.length; i += 4) {
       const r = sample[i];
       const g = sample[i + 1];
       const b = sample[i + 2];
       if (r > g + 35 && r > b + 35) redDominantPixels++;
+      if (Math.max(r,g,b) - Math.min(r,g,b) < 18 && r >= 90 && r <= 190) neutralMarkerPixels++;
     }
 
     return {
       fire: !!floor.grid?.[8]?.[12]?.fire,
       source: floor.grid?.[8]?.[12]?.fireSource,
-      redDominantPixels
+      hrrKw: Number(floor.grid?.[8]?.[12]?.hrrKw) || 0,
+      redDominantPixels,
+      neutralMarkerPixels
     };
   });
 
-  expect(result.fire).toBe(true);
-  expect(result.source).toBe("manual");
-  expect(result.redDominantPixels).toBeGreaterThan(0);
+  const before = await sampleFireMarker();
+  expect(before.fire).toBe(true);
+  expect(before.source).toBe("manual");
+  expect(before.hrrKw).toBe(0);
+  expect(before.redDominantPixels).toBe(0);
+  expect(before.neutralMarkerPixels).toBeGreaterThan(0);
+
+  await page.locator("#btnStart").click();
+  await page.clock.runFor(1000);
+  await page.locator("#btnStop").click();
+
+  const after = await sampleFireMarker();
+  expect(after.hrrKw).toBeGreaterThan(0);
+  expect(after.redDominantPixels).toBeGreaterThan(0);
 });
+
 
 test('display controls and 2D/3D clicks inspect the same state without advancing hazards', async ({page}) => {
   const errors=[];page.on('pageerror',e=>errors.push(String(e)));
