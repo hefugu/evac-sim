@@ -109,6 +109,8 @@ export function initSimulation() {
   // ==== UI References ====
   const mapFileInput = ui.mapFileInput;
   const thrRange = ui.thrRange;
+  const mapCellPixelsInput = ui.mapCellPixelsInput;
+  const mapSampleModeInput = ui.mapSampleModeInput;
   const numAgentsInput = ui.numAgentsInput;
   const speedInput = ui.speedInput;
   const speedVarInput = ui.speedVarInput;
@@ -206,7 +208,7 @@ export function initSimulation() {
   let baseImage = null;
   let grid = null;        // {walkable:boolean, fire:boolean}
   let gridW = 0, gridH = 0;
-  const CELL_SIZE_PX = 4; // Downscale factor: image pixels -> sim cells
+  let mapCellPixelsPx = 4; // Source-image pixels per simulation cell
   let baseWalkableTemplate = null;
   let floorStates = [];
   let floorCount = 1;
@@ -1563,8 +1565,12 @@ export function initSimulation() {
   function extractWalkableTemplateFromImage(image, options = {}) {
     if (!image) return null;
     try {
+      const cellPixels = options.mapProfile === SCITECH_3F_PROFILE.id
+        ? SCITECH_3F_PROFILE.gridCellPixels
+        : clamp(Math.floor(parseNum(mapCellPixelsInput, 4)), 1, 32);
       const parsed = extractColorMapGrid(image, {
-        cellPixels: CELL_SIZE_PX,
+        cellPixels,
+        sampleMode: mapSampleModeInput?.value || "coverage",
         whiteThreshold: parseInt(thrRange.value, 10)
       });
       return {
@@ -1575,7 +1581,8 @@ export function initSimulation() {
         w: parsed.gridWidth,
         h: parsed.gridHeight,
         mapProfile: options.mapProfile === SCITECH_3F_PROFILE.id ? SCITECH_3F_PROFILE : null,
-        extractionStats: parsed
+        extractionStats: parsed,
+        cellPixels
       };
     } catch (err) {
       console.warn("Color map extraction failed; falling back to the legacy white threshold.", err);
@@ -1594,8 +1601,9 @@ export function initSimulation() {
       return null;
     }
 
-    const w = Math.floor(image.width / CELL_SIZE_PX);
-    const h = Math.floor(image.height / CELL_SIZE_PX);
+    const cellPixels = clamp(Math.floor(parseNum(mapCellPixelsInput, 4)), 1, 32);
+    const w = Math.floor(image.width / cellPixels);
+    const h = Math.floor(image.height / cellPixels);
     if (w <= 0 || h <= 0) {
       alert("画像サイズが小さすぎます。");
       return null;
@@ -1606,8 +1614,8 @@ export function initSimulation() {
       template[y] = new Array(w);
       for (let x = 0; x < w; x++) {
         // Sample the center pixel of each cell
-        const px = x * CELL_SIZE_PX + Math.floor(CELL_SIZE_PX / 2);
-        const py = y * CELL_SIZE_PX + Math.floor(CELL_SIZE_PX / 2);
+        const px = x * cellPixels + Math.floor(cellPixels / 2);
+        const py = y * cellPixels + Math.floor(cellPixels / 2);
         const idx = (py * image.width + px) * 4;
         const r = imgData[idx], g = imgData[idx+1], b = imgData[idx+2];
         template[y][x] = (r > thr && g > thr && b > thr);
@@ -1620,7 +1628,8 @@ export function initSimulation() {
       exitPoints: [],
       w,
       h,
-      mapProfile: null
+      mapProfile: null,
+      cellPixels
     };
   }
 
@@ -1654,7 +1663,7 @@ export function initSimulation() {
     if (!image) return false;
     const parsed = extractWalkableTemplateFromImage(image, { mapProfile });
     if (!parsed) return false;
-    const { template, stairTemplate, exitTemplate, exitPoints, w, h } = parsed;
+    const { template, stairTemplate, exitTemplate, exitPoints, w, h, cellPixels } = parsed;
 
     const hasLoadedFloor = floorStates.some(fs => !!fs?.baseImage);
     if (hasLoadedFloor && gridW > 0 && gridH > 0 && (w !== gridW || h !== gridH)) {
@@ -1710,6 +1719,8 @@ export function initSimulation() {
 
     baseImage = image;
     baseWalkableTemplate = cloneWalkableTemplate(template);
+    mapCellPixelsPx = Math.max(1, Number(cellPixels) || mapCellPixelsPx);
+    renderer?.setCellSizePx?.(mapCellPixelsPx);
     currentFloor = targetFloor;
     if (cellSizeMetersInput) cellSizeMetersInput.value = String(fs.cellSizeMeters);
     state.spatial.cellSizeMeters = fs.cellSizeMeters;
@@ -1755,8 +1766,8 @@ export function initSimulation() {
     const { scale, ox, oy } = worldLayout();
     const x = (clientX - rect.left - ox) / scale;
     const y = (clientY - rect.top - oy) / scale;
-    const cx = Math.floor(x / CELL_SIZE_PX);
-    const cy = Math.floor(y / CELL_SIZE_PX);
+    const cx = Math.floor(x / mapCellPixelsPx);
+    const cy = Math.floor(y / mapCellPixelsPx);
     if (cx < 0 || cy < 0 || cx >= gridW || cy >= gridH) return null;
     return { cx, cy };
   }
@@ -3895,7 +3906,7 @@ export function initSimulation() {
   const renderer = createRenderer({
     ctx,
     cvs,
-    cellSizePx: CELL_SIZE_PX,
+    cellSizePx: mapCellPixelsPx,
     typeMeta: TYPE_META,
     clamp
   });
