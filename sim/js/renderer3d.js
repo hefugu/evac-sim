@@ -1279,7 +1279,7 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
     const agents = Array.isArray(snapshot?.agents) ? snapshot.agents : [];
     const floorByIndex = new Map(floors.map(floor => [floor.floorIndex, floor]));
     agents.forEach(agent => {
-      if (!agent || typeof agent !== "object") return;
+      if (!agent || typeof agent !== "object" || agent.finished) return;
       const type = lowerString(agent.type, "default");
       const style = AGENT_STYLES[type] || AGENT_STYLES.default;
       const world = agentWorldPosition(agent, floorByIndex);
