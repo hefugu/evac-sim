@@ -1350,22 +1350,37 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
   }
 
   function drawFire(primitive) {
-    const height=Math.max(2,Math.hypot(primitive.base.x-primitive.top.x,primitive.base.y-primitive.top.y));
-    const width=Math.max(1,height*(.18+.12*primitive.strength));
-    const x=primitive.base.x,bottom=primitive.base.y,top=primitive.top.y;
+    const height = Math.max(2, Math.hypot(
+      primitive.base.x - primitive.top.x,
+      primitive.base.y - primitive.top.y
+    ));
+    const width = Math.max(2, Math.min(10, height * 0.18));
+    const x = primitive.base.x;
+    const bottom = primitive.base.y;
+    const top = primitive.top.y;
     context.save();
-    const gradient=context.createLinearGradient(x-width,0,x+width,0);
-    gradient.addColorStop(0,'rgba(255,65,15,0)');gradient.addColorStop(.25,primitive.color);
-    gradient.addColorStop(.5,'#fff2b8');gradient.addColorStop(.75,primitive.color);gradient.addColorStop(1,'rgba(255,65,15,0)');
-    context.globalAlpha=.3+.7*primitive.strength;context.fillStyle=gradient;
-    context.beginPath();context.moveTo(primitive.top.x,top);
-    context.quadraticCurveTo(x+width,bottom-height*.3,x+width*.5,bottom);
-    context.lineTo(x-width*.5,bottom);context.quadraticCurveTo(x-width,bottom-height*.3,primitive.top.x,top);context.fill();
-    context.globalAlpha=1;context.strokeStyle=primitive.origin==='spread'?'#ffad55':'#fff0b0';context.lineWidth=1;
-    if(primitive.origin==='source')context.strokeRect(x-3,bottom-3,6,6);
-    else {context.beginPath();context.arc(x,bottom,3,0,TAU);context.stroke();}
-    if(config.fireVisualizationMode==='spread_front' && primitive.isFront) {
-      context.strokeStyle='#ff503d';context.lineWidth=2;context.beginPath();context.arc(x,bottom,6,0,TAU);context.stroke();
+    context.globalAlpha = 0.35 + 0.45 * primitive.strength;
+    context.fillStyle = '#c62828';
+    context.strokeStyle = primitive.origin === 'source' ? '#8e0000' : '#d95c5c';
+    context.lineWidth = 1;
+    context.beginPath();
+    context.moveTo(x, top);
+    context.lineTo(x + width, bottom);
+    context.lineTo(x - width, bottom);
+    context.closePath();
+    context.fill();
+    context.stroke();
+    context.globalAlpha = 1;
+    if (primitive.origin === 'source') {
+      context.strokeStyle = '#b71c1c';
+      context.strokeRect(x - 3, bottom - 3, 6, 6);
+    }
+    if (config.fireVisualizationMode === 'spread_front' && primitive.isFront) {
+      context.strokeStyle = '#ff8a80';
+      context.lineWidth = 2;
+      context.beginPath();
+      context.arc(x, bottom, 6, 0, TAU);
+      context.stroke();
     }
     context.restore();
   }
@@ -1377,14 +1392,11 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
     const x = primitive.top.x;
     const y = primitive.top.y;
     context.save();
-    context.shadowColor = "rgba(255, 221, 51, 0.72)";
-    context.shadowBlur = 8;
     context.fillStyle = "#ffdd33";
     context.strokeStyle = "#fff7c2";
     context.lineWidth = 1;
     context.fillRect(x - width * 0.5, y, width, signHeight);
     context.strokeRect(x - width * 0.5, y, width, signHeight);
-    context.shadowBlur = 0;
     context.fillStyle = "#3b2200";
     context.font = `700 ${clamp(signHeight * 0.5, 7, 11)}px system-ui, sans-serif`;
     context.textAlign = "center";
