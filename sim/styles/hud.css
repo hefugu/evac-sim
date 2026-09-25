@@ -1,9 +1,9 @@
 #log {
   width: 100%;
   height: 150px;
-  background: #ffffff;
+  background: #1d2024;
   border: 1px solid var(--border);
-  color: #202428;
+  color: #d7dbe0;
   font-size: 10px;
   padding: 4px;
   resize: none;
@@ -13,7 +13,7 @@
   position: absolute;
   right: 10px;
   bottom: 10px;
-  background: rgba(255, 255, 255, 0.94);
+  background: rgba(32, 35, 39, 0.94);
   border: 1px solid var(--border-strong);
   padding: 6px 8px;
   font-size: 11px;
@@ -22,7 +22,7 @@
 }
 
 #overlayHUD strong {
-  color: #202428;
+  color: #eef0f2;
 }
 
 .badge {
@@ -31,13 +31,13 @@
   border: 1px solid var(--border);
   font-size: 9px;
   margin-left: 4px;
-  color: #454c53;
-  background: #f8f9fa;
+  color: #c0c6cc;
+  background: #292d31;
 }
 
 #statusBar {
   font-size: 11px;
-  color: #343a40;
+  color: #c8cdd2;
   margin-top: 6px;
   white-space: nowrap;
   overflow: hidden;
