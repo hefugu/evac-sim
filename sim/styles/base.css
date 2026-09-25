@@ -1,12 +1,16 @@
 :root {
-  --bg: #15181c;
-  --panel: #1d2126;
-  --accent: #4b83b2;
-  --accent-soft: #294b66;
-  --accent-warn: #d95757;
-  --text-main: #e7e9eb;
-  --text-dim: #9ca3aa;
-  --grid-line: #343a40;
+  --bg: #f3f4f6;
+  --panel: #ffffff;
+  --surface: #f8f9fa;
+  --surface-strong: #eef1f4;
+  --border: #c9ced4;
+  --border-strong: #9da5ad;
+  --accent: #2f5f8f;
+  --accent-soft: #eaf1f7;
+  --danger: #b42318;
+  --text-main: #202428;
+  --text-dim: #606870;
+  --grid-line: #d9dde1;
 }
 
 * {
@@ -18,7 +22,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text-main);
-  font-family: "Noto Sans JP", "Yu Gothic UI", "Meiryo", sans-serif;
+  font-family: "Noto Sans JP", "Yu Gothic UI", "Meiryo", Arial, sans-serif;
   height: 100vh;
   overflow: hidden;
   display: flex;
@@ -27,6 +31,7 @@ body {
 h1 {
   margin: 0 0 6px;
   font-size: 14px;
-  letter-spacing: 0.04em;
-  color: #f0f1f2;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: #202428;
 }
