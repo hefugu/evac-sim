@@ -1655,7 +1655,15 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
       config.devicePixelRatio,
       typeof globalThis.devicePixelRatio === "number" ? globalThis.devicePixelRatio : 1
     );
-    const dpr = clamp(currentDpr, 1, positiveNumber(config.maxDevicePixelRatio, 2));
+    const performanceMode = state?.render?.performanceMode || "full";
+    const adaptiveDprCap = performanceMode === "performance"
+      ? 1
+      : (performanceMode === "balanced" ? 1.25 : 1.5);
+    const dpr = clamp(
+      currentDpr,
+      1,
+      Math.min(positiveNumber(config.maxDevicePixelRatio, 2), adaptiveDprCap)
+    );
     const width = Math.max(1, finiteNumber(
       explicitWidth,
       rectangle?.width || canvas.clientWidth || canvas.width / dpr || 300
@@ -1775,7 +1783,11 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
 
   function frame(timestamp) {
     if (!running || destroyed) return;
-    const minIntervalMs = 1000 / Math.max(1, config.maxFps);
+    const performanceMode = state?.render?.performanceMode || "full";
+    const adaptiveMaxFps = performanceMode === "performance"
+      ? Math.min(config.maxFps, 10)
+      : (performanceMode === "balanced" ? Math.min(config.maxFps, 18) : config.maxFps);
+    const minIntervalMs = 1000 / Math.max(1, adaptiveMaxFps);
     if (timestamp - lastRenderedFrameMs >= minIntervalMs - 0.5) {
       renderOnce(timestamp);
       lastRenderedFrameMs = timestamp;
