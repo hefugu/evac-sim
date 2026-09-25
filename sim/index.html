@@ -33,16 +33,33 @@
         </select>
       </div>
       <button id="btnApplyFloors" type="button">階数設定を反映</button>
-      <div class="hint">マップ画像は現在選択中の階へ読み込みます。全階で同じ画像寸法を使用してください。</div>
+      <div class="row">
+        <label for="cellSizeMeters">1セル実寸 [m]</label>
+        <input type="number" id="cellSizeMeters" min="0.05" max="5" step="0.01" value="0.5">
+      </div>
+      <div class="hint">図面の実寸に合わせて設定します。例: 2.5 m幅の廊下が5セルなら 0.5 m/セル。</div>
+      <div class="hint">マップ画像は現在選択中の階へ読み込みます。全階で同じグリッド寸法を使用してください。</div>
       <div class="mapLegend" id="floorLabel">単一フロアシミュレーション</div>
-      <div class="hint">白=通路 / 黒=壁 / 緑=階段 / 黄=出口</div>
+      <div class="hint">標準カラーマップ: 白=通路 / 黒=壁 / 緑=階段 / 黄=出口</div>
       <details class="inlineDetails">
         <summary>マップ読込の詳細</summary>
         <div class="advancedContent">
           <div class="row">
+            <label for="mapCellPixels">解析セル幅 [px]</label>
+            <input type="number" id="mapCellPixels" min="1" max="32" step="1" value="4">
+          </div>
+          <div class="row">
+            <label for="mapSampleMode">画像判定方式</label>
+            <select id="mapSampleMode">
+              <option value="coverage" selected>領域割合（汎用）</option>
+              <option value="center">中央1点（高速）</option>
+            </select>
+          </div>
+          <div class="row">
             <label>白色しきい値</label>
             <input type="range" id="thrRange" min="120" max="255" value="200">
           </div>
+          <div class="hint">細い線や縮尺の違う画像は「領域割合」が安定します。大きい画像で軽さ優先なら解析セル幅を増やします。</div>
         </div>
       </details>
     </div>
@@ -119,16 +136,13 @@
         <div class="advancedContent">
           <div class="row">
             <label>速度ばらつき [%]</label>
-            <input type="number" id="speedVar" min="0" max="100" value="25">
-          </div>
-          <div class="row">
-            <label>セルサイズ [m]</label>
-            <input type="number" id="cellSizeMeters" min="0.2" max="2" step="0.1" value="0.5">
+            <input type="number" id="speedVar" min="0" max="100" value="0">
           </div>
           <div class="row">
             <label for="maxObservationTimeSec">観測時間上限 [s]</label>
             <input id="maxObservationTimeSec" type="number" min="0.1" step="1" value="600">
           </div>
+          <div class="hint">歩行速度はFDS+Evac系の個体分布を使います。「速度ばらつき」はその分布へ追加するシナリオばらつきです。通常は0%のまま使用します。</div>
           <div class="hint">上限時に未避難の人は未完了として記録します。許容・悪化・危険の区分は比較用の状態指標で、死亡や完全なFEDの推定ではありません。</div>
         </div>
       </details>
