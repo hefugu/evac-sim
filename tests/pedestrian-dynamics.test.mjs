@@ -216,3 +216,26 @@ test("indexed wall forces keep a walker out of a solid boundary", () => {
   assert.equal(Math.round(agents[0].x), 1);
   assert.equal(Math.round(agents[0].y), 1);
 });
+
+test("1000-agent spatial hash keeps local candidate sets bounded", () => {
+  const agents = [];
+  for (let y = 0; y < 25; y++) {
+    for (let x = 0; x < 40; x++) {
+      agents.push({ id: agents.length, floor: 0, x: x * 2, y: y * 2 });
+    }
+  }
+  const hash = buildAgentSpatialHash(agents, {
+    bucketSizeM: 1.2,
+    cellSizeMeters: 0.5
+  });
+  let totalCandidates = 0;
+  let maxCandidates = 0;
+  for (const agent of agents) {
+    const nearby = queryNearbyAgentIndices(hash, agent, 1.2);
+    totalCandidates += nearby.length;
+    maxCandidates = Math.max(maxCandidates, nearby.length);
+  }
+  const average = totalCandidates / agents.length;
+  assert.ok(average < 20, `average local candidates should stay small, got ${average}`);
+  assert.ok(maxCandidates < 30, `max local candidates should stay bounded, got ${maxCandidates}`);
+});
