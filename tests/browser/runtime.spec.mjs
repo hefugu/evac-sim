@@ -61,9 +61,15 @@ test.beforeEach(async ({ page }) => {
   await page.clock.install();
   await page.goto("/sim/");
   await loadRoom(page);
+  await page.locator("details").evaluateAll(elements => {
+    for (const element of elements) element.open = true;
+  });
 });
 
 test("manual fire source is neutral before combustion and red after ignition", async ({ page }) => {
+  await configureAgent(page, "0.8");
+  await marker(page, "modeSpawn", 2, 2);
+  await marker(page, "modeExit", 17, 2);
   await marker(page, "modeFire", 12, 8);
 
   const sampleFireMarker = () => page.evaluate(async () => {
@@ -156,7 +162,7 @@ test('display controls and 2D/3D clicks inspect the same state without advancing
   const box=await page.locator('#simCanvas3d').boundingBox();
   await page.mouse.click(box.x+projected.x,box.y+projected.y);
   await expect(page.locator('[data-inspector-location]')).toContainText('cx=12, cy=8');
-  await expect(page.locator('[data-field="hrrKw"]')).toContainText('fallback');
+  await expect(page.locator('[data-field="hrrKw"]')).toContainText('簡易モデル');
   expect(await numericalState()).toBe(before);
   expect(errors).toEqual([]);
 });
@@ -166,9 +172,9 @@ test('inspector keeps FDS provenance per field and live standalone view returns 
   await page.locator('#fdsCsvFile').setInputFiles({name:'inspect.csv',mimeType:'text/csv',buffer:Buffer.from(csv)});
   await marker(page,'modeInspect',5,5);
   await expect(page.locator('[data-field="coPpm"]')).toContainText('600 ppm');
-  await expect(page.locator('[data-field="coPpm"]')).toContainText('fds');
+  await expect(page.locator('[data-field="coPpm"]')).toContainText('FDS');
   await expect(page.locator('[data-field="eyeLevelTemperatureC"]')).toContainText('85 °C');
-  await expect(page.locator('[data-field="upperLayerCoPpm"]')).toContainText('fallback');
+  await expect(page.locator('[data-field="upperLayerCoPpm"]')).toContainText('簡易モデル');
   const standalone=await context.newPage();await standalone.goto('/sim/3d.html?live=1');
   await page.evaluate(async()=>(await import('/sim/js/view3d.js')).init3DView().publisher.publishNow(true));
   await expect(standalone.locator('#standaloneConnection')).toContainText('同期中');
@@ -178,7 +184,7 @@ test('inspector keeps FDS provenance per field and live standalone view returns 
   expect(transferred.coPpm).toBe(600);expect(transferred.eyeLevelTemperatureC).toBe(85);
   expect(transferred.fdsFields).toContain('coPpm');expect(transferred.fdsSamples).toHaveLength(2);
   await page.locator('#btnClearFdsCsv').click();
-  await expect(page.locator('[data-field="coPpm"]')).toContainText('fallback');
+  await expect(page.locator('[data-field="coPpm"]')).toContainText('簡易モデル');
   await page.evaluate(async()=>(await import('/sim/js/view3d.js')).init3DView().publisher.publishNow());
   await expect.poll(()=>standalone.evaluate(async()=> (await import('/sim/js/state.js')).state.map.floorStates[0].grid[5][5].fdsFields ?? null)).toBeNull();
   await standalone.close();
