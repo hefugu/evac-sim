@@ -348,15 +348,23 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
       const view = derive2DCellDisplay(cell,{...settings,isFront:isFireSpreadFront(scene.grid,x,y)});
       const px=(x+.5)*cellSizePx, py=(y+.5)*cellSizePx;
       const isExplicitSource = !!cell?.fire && cell?.fireSource !== "spread";
-      if (view.fire.active || isExplicitSource) {
-        // Engineering display: burning area is a red cell overlay. A manually
-        // defined source remains visible even while HRR is still zero.
+      const hrrKw = Number(cell?.hrrKw) || 0;
+      const fireAgeSec = Number(cell?.fireAgeSec) || 0;
+      const isBurning = view.fire.active && (hrrKw > 0.1 || fireAgeSec > 0.05);
+
+      if (isExplicitSource || isBurning) {
         ctx.save();
-        const visibleStrength = Math.max(0.18, Number(view.fire.strength) || 0);
-        ctx.fillStyle = `rgba(190,36,36,${0.14 + 0.28 * visibleStrength})`;
-        ctx.fillRect(x * cellSizePx, y * cellSizePx, cellSizePx, cellSizePx);
         const isSource = isExplicitSource || view.fire.origin === 'source';
-        ctx.strokeStyle = isSource ? '#9f1d1d' : '#c94b4b';
+
+        if (isBurning) {
+          const visibleStrength = Math.max(0.18, Number(view.fire.strength) || 0);
+          ctx.fillStyle = `rgba(190,36,36,${0.14 + 0.28 * visibleStrength})`;
+          ctx.fillRect(x * cellSizePx, y * cellSizePx, cellSizePx, cellSizePx);
+          ctx.strokeStyle = isSource ? '#c44d4d' : '#d26464';
+        } else {
+          ctx.strokeStyle = '#9aa1a8';
+        }
+
         ctx.lineWidth = Math.max(0.7, cellSizePx * 0.12);
         const markerInset = isSource ? 0.05 : 0.3;
         ctx.strokeRect(
@@ -624,7 +632,6 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
       ctx.strokeRect(scene.selectedCell.cx*cellSizePx,scene.selectedCell.cy*cellSizePx,cellSizePx,cellSizePx);
     }
     ctx.restore();
-    drawHUD(scene);
   }
 
   function setCellSizePx(value) {
