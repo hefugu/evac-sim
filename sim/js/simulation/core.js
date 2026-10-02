@@ -986,13 +986,13 @@ export function initSimulation() {
     return arr;
   }
 
+  function cellMetersForFloor(floor) {
+    const meters = Number(floorStates[floor]?.cellSizeMeters);
+    return Number.isFinite(meters) && meters > 0 ? Math.max(0.05, meters) : 0.5;
+  }
+
   function exitCaptureHalfExtentCells(agent, floor) {
-    const cellMeters = Math.max(
-      0.05,
-      Number(floorStates[floor]?.cellSizeMeters) ||
-      parseFloat(cellSizeMetersInput.value) ||
-      0.5
-    );
+    const cellMeters = cellMetersForFloor(floor);
     const radiusMeters = Math.max(0.22, Number(agent.radiusM) || 0.255);
     return 0.5 + radiusMeters / cellMeters;
   }
@@ -2155,19 +2155,14 @@ export function initSimulation() {
       )
     );
 
-    const routeCellMeters = Math.max(
-      0.05,
-      parseFloat(cellSizeMetersInput.value) || state.spatial.cellSizeMeters || 0.5
-    );
-    const fireRouteAvoidRadiusCells = Math.max(
-      FIRE_DANGER_RADIUS,
-      FIRE_ROUTE_AVOID_RADIUS_METERS / routeCellMeters
-    );
     fireAvoidanceMasks = buildFireAvoidanceMasks(
       floorStates,
       gridW,
       gridH,
-      fireRouteAvoidRadiusCells
+      (_floor, index) => Math.max(
+        FIRE_DANGER_RADIUS,
+        FIRE_ROUTE_AVOID_RADIUS_METERS / cellMetersForFloor(index)
+      )
     );
 
     // Rebuild the tiny render index only when routing/fire topology changes.
@@ -2355,7 +2350,6 @@ export function initSimulation() {
     wallSpatialIndex = buildWallSpatialIndex(floorStates, { bucketSizeM: 1.0 });
     const baseSpeed = parseFloat(speedInput.value) || 1.0;
     const varPct = Math.max(0, Math.min(100, parseFloat(speedVarInput.value) || 0));
-    const cellMeters = parseFloat(cellSizeMetersInput.value) || 0.5;
     const typeRatios = getTypeRatios();
     if (!rebuildPotentialCache()) {
       return abortSpawn("経路ポテンシャルを計算できませんでした。");
@@ -2401,7 +2395,7 @@ export function initSimulation() {
         0.15,
         physical.desiredSpeedMps * scenarioSpeedScale * (1 + extraVariation)
       );
-      const speedCellsPerSec = speedMps / cellMeters;
+      const speedCellsPerSec = speedMps / cellMetersForFloor(chosen.floor);
       const seed = {
         id: i,
         floor: chosen.floor,
@@ -2875,7 +2869,6 @@ export function initSimulation() {
     syncActiveFloorState();
 
     // === Smoke generation and diffusion (per-floor) ===
-    const cellMeters = parseFloat(cellSizeMetersInput.value) || 0.5;
     if (simTime >= nextFireStepAt) {
       const fireStartedAt = performance.now();
       // Remove the external overlay before growing the fallback t-squared fire.
@@ -2888,7 +2881,6 @@ export function initSimulation() {
         fireDt,
         {
           timeSec: simTime,
-          cellSizeMeters: cellMeters,
           floorHeightMeters: state.spatial.floorHeightMeters || 3.5,
           stairLinks,
           activeIndicesByFloor: activeFireIndicesByFloor
@@ -3179,12 +3171,7 @@ export function initSimulation() {
           a.targetExitIndex < allExitPoints.length
             ? allExitPoints[a.targetExitIndex]
             : null;
-        const cellMeters = Math.max(
-          0.05,
-          Number(floorStates[f]?.cellSizeMeters) ||
-          parseFloat(cellSizeMetersInput.value) ||
-          0.5
-        );
+        const cellMeters = cellMetersForFloor(f);
         const currentExitDistanceMeters =
           currentExit && currentExit.floor === f
             ? Math.hypot(a.x - currentExit.cx, a.y - currentExit.cy) * cellMeters
@@ -3639,12 +3626,7 @@ export function initSimulation() {
         a.targetExitIndex < allExitPoints.length
           ? allExitPoints[a.targetExitIndex]
           : null;
-      const committedCellMeters = Math.max(
-        0.05,
-        Number(floorStates[floor]?.cellSizeMeters) ||
-        parseFloat(cellSizeMetersInput.value) ||
-        0.5
-      );
+      const committedCellMeters = cellMetersForFloor(floor);
       const committedDistanceMeters =
         committedExit && committedExit.floor === floor
           ? Math.hypot(committedExit.cx - a.x, committedExit.cy - a.y) * committedCellMeters
@@ -3709,7 +3691,7 @@ export function initSimulation() {
     // spatial hash, so the common case scales with local neighbours instead of
     // evaluating every pair on the floor.
     stepPedestrianDynamics(agents, dt, {
-      cellSizeMeters: cellMeters,
+      cellSizeMetersForFloor: cellMetersForFloor,
       isWalkable: (floor, cx, cy) => {
         const cell = floorStates[floor]?.grid?.[cy]?.[cx];
         return !!(cell && cell.walkable);
@@ -3774,7 +3756,7 @@ export function initSimulation() {
       const movedX = a.x - previous.x;
       const movedY = a.y - previous.y;
       const movedDistCells = Math.hypot(movedX, movedY);
-      const movedDistMeters = movedDistCells * cellMeters;
+      const movedDistMeters = movedDistCells * cellMetersForFloor(previous.floor);
 
       if (movedDistMeters > 0.02 || nowFloor !== previous.floor) {
         a.prevCell = { floor: previous.floor, cx: previous.cx, cy: previous.cy };

@@ -114,11 +114,19 @@ function hashKey(floor, bx, by) {
   return `${floor}:${bx}:${by}`;
 }
 
+// Keep the scalar API for single-floor callers; resolve mixed-floor units at
+// every grid/metre boundary, including after an agent completes a stair trip.
+function metersForFloor(context, floor) {
+  const value = context.cellSizeMetersForFloor?.(Math.floor(finite(floor, 0)));
+  return Math.max(0.01, finite(value, finite(context.cellSizeMeters, 0.5)));
+}
+
 export function buildAgentSpatialHash(
   agents,
   {
     bucketSizeM = SOCIAL_FORCE_DEFAULTS.interactionRangeM,
     cellSizeMeters = 0.5,
+    cellSizeMetersForFloor = null,
     workspace = null
   } = {}
 ) {
@@ -138,6 +146,7 @@ export function buildAgentSpatialHash(
     const agent = agents[index];
     if (!agent || agent.dead || agent.finished || agent.stairTransition) continue;
     const floor = Math.floor(finite(agent.floor, 0));
+    const meters = metersForFloor({ cellSizeMeters, cellSizeMetersForFloor }, floor);
     const xM = Number.isFinite(agent.xM) ? agent.xM : finite(agent.x) * meters;
     const yM = Number.isFinite(agent.yM) ? agent.yM : finite(agent.y) * meters;
     const bx = Math.floor(xM / size);
@@ -153,16 +162,16 @@ export function buildAgentSpatialHash(
     bucket.push(index);
   }
 
-  return { buckets, bucketSizeM: size, cellSizeMeters: meters };
+  return { buckets, bucketSizeM: size, cellSizeMeters: meters, cellSizeMetersForFloor };
 }
 
 export function queryNearbyAgentIndices(hash, agent, rangeM = SOCIAL_FORCE_DEFAULTS.interactionRangeM) {
   if (!hash?.buckets || !agent) return [];
   const size = hash.bucketSizeM;
-  const meters = hash.cellSizeMeters;
+  const meters = metersForFloor(hash, agent.floor);
   const floor = Math.floor(finite(agent.floor, 0));
-  const xM = finite(agent.x) * meters;
-  const yM = finite(agent.y) * meters;
+  const xM = finite(agent.xM, finite(agent.x) * meters);
+  const yM = finite(agent.yM, finite(agent.y) * meters);
   const bx = Math.floor(xM / size);
   const by = Math.floor(yM / size);
   const reach = Math.max(1, Math.ceil(Math.max(0, rangeM) / size));
@@ -250,7 +259,7 @@ function accumulateWallForce(fx, fy, xM, yM, radius, nearest, desiredDirection, 
 }
 
 function wallForceForAgent(agent, context, cfg, desiredDirection) {
-  const cellSize = context.cellSizeMeters;
+  const cellSize = metersForFloor(context, agent.floor);
   const floor = Math.floor(finite(agent.floor, 0));
   const xM = finite(agent.xM, finite(agent.x) * cellSize);
   const yM = finite(agent.yM, finite(agent.y) * cellSize);
@@ -356,8 +365,9 @@ function normalizeDirection(direction) {
 }
 
 function positionIsWalkable(agent, xM, yM, context) {
-  const cx = Math.round(xM / context.cellSizeMeters);
-  const cy = Math.round(yM / context.cellSizeMeters);
+  const meters = metersForFloor(context, agent.floor);
+  const cx = Math.round(xM / meters);
+  const cy = Math.round(yM / meters);
   const predicate = typeof context.isPositionAllowed === "function"
     ? context.isPositionAllowed
     : context.isWalkable;
@@ -451,6 +461,7 @@ export function stepPedestrianDynamics(
       a.floor = source.floor;
       a.x = finite(source.x);
       a.y = finite(source.y);
+      const cellSizeMeters = metersForFloor(simContext, source.floor);
       a.xM = a.x * cellSizeMeters;
       a.yM = a.y * cellSizeMeters;
       a.vxMps = finite(source.vxMps);
@@ -562,8 +573,9 @@ export function stepPedestrianDynamics(
         }
       }
 
-      nextX[index] = nextXM / cellSizeMeters;
-      nextY[index] = nextYM / cellSizeMeters;
+      const meters = metersForFloor(simContext, a.floor);
+      nextX[index] = nextXM / meters;
+      nextY[index] = nextYM / meters;
       nextVx[index] = vx;
       nextVy[index] = vy;
       nextDesiredSpeed[index] = a.desiredSpeedMps;

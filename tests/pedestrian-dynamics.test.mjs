@@ -18,6 +18,54 @@ import {
 const nearly = (actual, expected, tolerance = 1e-9) =>
   assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} != ${expected}`);
 
+for (const indexed of [false, true]) {
+  test(`mixed floor scales match independent physics, indexed walls=${indexed}`, () => {
+    const scales = [0.5, 0.42];
+    const floors = scales.map((cellSizeMeters, floorIndex) => ({
+      floorIndex, cellSizeMeters,
+      walkableTemplate: Array.from({ length: 12 }, (_, y) =>
+        Array.from({ length: 12 }, (_, x) => x > 0 && x < 11 && y > 0 && y < 11))
+    }));
+    const initial = scales.flatMap((scale, floor) => [0, 1].map(id => ({
+      id: floor * 2 + id, floor, x: 8 + id * 0.7, y: 5,
+      radiusM: 0.255, massKg: 80, baseDesiredSpeedMps: 1.25,
+      relaxationTimeS: 0.8, vxMps: 0.3, vyMps: 0
+    })));
+    const context = {
+      isWalkable: (f, x, y) => !!floors[f].walkableTemplate[y]?.[x],
+      desiredDirectionFor: () => ({ x: 1, y: 0 }),
+      extinctionAt: () => 0.4,
+      random: () => 0.5,
+      ...(indexed ? { wallIndex: buildWallSpatialIndex(floors) } : {})
+    };
+    const expected = scales.flatMap((scale, floor) => {
+      const agents = structuredClone(initial.filter(a => a.floor === floor));
+      stepPedestrianDynamics(agents, 1, { ...context, cellSizeMeters: scale });
+      return agents;
+    });
+    for (const selectedScale of scales) {
+      const actual = structuredClone(initial);
+      stepPedestrianDynamics(actual, 1, {
+        ...context, cellSizeMeters: selectedScale,
+        cellSizeMetersForFloor: floor => scales[floor]
+      });
+      actual.forEach((a, i) => {
+        for (const key of ["x", "y", "vxMps", "vyMps", "desiredSpeedMps"]) nearly(a[key], expected[i][key]);
+        assert.ok(context.isWalkable(a.floor, Math.round(a.x), Math.round(a.y)));
+      });
+    }
+  });
+}
+
+test("mixed scale spatial hash queries use the same physical coordinates as insertion", () => {
+  const agents = [0, 1].map(floor => ({ floor, x: 20, y: 20 }));
+  const hash = buildAgentSpatialHash(agents, {
+    cellSizeMeters: 0.5, cellSizeMetersForFloor: f => [0.5, 0.42][f]
+  });
+  assert.ok(hash.buckets.has("1:7:7"));
+  assert.deepEqual(queryNearbyAgentIndices(hash, agents[1], 0.1), [1]);
+});
+
 test("FDS+Evac person sampler reproduces distribution means at midpoint", () => {
   const midpoint = () => 0.5;
   for (const [type, profile] of Object.entries(FDS_EVAC_PERSON_TYPES)) {

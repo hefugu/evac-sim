@@ -513,6 +513,7 @@ test("an agent uses the UI-created stair connection and evacuates on the other f
   await marker(page, "modeExit", 6, 5);
   await page.locator("#currentFloor").selectOption("1");
   await loadRoom(page);
+  await page.locator("#cellSizeMeters").fill("0.42");
   await marker(page, "modeStair", 4, 5);
   await marker(page, "modeSpawn", 3, 5);
   await page.locator("#stairTravelCost").fill("0.5");
@@ -537,6 +538,55 @@ test("an agent uses the UI-created stair connection and evacuates on the other f
   expect(outcome.completed).toBe(1);
   expect(outcome.evacuated).toBe(1);
   expect(outcome.running).toBe(false);
+});
+
+test("mixed floor physics is independent of the displayed floor", async ({ page }) => {
+  const run = async selectedFloor => {
+    await page.goto("/sim/");
+    await loadRoom(page);
+    await page.locator("details").evaluateAll(items => items.forEach(item => { item.open = true; }));
+    await configureAgent(page);
+    await page.locator("#floorCount").fill("2");
+    await page.locator("#btnApplyFloors").click();
+    await marker(page, "modeSpawn", 3, 3);
+    await marker(page, "modeExit", 17, 3);
+    await marker(page, "modeFire", 12, 8);
+    await page.locator("#currentFloor").selectOption("1");
+    await loadRoom(page);
+    await page.locator("#cellSizeMeters").fill("0.42");
+    await marker(page, "modeSpawn", 3, 3);
+    await marker(page, "modeExit", 17, 3);
+    await marker(page, "modeFire", 12, 8);
+    await page.locator("#numAgents").fill("12");
+    await page.locator("#currentFloor").selectOption(String(selectedFloor));
+    await page.evaluate(() => {
+      let seed = 13579;
+      Math.random = () => ((seed = (1664525 * seed + 1013904223) >>> 0) / 4294967296);
+    });
+    await page.locator("#btnStart").click();
+    await page.clock.runFor(2_000);
+    await page.locator("#btnStop").click();
+    return page.evaluate(async () => {
+      const { state } = await import("/sim/js/state.js");
+      return {
+        time: state.sim.time,
+        agents: state.agents.map(a => ({
+          floor: a.floor, x: a.x, y: a.y, vx: a.vxMps, vy: a.vyMps,
+          dead: a.dead, finished: a.finished, stuckTime: a.stuckTime
+        })),
+        floors: state.map.floorStates.map(f => ({
+          scale: f.cellSizeMeters, grid: f.grid, smoke: f.smokeMap,
+          soot: [...f.smokePhysics.sootMassKg], co: [...f.smokePhysics.coMassKg]
+        }))
+      };
+    });
+  };
+  const first = await run(0);
+  const second = await run(1);
+  expect(first.floors.map(f => f.scale)).toEqual([0.5, 0.42]);
+  expect(new Set(first.agents.map(a => a.floor)).size).toBe(2);
+  expect(first.time).toBeGreaterThan(1);
+  expect(second).toEqual(first);
 });
 
 test("explicit Stop and Reset halt Monte Carlo without scheduling another trial", async ({ page }) => {

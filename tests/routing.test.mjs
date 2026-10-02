@@ -12,6 +12,18 @@ import {
   moveApproachesFire
 } from "../sim/js/simulation/routing.js";
 
+test("fire avoidance converts a metre radius separately on each floor", () => {
+  const floors = [0.5, 0.42].map(cellSizeMeters => ({
+    cellSizeMeters,
+    grid: [Array.from({ length: 12 }, (_, x) => ({ fire: x === 0 }))]
+  }));
+  const masks = buildFireAvoidanceMasks(floors, 12, 1, floor => 2.2 / floor.cellSizeMeters);
+  assert.equal(masks[0][4], 1);
+  assert.equal(masks[0][5], 0);
+  assert.equal(masks[1][5], 1);
+  assert.equal(masks[1][6], 0);
+});
+
 function fieldAt(score) {
   return [[[score]]];
 }

@@ -145,9 +145,10 @@ test("fixed-substep solution is stable for caller dt 0.1 versus 0.05", () => {
   assert.ok(l1 / Math.max(1e-12, fine.totalHotGasVolumeM3) < 0.05);
 });
 
-test("multiple stair fan-out cannot transfer more species than source inventory", () => {
+for (const scales of [[1, 1, 1], [0.5, 0.42, 0.75]]) {
+test(`multiple stair fan-out conserves species at floor scales ${scales}`, () => {
   const makeFloor = (floorIndex, smoky) => createFloor3D({
-    floorIndex, zMeters: floorIndex * 3.5, cellSizeMeters: 1, wallHeightMeters: 3,
+    floorIndex, zMeters: floorIndex * 3.5, cellSizeMeters: scales[floorIndex], wallHeightMeters: 3,
     grid: [[cell({ stair: true, smokeDensity: smoky ? 2 : 0 })]], smokeMap: [[smoky ? 2 : 0]]
   });
   let result = stepSmoke3D([makeFloor(0, true), makeFloor(1, false), makeFloor(2, false)], [], 0, lossless);
@@ -166,6 +167,8 @@ test("multiple stair fan-out cannot transfer more species than source inventory"
     }
   }
 });
+
+}
 
 test("smoke reset clears conserved buffers and corridor diagnostics before a fresh run", () => {
   const build = () => {
