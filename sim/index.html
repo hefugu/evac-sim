@@ -104,6 +104,7 @@
         <label>避難開始</label>
         <select id="startRule">
           <option value="simultaneous">全員一斉</option>
+          <option value="response_time">個人ごとの反応時間</option>
           <option value="far_first" selected>出口から遠い人を優先</option>
         </select>
       </div>
@@ -123,6 +124,13 @@
             <label>速度ばらつき [%]</label>
             <input type="number" id="speedVar" min="0" max="100" value="0">
           </div>
+          <p class="hint">「個人ごとの反応時間」では、覚知の遅れ＋準備時間の後に避難を開始します。訓練・調査データに合わせて設定してください。初期値0秒は即時開始です。</p>
+          <div class="row"><label for="detectionTimeSec">覚知の遅れ [s]</label><input id="detectionTimeSec" type="number" min="0" step="1" value="0"></div>
+          <div class="row"><label for="reactionMinSec">準備時間・最短 [s]</label><input id="reactionMinSec" type="number" min="0" step="1" value="0"></div>
+          <div class="row"><label for="reactionModeSec">準備時間・最も多い値 [s]</label><input id="reactionModeSec" type="number" min="0" step="1" value="0"></div>
+          <div class="row"><label for="reactionMaxSec">準備時間・最長 [s]</label><input id="reactionMaxSec" type="number" min="0" step="1" value="0"></div>
+          <div class="row"><label for="guideRangeMeters">誘導者を認識する距離 [m]</label><input id="guideRangeMeters" type="number" min="0" step="0.5" value="4"></div>
+          <p class="hint">子供・生徒は、同じ階で壁に遮られず煙の視界内にいる教師・リーダーを追従します。見失った場合は自身の避難経路を使います。</p>
           <div class="row">
             <label for="maxObservationTimeSec">観測時間上限 [s]</label>
             <input id="maxObservationTimeSec" type="number" min="0.1" step="1" value="600">

@@ -66,6 +66,7 @@ import {
   stepPedestrianDynamics
 } from "./pedestrian-dynamics.js";
 import { buildWallSpatialIndex } from "./wall-index.js";
+import { normalizeResponseOptions, samplePreMovement, departureState, selectVisibleGuide } from "./agent-behavior.js";
 let runtimeControls = {
   start: null,
   stop: null,
@@ -1172,6 +1173,15 @@ export function initSimulation() {
     return "adult";
   }
 
+  function currentResponseOptions() {
+    return normalizeResponseOptions({
+      detectionSec: parseNum(ui.detectionTimeInput, 0),
+      minSec: parseNum(ui.reactionMinInput, 0),
+      modeSec: parseNum(ui.reactionModeInput, 0),
+      maxSec: parseNum(ui.reactionMaxInput, 0)
+    });
+  }
+
   function currentSettingsSnapshot() {
     return {
       floorCount,
@@ -1183,6 +1193,8 @@ export function initSimulation() {
       speedVar: parseNum(speedVarInput, 25),
       cellSizeMeters: parseNum(cellSizeMetersInput, 0.5),
       startRule: startRuleInput.value,
+      responseTime: currentResponseOptions(),
+      guideRangeMeters: Math.max(0, parseNum(ui.guideRangeInput, 4)),
       thr: parseNum(thrRange, 200),
       agentPreset: agentPresetInput.value,
       ratios: getTypeRatios(),
@@ -1199,6 +1211,12 @@ export function initSimulation() {
 
   function restoreSettingsSnapshot(snap) {
     if (!snap) return;
+    const response = normalizeResponseOptions(snap.responseTime);
+    ui.detectionTimeInput.value = response.detectionSec;
+    ui.reactionMinInput.value = response.minSec;
+    ui.reactionModeInput.value = response.modeSec;
+    ui.reactionMaxInput.value = response.maxSec;
+    ui.guideRangeInput.value = Math.max(0, Number.isFinite(snap.guideRangeMeters) ? snap.guideRangeMeters : 4);
     if (snap.tenabilityOptions) {
       state.hazards.tenabilityOptions = resolveTenabilityOptions(snap.tenabilityOptions);
       if (maxObservationTimeInput) maxObservationTimeInput.value = state.hazards.tenabilityOptions.maxSimulationTimeSec;
@@ -2475,24 +2493,6 @@ export function initSimulation() {
       return abortSpawn("エージェント生成に失敗しました。配置条件を確認してください。");
     }
 
-    const leaders = agents.filter(a => a.type === "leader" || a.type === "teacher");
-    const students = agents.filter(a => a.type === "student" || a.type === "child");
-    students.forEach(s => {
-      let best = null;
-      let bestDist = Infinity;
-      leaders.forEach(l => {
-        if (l.floor !== s.floor) return;
-        const d = Math.hypot(l.x - s.x, l.y - s.y);
-        if (d < bestDist) {
-          bestDist = d;
-          best = l;
-        }
-      });
-      if (best) {
-        s.leaderId = best.id;
-      }
-    });
-
     const startRule = startRuleInput?.value || "far_first";
     if (startRule === "far_first") {
       // Evacuation priority: farther agents start earlier (staggered departure).
@@ -2501,11 +2501,25 @@ export function initSimulation() {
       for (let i = 0; i < agents.length; i++) {
         agents[i].evacDelay = (i / denom) * FAR_FIRST_MAX_DELAY_SEC;
       }
+    } else if (startRule === "response_time") {
+      const response = currentResponseOptions();
+      for (const agent of agents) {
+        Object.assign(agent, samplePreMovement(response));
+        agent.evacDelay = agent.preMovementSec;
+      }
     } else {
       // Everyone starts at the same time.
       for (let i = 0; i < agents.length; i++) {
         agents[i].evacDelay = 0;
       }
+    }
+    for (const agent of agents) {
+      agent.detectionSec ??= 0;
+      agent.reactionSec ??= 0;
+      agent.preMovementSec ??= agent.evacDelay;
+      agent.movementStartedAt = null;
+      agent.guideRangeMeters = Math.max(0, parseNum(ui.guideRangeInput, 4));
+      agent.behaviorState = departureState(agent, simTime);
     }
     
 
@@ -2536,7 +2550,7 @@ export function initSimulation() {
     // A successful start is also visible before the first 0.1 s physics tick.
     // Apply t=0 explicitly instead of leaving a one-tick fallback-only gap.
     applyCurrentFdsToSharedHazards(0);
-    const startRuleLabel = (startRuleInput?.value === "far_first") ? "far_first" : "simultaneous";
+    const startRuleLabel = startRuleInput?.value || "simultaneous";
     const typeCounts = agents.reduce((acc, a) => {
       acc[a.type] = (acc[a.type] || 0) + 1;
       return acc;
@@ -2747,8 +2761,8 @@ export function initSimulation() {
     lastFrameTime = performance.now();
     btnStart.disabled = true;
     btnStart.classList.remove("pulse");
-    const startRuleLabel = (startRuleInput?.value === "far_first") ? "far_first" : "simultaneous";
-    setStatus(`シミュレーション実行中。開始方式=${startRuleLabel === "far_first" ? "遠方優先" : "一斉開始"}`);
+    const startRuleLabel = { far_first: "遠方優先", response_time: "個人ごとの反応時間", simultaneous: "一斉開始" }[startRuleInput?.value] || "一斉開始";
+    setStatus(`シミュレーション実行中。開始方式=${startRuleLabel}`);
     scheduleSimulationFrame();
 
     return true;
@@ -3210,21 +3224,16 @@ export function initSimulation() {
       nextRouteReplanAt = simTime + 1.5;
     }
 
-    function findLeaderFor(agent) {
-      let best = null;
-      let bestD = Infinity;
-      agents.forEach(other => {
-        if (other.dead || other.finished) return;
-        if (other.floor !== agent.floor) return;
-        if (!(other.type === "leader" || other.type === "teacher")) return;
-        const d = Math.hypot(other.x - agent.x, other.y - agent.y);
-        if (d < bestD) {
-          best = other;
-          bestD = d;
-        }
-      });
-      return best && bestD <= 8 ? best : null;
-    }
+    // Snapshot guide eligibility/positions before the movement loop so
+    // perception does not depend on which person is updated first.
+    const guides = agents.filter(a => a.type === "leader" || a.type === "teacher")
+      .map(a => ({ ...a }));
+    const guideContext = {
+      timeSec: simTime,
+      cellSizeMetersForFloor: cellMetersForFloor,
+      isWalkable: (f, x, y) => !!floorStates[f]?.walkableTemplate?.[y]?.[x],
+      visibilityMetersAt: (f, x, y) => smokeMetricsAt(f, x, y)?.visibilityM ?? 30
+    };
 
     agents.forEach(a => {
       if (a.finished || a.dead) return;
@@ -3360,7 +3369,14 @@ export function initSimulation() {
       }
 
       if (a.fallen) return;
-      if (simTime < a.startTime + (a.evacDelay || 0)) return;
+      const departure = departureState(a, simTime);
+      if (departure !== "normal") {
+        a.behaviorState = departure;
+        a.vxMps = 0;
+        a.vyMps = 0;
+        return;
+      }
+      a.movementStartedAt ??= simTime;
       if (a.stairTransition) {
         a.behaviorState = "stair_transition";
         return;
@@ -3393,11 +3409,8 @@ export function initSimulation() {
 
       let leaderTarget = null;
       if (a.type === "student" || a.type === "child") {
-        leaderTarget = (a.leaderId != null) ? byId.get(a.leaderId) : null;
-        if (!leaderTarget || leaderTarget.dead || leaderTarget.finished || leaderTarget.floor !== floor) {
-          leaderTarget = findLeaderFor(a);
-          a.leaderId = leaderTarget ? leaderTarget.id : null;
-        }
+        leaderTarget = selectVisibleGuide(a, guides, { ...guideContext, maxRangeMeters: a.guideRangeMeters });
+        a.leaderId = leaderTarget ? leaderTarget.id : null;
       }
 
       a.behaviorState = deriveAgentBehaviorState(a, {

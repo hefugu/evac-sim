@@ -97,7 +97,7 @@ export function buildCsvReport(context) {
   });
 
   lines.push("");
-  lines.push("section,id,type,floor,behavior_state,target_exit,target_exit_floor,target_stair,start_s,finish_s,dead,death_cause,tenability,worst_tenability,tenability_reasons,first_critical_time_s,exposure_duration_s,visibility_exposure_m_s,visibility_deficit_exposure_s,low_visibility_s,co_exposure_ppm_min,heat_flux_exposure_kw_m2_s,temperature_exposure_c_s,temperature_above_ambient_exposure_c_s,extinction_exposure_m_1_s,smoke_extinction_proxy_exposure_s,full_fed_available,smoke_dose_legacy,heat_dose_legacy,stuck_count,panic_escape_count");
+  lines.push("section,id,type,floor,behavior_state,target_exit,target_exit_floor,target_stair,start_s,finish_s,dead,death_cause,tenability,worst_tenability,tenability_reasons,first_critical_time_s,exposure_duration_s,visibility_exposure_m_s,visibility_deficit_exposure_s,low_visibility_s,co_exposure_ppm_min,heat_flux_exposure_kw_m2_s,temperature_exposure_c_s,temperature_above_ambient_exposure_c_s,extinction_exposure_m_1_s,smoke_extinction_proxy_exposure_s,full_fed_available,smoke_dose_legacy,heat_dose_legacy,stuck_count,panic_escape_count,detection_s,reaction_s,pre_movement_s,movement_started_s,guide_range_m");
   agents.forEach((a) => {
     const exit = allExitPoints[a.targetExitIndex] || null;
     lines.push(
@@ -132,7 +132,12 @@ export function buildCsvReport(context) {
         Number(a.smokeDose || 0).toFixed(4),
         Number(a.heatDose || 0).toFixed(4),
         a.stuckCount || 0,
-        a.panicEscapeCount || 0
+        a.panicEscapeCount || 0,
+        Number(a.detectionSec || 0).toFixed(3),
+        Number(a.reactionSec || 0).toFixed(3),
+        Number(a.preMovementSec || 0).toFixed(3),
+        Number.isFinite(a.movementStartedAt) ? a.movementStartedAt.toFixed(3) : "",
+        Number(a.guideRangeMeters ?? 4).toFixed(3)
       ].join(",")
     );
   });

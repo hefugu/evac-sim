@@ -91,6 +91,89 @@ test.beforeEach(async ({ page }) => {
 });
 
 
+test("response-time agents wait with exposure, then move; presets and CSV preserve timing", async ({ page }) => {
+  await configureAgent(page);
+  await marker(page, "modeSpawn", 3, 3);
+  await marker(page, "modeExit", 17, 3);
+  await page.locator("#startRule").selectOption("response_time");
+  for (const [id, value] of Object.entries({ detectionTimeSec: "1", reactionMinSec: "2",
+    reactionModeSec: "2", reactionMaxSec: "2", guideRangeMeters: "6" })) {
+    await page.locator(`#${id}`).fill(value);
+  }
+  await page.locator("#btnSavePreset").click();
+  await page.locator("#reactionMaxSec").fill("10");
+  await page.locator("#btnLoadPreset").click();
+  await expect(page.locator("#reactionMaxSec")).toHaveValue("2");
+  await expect(page.locator("#guideRangeMeters")).toHaveValue("6");
+  // Preset loading rebuilds the floor; place markers on that fresh map.
+  await marker(page, "modeSpawn", 3, 3);
+  await marker(page, "modeExit", 17, 3);
+  const csv = "time_s,floor,cx,cy,sample_height_m,co_ppm\n0,1,3,3,1.6,600";
+  await page.locator("#fdsCsvFile").setInputFiles({ name: "response-co.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+  await page.locator("#btnStart").click();
+  const read = () => page.evaluate(async () => {
+    const { state } = await import("/sim/js/state.js");
+    return { ...state.agents[0], time: state.sim.time };
+  });
+  await page.clock.runFor(500);
+  let agent = await read();
+  expect(agent.behaviorState).toBe("unaware");
+  expect(agent.x).toBe(3);
+  expect(agent.exposure.coPpmMin).toBeGreaterThan(0);
+  await page.clock.runFor(1500);
+  agent = await read();
+  expect(agent.behaviorState).toBe("pre_movement");
+  expect(agent.x).toBe(3);
+  expect(agent.movementStartedAt).toBeNull();
+  expect(agent.exposure.durationSeconds).toBeGreaterThan(1);
+  await page.clock.runFor(2000);
+  agent = await read();
+  expect(agent.x).toBeGreaterThan(3);
+  expect(agent.movementStartedAt).toBeGreaterThanOrEqual(3);
+  expect(agent.movementStartedAt).toBeLessThan(3.11);
+  await page.locator("#btnStop").click();
+  const report = await page.evaluate(async () => {
+    const { state } = await import("/sim/js/state.js");
+    const { buildCsvReport } = await import("/sim/js/export/csv.js");
+    return buildCsvReport({ lastSummary: state.sim.lastSummary, agents: state.agents,
+      allExitPoints: [], TYPE_META: {}, currentFloor: 0,
+      paramHistory: [], congestionHistory: [], bottleneckReport: [] });
+  });
+  const header = report.split("\n").find(line => line.startsWith("section,id,type,")).split(",");
+  const row = report.split("\n").find(line => line.startsWith("agent,")).split(",");
+  expect(row[header.indexOf("detection_s")]).toBe("1.000");
+  expect(row[header.indexOf("reaction_s")]).toBe("2.000");
+  expect(row[header.indexOf("pre_movement_s")]).toBe("3.000");
+  expect(Number(row[header.indexOf("movement_started_s")])).toBeGreaterThanOrEqual(3);
+});
+
+test("students lose a guide when smoke blocks sight and reacquire when it clears", async ({ page }) => {
+  await configureAgent(page);
+  await marker(page, "modeSpawn", 3, 3);
+  await marker(page, "modeExit", 17, 3);
+  await page.locator("#numAgents").fill("2");
+  await page.locator("#btnStart").click();
+  await page.evaluate(async () => {
+    const { state } = await import("/sim/js/state.js");
+    Object.assign(state.agents[0], { type: "student", x: 3, y: 3 });
+    Object.assign(state.agents[1], { type: "teacher", x: 7, y: 3 });
+  });
+  await page.clock.runFor(200);
+  const leader = () => page.evaluate(async () => {
+    const { state } = await import("/sim/js/state.js");
+    return { assigned: state.agents[0].leaderId, teacher: state.agents[1].id };
+  });
+  expect((await leader()).assigned).toBe((await leader()).teacher);
+  // An eye-height FDS smoke cell between the two people blocks recognition.
+  await page.locator("#fdsCsvFile").setInputFiles({ name: "sight.csv", mimeType: "text/csv",
+    buffer: Buffer.from("time_s,floor,cx,cy,sample_height_m,visibility_m\n0,1,5,3,1.6,0.1") });
+  await page.clock.runFor(200);
+  expect((await leader()).assigned).toBeNull();
+  await page.locator("#btnClearFdsCsv").click();
+  await page.clock.runFor(200);
+  expect((await leader()).assigned).toBe((await leader()).teacher);
+});
+
 test("real 3F map loads with calibrated topology and scale", async ({ page }) => {
   await loadScitech3F(page);
 
