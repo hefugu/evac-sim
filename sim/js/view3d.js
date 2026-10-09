@@ -97,6 +97,16 @@ export function init3DView() {
   state.render.renderer3d = renderer;
   controller = { renderer, publisher, setMode, destroy, get mode() { return mode; } };
   setMode("2d");
+  // A cold network can deliver this optional module after the toolbar is
+  // already visible. Enable controls only once their handlers are installed.
+  ["btnView3D", "btnViewSplit", "btnOpen3D", "btnReset3DCamera",
+    "view3dFire", "view3dSmoke", "view3dSmokeBounds", "view3dAgents", "view3dWalls"]
+    .forEach(id => {
+      const control = byId(id);
+      if (!control) return;
+      control.disabled = false;
+      control.removeAttribute("title");
+    });
   return controller;
 }
 

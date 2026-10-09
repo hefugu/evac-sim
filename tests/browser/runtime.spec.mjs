@@ -293,6 +293,9 @@ test("real 3F map evacuates a small crowd through a corridor exit without stragg
 });
 
 test("real 3F map completes a long route with turns without wandering", async ({ page }) => {
+  // Large-map physics plus cold remote downloads can exceed 30 wall seconds.
+  // The simulated 75 s bound and completion assertions remain unchanged.
+  test.setTimeout(60_000);
   await loadScitech3F(page);
   await configureAgent(page, "1.2");
 
