@@ -56,6 +56,10 @@ export function buildCsvReport(context) {
   lines.push(`summary,panic_escape_events,${lastSummary.panicEscapeEvents || 0}`);
   lines.push(`summary,active_fire_cells,${lastSummary.activeFireCount || 0}`);
   lines.push(`summary,total_hrr_kw,${Number(lastSummary.totalFireHrrKw || 0).toFixed(3)}`);
+  if (lastSummary.fireModel) {
+    lines.push(`summary,fire_growth_alpha_kw_s2,${Number(lastSummary.fireModel.alphaKwPerSec2).toFixed(5)}`);
+    lines.push(`summary,fire_max_hrr_kw,${Number(lastSummary.fireModel.maxHrrKw).toFixed(3)}`);
+  }
 
   lines.push("");
   lines.push("section,floor,current_occupancy,peak_occupancy");

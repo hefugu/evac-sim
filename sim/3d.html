@@ -10,19 +10,26 @@
   <div id="standalone3dRoot">
     <div id="viewToolbar" aria-label="3D表示コントロール">
       <a class="buttonLink" href="./">2D編集へ戻る</a>
-      <button id="btnStandaloneSample" type="button">3Fサンプル</button>
+      <button id="btnStandaloneSample" type="button">3階サンプル</button>
       <button id="btnStandaloneResetCamera" type="button">視点リセット</button>
-
-      <label class="hazardControl">煙表示 <select id="smokeDisplayMode" data-hazard-setting="smokeDisplayMode"><option value="physical">物理量表示</option><option value="analysis">解析強調（γ=0.55）</option></select></label>
-      <label class="hazardControl">火災表示量 <select id="fireMetric" data-hazard-setting="fireMetric"><option value="intensity">強度 [0–1]</option><option value="hrr">HRR [kW]</option><option value="age">年齢 [s]</option><option value="heat_flux">熱流束 [kW/m²]</option><option value="spread_front">延焼前線</option></select></label>
-      <label class="hazardControl">データ由来 <select id="dataSourceOverlay" data-hazard-setting="dataSourceOverlay"><option value="none">表示なし</option><option value="fds">FDS</option><option value="fallback">簡易モデル</option><option value="mixed">混在 / 全区分</option></select></label>
       <span class="viewToolbarSpacer"></span>
-      <label><input id="standaloneFire" type="checkbox" checked> 火災</label>
-      <label><input id="standaloneSmoke" type="checkbox" checked> 煙</label>
-      <label class="hazardControl">煙表示量 <select data-hazard-setting="smokeMetric" id="standaloneSmokeMode" aria-label="3D煙表示モード"><option value="extinction">消散係数 [1/m]</option><option value="density">煙濃度 [指標]</option><option value="visibility">視界 [m]</option><option value="co">CO [ppm]</option><option value="temperature">温度 [°C]</option><option value="source">データ由来</option></select></label>
-      <label><input id="standaloneSmokeBounds" type="checkbox" checked> 層境界・厚さ</label>
-      <label><input id="standaloneAgents" type="checkbox" checked> 人</label>
-      <label><input id="standaloneWalls" type="checkbox" checked> 壁</label>
+      <details class="viewSettings">
+        <summary>表示設定</summary>
+        <div class="viewSettingsContent">
+          <label class="hazardControl">煙の表示方法 <select id="smokeDisplayMode" data-hazard-setting="smokeDisplayMode"><option value="physical">物理量表示</option><option value="analysis">解析強調</option></select></label>
+          <label class="hazardControl">煙の表示量 <select data-hazard-setting="smokeMetric" id="standaloneSmokeMode" aria-label="3D煙表示モード"><option value="extinction">消散係数 [1/m]</option><option value="density">煙濃度 [指標]</option><option value="visibility">視界 [m]</option><option value="co">CO [ppm]</option><option value="temperature">温度 [°C]</option><option value="source">データ由来</option></select></label>
+          <label class="hazardControl">火災の表示量 <select id="fireMetric" data-hazard-setting="fireMetric"><option value="intensity">強度 [0–1]</option><option value="hrr">発熱速度 HRR [kW]</option><option value="age">火災経過時間 [s]</option><option value="heat_flux">熱流束 [kW/m²]</option><option value="spread_front">延焼前線</option></select></label>
+          <label class="hazardControl">データ由来 <select id="dataSourceOverlay" data-hazard-setting="dataSourceOverlay"><option value="none">表示なし</option><option value="fds">FDS</option><option value="fallback">簡易モデル</option><option value="mixed">混在 / 全区分</option></select></label>
+          <label><span>火災</span><input id="standaloneFire" type="checkbox" checked></label>
+          <label><span>煙</span><input id="standaloneSmoke" type="checkbox" checked></label>
+          <label><span>煙層境界・厚さ</span><input id="standaloneSmokeBounds" type="checkbox" checked></label>
+          <label><span>避難者</span><input id="standaloneAgents" type="checkbox" checked></label>
+          <label><span>壁</span><input id="standaloneWalls" type="checkbox" checked></label>
+          <p data-hazard-legend="smoke"></p>
+          <p data-hazard-legend="fire"></p>
+          <p class="hint">表示範囲は安全基準ではありません。解析強調は煙の見え方だけを変えます。</p>
+        </div>
+      </details>
       <span id="standaloneConnection">2D状態を待機中</span>
     </div>
     <div id="pane3d" class="viewPane">

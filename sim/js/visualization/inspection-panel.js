@@ -1,4 +1,4 @@
-import { getCellHazardInspection, DEFAULT_HAZARD_DISPLAY } from './hazard-display.js';
+import { getCellHazardInspection, DEFAULT_HAZARD_DISPLAY, displayLegend } from './hazard-display.js';
 const panels = new WeakMap();
 const sourceLabel = source => ({ fds: 'FDS', fallback: '簡易モデル', mixed: '混在', none: '未取得' }[source] || source || '未取得');
 const formatValue = value => value == null ? '未取得' : typeof value === 'number'
@@ -41,9 +41,20 @@ export function bindHazardDisplayControls(state, renderer = null) {
   state.viz ||= {};
   state.viz.hazardDisplay ||= {...DEFAULT_HAZARD_DISPLAY};
   const controls = [...document.querySelectorAll('[data-hazard-setting]')];
+  const legends = [...document.querySelectorAll('[data-hazard-legend]')];
   function refresh() {
     const settings = state.viz.hazardDisplay;
     controls.forEach(control => { control.value = settings[control.dataset.hazardSetting]; });
+    legends.forEach(legend => {
+      const fire = legend.dataset.hazardLegend === 'fire';
+      const metric = fire ? settings.fireMetric : settings.smokeMetric;
+      let text = displayLegend(metric);
+      // Fire markers use red opacity, while heat-flux cells use the shared color scale.
+      if (fire && metric !== 'heat_flux') {
+        text = `${text.split(';')[0]}; ${metric === 'spread_front' ? '赤線=延焼前線' : '赤の濃さ=値'}`;
+      }
+      legend.textContent = `${fire ? '火災' : '煙'}: ${text}`;
+    });
     renderer?.setSmokeDisplayMode(settings.smokeDisplayMode);
     renderer?.setSmokeVisualizationMode(settings.smokeMetric);
     renderer?.setFireVisualizationMode(settings.fireMetric);

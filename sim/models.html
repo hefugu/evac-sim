@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>操作とモデル | 避難シミュレーション</title>
+  <link rel="stylesheet" href="./styles/base.css">
+  <style>
+    body { display: block; height: auto; overflow: auto; }
+    main { max-width: 900px; margin: 24px auto; padding: 24px; background: var(--panel); border: 1px solid var(--border); }
+    h1 { font-size: 24px; } h2 { font-size: 18px; margin-top: 28px; }
+    p, li { line-height: 1.8; } li { margin-bottom: 6px; }
+    table { border-collapse: collapse; width: 100%; font-size: 13px; }
+    th, td { padding: 10px; text-align: left; border: 1px solid var(--border); vertical-align: top; }
+    th { background: var(--surface); } .tableWrap { overflow-x: auto; }
+    @media (max-width: 600px) { main { margin: 0; padding: 16px; border: 0; } }
+  </style>
+</head>
+<body><main>
+  <a href="./">シミュレーションへ戻る</a>
+  <h1>操作とモデル</h1>
+  <p>図面と避難条件を設定し、出口への移動、階段の使用、煙・熱への曝露を比較する簡易シミュレータです。</p>
+  <h2>基本操作</h2>
+  <ol>
+    <li>図面画像を読み込み、階数・編集する階・セルの実寸を確認します。白は通路、黒は壁、緑は階段、黄は出口です。別の階は、その階を選んで図面を読み込みます。</li>
+    <li>配置ツールを選んで図面をクリックします。出口と開始位置を設定し、必要なら火源を置きます。階段リンクは一方の階段、接続先の階の階段の順に選びます。</li>
+    <li>人数、希望速度、避難開始時間を設定します。標準は成人のみ・一斉開始です。図面を読み込んだだけでは、実際の建物条件がすべて設定されるわけではありません。</li>
+    <li>画面上部の「実行」を押します。「停止」で止め、「リセット」で初期状態へ戻します。2D・3D・同時表示は同じ計算状態を表示します。</li>
+    <li>経過時間、避難済み人数、未完了者を確認します。「結果・レポート」で詳しい記録とCSVを保存できます。平均・最大避難時間は避難完了者の値です。</li>
+  </ol>
+  <p>3Fサンプルは3階の図面だけです。1・2階の図面、階段リンク、出口、開始位置は別途設定してください。</p>
+  <h2>既存方式を参考にした設定</h2>
+  <div class="tableWrap"><table>
+    <thead><tr><th>項目</th><th>本シミュレータの扱い</th><th>参考資料</th></tr></thead>
+    <tbody>
+      <tr><td>操作構成</td><td>図面、配置、避難条件、実行、結果を分けています。詳細な係数と解析表示は必要なときに開きます。</td><td><a href="https://www.thunderheadeng.com/docs/2024-2/pathfinder/user-manual/">Pathfinder User Manual</a><br><a href="https://www.oasys-software.com/wp-content/uploads/2026/04/Oasys-MassMotion-User-Guide.pdf">MassMotion User Guide</a></td></tr>
+      <tr><td>歩行者</td><td>連続座標のSocial Force系モデル。希望速度への加速、人同士・壁との反発と接触、身体幅を計算します。成人の参照分布は半径0.220–0.290 m、希望速度0.95–1.55 m/sの一様分布です。成人の基準速度を変えると各身体タイプの速度分布も同じ倍率で変わります。人口条件に応じて調整してください。</td><td><a href="https://publications.vtt.fi/pdf/tiedotteet/2007/T2421.pdf">VTT FDS+Evac 開発・検証報告</a><br><a href="https://www.oasys-software.com/wp-content/uploads/2024/07/ISOFireEvacuationVV.pdf">MassMotion 検証資料</a></td></tr>
+      <tr><td>出口・経路</td><td>出口までの移動コストに煙・熱の危険度、階段時間と待ち時間を加え、経路を定期的に更新します。身体の移動線分が壁や壁角を横切る動きは止めます。出口の位置は全員が知っている条件です。</td><td><a href="https://www.thunderheadeng.com/docs/2024-2/pathfinder/technical-reference-manual/">Pathfinder Technical Reference</a></td></tr>
+      <tr><td>避難開始</td><td>一斉開始、個人ごとの覚知・準備時間を選べます。準備時間は利用者指定の三角分布です。「遠い順」の計画出発、教師・生徒の追従、ランダム行動は追加の簡略条件です。標準では使いません。</td><td><a href="https://www.nist.gov/publications/pre-evacuation-database-use-egress-simulations">NIST 避難前行動データ</a></td></tr>
+      <tr><td>火災</td><td>火源セルごとに発熱速度 Q＝min(αt², 最大HRR)。tは着火後の経過秒です。複数火源では発熱速度を合計します。成長率と上限、火源面積を指定します。材料・着火条件が未設定の確率的な延焼は無効です。炎は火源位置と状態量を示す解析マーカーです。</td><td><a href="https://nvlpubs.nist.gov/nistpubs/TechnicalNotes/NIST.TN.1889v2.pdf">NIST CFAST User’s Guide</a></td></tr>
+      <tr><td>煙</td><td>簡易の煙層・輸送モデルと、煙による歩行速度低下を使います。消散係数[1/m]、視界[m]、CO[ppm]、温度[°C]を確認できます。物理量表示では光路長と消散係数から不透明度を計算します。「解析強調」は表示だけの変更です。</td><td><a href="https://pages.nist.gov/fds-smv/">NIST FDS / Smokeview</a><br><a href="https://pages.nist.gov/cfast/">NIST CFAST</a></td></tr>
+      <tr><td>FDSデータ</td><td>外部計算したCSVの対応する位置の値を優先し、未指定の量は簡易モデルで補います。目線は床上1.6 m。高さ別の値は同じ量の上下サンプル間で線形補間し、外挿はしません。時刻は直前フレームを保持します。空欄は未指定、0は測定値です。データ由来の表示と地点分析で区別できます。</td><td><a href="https://pages.nist.gov/fds-smv/">NIST FDS / Smokeview</a></td></tr>
+    </tbody>
+  </table></div>
+  <h2>火災成長率</h2>
+  <div class="tableWrap"><table><thead><tr><th>設定</th><th>α [kW/s²]</th><th>約1054 kWまでの時間</th></tr></thead><tbody>
+    <tr><td>Slow</td><td>0.00293</td><td>600 s</td></tr>
+    <tr><td>Medium（初期値）</td><td>0.01172</td><td>300 s</td></tr>
+    <tr><td>Fast</td><td>0.0469</td><td>150 s</td></tr>
+    <tr><td>Ultra-fast</td><td>0.1876</td><td>75 s</td></tr>
+  </tbody></table></div>
+  <p>経路計画の火炎回避距離4 mと煙・熱のコスト係数は、この実装の簡略な行動条件です。安全な離隔距離や規格値として検証された数値ではありません。</p>
+  <p>最大HRRの初期値3000 kW、燃料収率・燃焼熱・排煙量は例示のシナリオ値です。すべての建物や材料に共通する値ではありません。</p>
+  <h2>モデルの範囲</h2>
+  <p>PathfinderのSteering/SFPE、MassMotion、FDS/CFASTは異なるモデルです。本実装はそれらと同等のソルバーや検証済み製品ではありません。FDS+Evacは歩行モデルの歴史的な参考であり、NISTによるサポートはFDS 6.7.8以降終了しています。</p>
+  <p>階段は指定した時間・同時通行人数によるリンクモデルです。実寸の階段幅・勾配による流量モデル、車椅子・介助、家族の集合、未知の出口の探索、実燃料による延焼、完全なFEDによる致死判定は未実装です。危険域の経験や未完了人数を、死亡者数や安全性の保証に読み替えないでください。</p>
+  <p>調査・更新: 2026-10-09</p>
+</main></body>
+</html>

@@ -1,4 +1,5 @@
 import { queryWallSegments, closestPointOnWallSegment } from "./wall-index.js";
+import { canWalkSegment } from "./grid-movement.js";
 /*
  * Lightweight continuous pedestrian dynamics based on the Social Force family
  * used by FDS+Evac. This module is deliberately independent from DOM/rendering
@@ -110,6 +111,16 @@ export function smokeAdjustedDesiredSpeed(
   return Math.max(v0 * cfg.smokeMinSpeedFactor, v0 * Math.max(0, ratio));
 }
 
+// Reflecting objects use V = 3/K in the FDS visibility convention. Missing
+// values leave the fallback extinction unchanged; an observed zero visibility
+// approaches the speed floor rather than becoming false clear air.
+export function extinctionFromVisibilityMeters(visibilityMeters, fallback = 0) {
+  if (visibilityMeters == null || visibilityMeters === "") return Math.max(0, finite(fallback));
+  const visibility = Number(visibilityMeters);
+  if (!Number.isFinite(visibility) || visibility < 0) return Math.max(0, finite(fallback));
+  return 3 / Math.max(0.001, visibility);
+}
+
 function hashKey(floor, bx, by) {
   return `${floor}:${bx}:${by}`;
 }
@@ -144,7 +155,7 @@ export function buildAgentSpatialHash(
 
   for (let index = 0; index < (agents?.length || 0); index++) {
     const agent = agents[index];
-    if (!agent || agent.dead || agent.finished || agent.stairTransition) continue;
+    if (!agent || agent.dead || agent.finished || agent.stairTransition?.status === "in_transit") continue;
     const floor = Math.floor(finite(agent.floor, 0));
     const meters = metersForFloor({ cellSizeMeters, cellSizeMetersForFloor }, floor);
     const xM = Number.isFinite(agent.xM) ? agent.xM : finite(agent.x) * meters;
@@ -366,12 +377,12 @@ function normalizeDirection(direction) {
 
 function positionIsWalkable(agent, xM, yM, context) {
   const meters = metersForFloor(context, agent.floor);
-  const cx = Math.round(xM / meters);
-  const cy = Math.round(yM / meters);
   const predicate = typeof context.isPositionAllowed === "function"
     ? context.isPositionAllowed
     : context.isWalkable;
-  return predicate(Math.floor(finite(agent.floor, 0)), cx, cy);
+  const floor = Math.floor(finite(agent.floor, 0));
+  return canWalkSegment(agent.xM / meters, agent.yM / meters, xM / meters, yM / meters,
+    (x, y) => predicate(floor, x, y, agent));
 }
 
 export function createPedestrianDynamicsWorkspace(capacity = 0) {
@@ -472,6 +483,7 @@ export function stepPedestrianDynamics(
       a.dead = !!source.dead;
       a.finished = !!source.finished;
       a.stairTransition = source.stairTransition || null;
+      a._routeRiskAllowance = source._routeRiskAllowance;
     }
 
     const hash = buildAgentSpatialHash(active, {

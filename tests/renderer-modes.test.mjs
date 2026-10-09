@@ -109,6 +109,7 @@ test("renderer draws layers, FDS points and stair transfer from frozen shared st
     assert.equal(renderer.setSmokeVisualizationMode(mode), mode);
     const stats = renderer.renderOnce(1000);
     assert.equal(stats.smokeVisualizationMode, mode);
+    assert.equal(stats.smokeDisplayMode, 'physical', 'unconfigured 3D uses physical smoke opacity');
     assert.equal(stats.smokeSamples, 1);
     assert.equal(stats.fdsSamples, 1);
     assert.equal(stats.stairSmokeTransfers, 1);

@@ -67,3 +67,18 @@ test("potential field can reject forward moves that approach fire", () => {
   assert.equal(potential[0][0][1], Infinity);
   assert.equal(potential[0][0][0], Infinity);
 });
+
+test("mixed floor route distances use physical length and a shared stair cost", () => {
+  const floorStates = [0.5, 1].map(cellSizeMeters => ({ cellSizeMeters,
+    grid: [[cell(), cell(), { ...cell(), stair: true }]] }));
+  const field = computePotentialFieldFromSeedsModule([{ floor: 0, cx: 0, cy: 0 }], {
+    grid: floorStates[0].grid, floorStates, floorCount: 2, gridW: 3, gridH: 1, currentFloor: 1,
+    isAgentTraversableCell: (floor, x, y) => !!floorStates[floor]?.grid?.[y]?.[x]?.walkable,
+    getLinkedStairDestinations: floor => [{ floor: 1 - floor, cx: 2, cy: 0, travelCostSec: 2 }],
+    horizontalCost: floor => floorStates[floor].cellSizeMeters / 0.5,
+    stairCost: () => 4.8
+  });
+  assert.equal(field[0][0][2], 2);
+  assert.equal(field[1][0][2], 6.8);
+  assert.equal(field[1][0][0], 10.8);
+});

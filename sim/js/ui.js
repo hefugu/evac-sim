@@ -40,6 +40,8 @@ export function getUIRefs() {
     smokeHeatOfCombustionInput: byId("smokeHeatOfCombustion"),
     smokeExitVentInput: byId("smokeExitVent"),
     fireAreaInput: byId("fireAreaM2"),
+    fireGrowthInput: byId("fireGrowthRate"),
+    fireMaxHrrInput: byId("fireMaxHrrKw"),
     mechanicalVentInput: byId("mechanicalVentilationM3Sec"),
     maxObservationTimeInput: byId("maxObservationTimeSec"),
     stairTypeInput: byId("stairType"),

@@ -1,3 +1,4 @@
+import { canWalkSegment } from "./grid-movement.js";
 import { buildAnalysisOverlay } from '../visualization/analysis-overlay.js';
 import { getInspectionPanel } from '../visualization/inspection-panel.js';
 import { parseFdsRiskCsv, eyeHeightFdsFrame } from "./fds-csv.js";
@@ -10,7 +11,7 @@ import {
   isFireAvoidanceBlocked,
   buildNearestFireDistanceFields,
   fireDistanceAt,
-  moveApproachesFire,
+  extendPotentialIntoFireAvoidanceZone,
   chooseFireSafeExitField,
   routeChoiceForExit
 } from "./routing.js";
@@ -33,7 +34,9 @@ import {
 import {
   stepFire3D,
   applyFire3DResultToLegacyFloors,
-  stepLegacyFireSpreadInPlace
+  stepLegacyFireSpreadInPlace,
+  FIRE_GROWTH_RATES,
+  tSquaredFireHrrKw
 } from "./fire3d.js";
 import {
   clearLegacySmokePhysicsCell,
@@ -63,7 +66,8 @@ import {
   FDS_EVAC_PERSON_TYPES,
   sampleFdsEvacPerson,
   createPedestrianDynamicsWorkspace,
-  stepPedestrianDynamics
+  stepPedestrianDynamics,
+  extinctionFromVisibilityMeters
 } from "./pedestrian-dynamics.js";
 import { buildWallSpatialIndex } from "./wall-index.js";
 import { normalizeResponseOptions, samplePreMovement, departureState, selectVisibleGuide } from "./agent-behavior.js";
@@ -244,6 +248,7 @@ export function initSimulation() {
   let multiCombinedPotential = null; // [floor][y][x]
   let stairTrafficState = createStairTrafficState([]);
   let stairCongestion = [];
+  let routeStairCosts = new Map();
   let verticalSmokeTransfers = [];
 
   let exits = state.exits = [];         // {cx,cy}
@@ -495,8 +500,6 @@ export function initSimulation() {
   const FDS_ROUTE_CO_WEIGHT = 0.035;
   const FDS_ROUTE_VISIBILITY_WEIGHT = 18.0;
   const FDS_ROUTE_TEMPERATURE_WEIGHT = 0.4;
-  const T2_FIRE_ALPHA = 0.0469; // medium t-squared fire growth, kW/s^2
-  const T2_FIRE_MAX_HRR_KW = 3000;
   const STAY_PENALTY = 0.2;
   const UPHILL_PENALTY_WEIGHT = 4.2;
   const BACKTRACK_PENALTY = 1.15;
@@ -509,7 +512,6 @@ export function initSimulation() {
   const MIN_SPEED_FACTOR = 0.12;
   const VISIBILITY_SMOKE_COEF = 0.33;
   const MIN_VISIBILITY = 0.1;
-  const VISIBILITY_NOISE = 0.9;
   const LOW_VISIBILITY_THRESHOLD = 0.35;
   const FIRE_LETHAL_RADIUS = 1.1;
   const FIRE_DANGER_RADIUS = 3.0;
@@ -588,6 +590,7 @@ export function initSimulation() {
     state.spatial.cellSizeMeters = Math.max(0.05, parseNum(cellSizeMetersInput, state.spatial.cellSizeMeters || 0.5));
     state.hazards.fds = importedFdsRisk;
     state.hazards.smokeModelOptions = currentSmokeModelOptions();
+    state.hazards.fireModelOptions = currentFireModelOptions();
     state.render.revision = (state.render.revision || 0) + 1;
 
     const liveMetrics = summarizeAgentMetrics(agents);
@@ -1044,7 +1047,9 @@ export function initSimulation() {
     if (!exitsOnFloor.length) return false;
     const halfExtent = exitCaptureHalfExtentCells(agent, floor);
     return exitsOnFloor.some(exit =>
-      pointInsideExpandedExitCell(agent.x, agent.y, exit, halfExtent)
+      pointInsideExpandedExitCell(agent.x, agent.y, exit, halfExtent) &&
+      canWalkSegment(agent.x, agent.y, exit.cx, exit.cy,
+        (x, y) => isAgentTraversableCell(floor, x, y))
     );
   }
 
@@ -1055,7 +1060,8 @@ export function initSimulation() {
     return exitsOnFloor.some(exit =>
       segmentIntersectsExpandedExitCell(
         fromX, fromY, toX, toY, exit, halfExtent
-      )
+      ) && canWalkSegment(toX, toY, exit.cx, exit.cy,
+        (x, y) => isAgentTraversableCell(floor, x, y))
     );
   }
 
@@ -1119,7 +1125,7 @@ export function initSimulation() {
   function applyAgentPreset(kind) {
     const preset = kind || "default";
     const presetMap = {
-      default: { child: 15, elderly: 10, panic: 10, leader: 8, teacher: 7, student: 20 },
+      default: { child: 0, elderly: 0, panic: 0, leader: 0, teacher: 0, student: 0 },
       teacher_student: { child: 0, elderly: 5, panic: 5, leader: 8, teacher: 20, student: 50 },
       mixed: { child: 15, elderly: 15, panic: 15, leader: 12, teacher: 8, student: 15 },
       custom: null
@@ -1187,6 +1193,7 @@ export function initSimulation() {
       floorCount,
       currentFloor,
       smokeModel: currentSmokeModelOptions(),
+      fireModel: currentFireModelOptions(),
       tenabilityOptions: resolveTenabilityOptions(state.hazards.tenabilityOptions),
       numAgents: parseNum(numAgentsInput, 80),
       speed: parseNum(speedInput, 1.2),
@@ -1211,6 +1218,14 @@ export function initSimulation() {
 
   function restoreSettingsSnapshot(snap) {
     if (!snap) return;
+    if (snap.fireModel) {
+      const growth = Object.keys(FIRE_GROWTH_RATES).find(key =>
+        Math.abs(FIRE_GROWTH_RATES[key] - snap.fireModel.alphaKwPerSec2) < 1e-8);
+      if (ui.fireGrowthInput) ui.fireGrowthInput.value = growth || "medium";
+      if (ui.fireMaxHrrInput && Number.isFinite(snap.fireModel.maxHrrKw)) {
+        ui.fireMaxHrrInput.value = Math.max(1, snap.fireModel.maxHrrKw);
+      }
+    }
     const response = normalizeResponseOptions(snap.responseTime);
     ui.detectionTimeInput.value = response.detectionSec;
     ui.reactionMinInput.value = response.minSec;
@@ -1593,8 +1608,14 @@ export function initSimulation() {
   }
 
   function t2FireHrrKw(timeSec) {
-    const t = Math.max(0, Number(timeSec) || 0);
-    return Math.min(T2_FIRE_MAX_HRR_KW, T2_FIRE_ALPHA * t * t);
+    return tSquaredFireHrrKw(timeSec, currentFireModelOptions());
+  }
+
+  function currentFireModelOptions() {
+    return {
+      alphaKwPerSec2: FIRE_GROWTH_RATES[ui.fireGrowthInput?.value] ?? FIRE_GROWTH_RATES.medium,
+      maxHrrKw: Math.max(1, parseNum(ui.fireMaxHrrInput, 3000))
+    };
   }
 
   function currentSmokeModelOptions(timeSec = simTime) {
@@ -2151,7 +2172,7 @@ export function initSimulation() {
 
   // ==== Potential Field Calculation ====
 
-  function rebuildPotentialCache() {
+  function rebuildPotentialCache(routeRisk = null) {
     allExitPoints = collectAllExits();
     if (!grid || !floorStates.length || allExitPoints.length === 0) {
       potentialByExit = [];
@@ -2166,10 +2187,26 @@ export function initSimulation() {
       return false;
     }
 
+    const routeWalkable = (floor, cx, cy) => isAgentTraversableCell(floor, cx, cy) &&
+      !routeRisk?.(floor, cx, cy).blocked;
+    const traversalCost = (floor, cx, cy) => routeRisk?.(floor, cx, cy).penalty || 0;
+    // Reference costs are 0.5 m cells on every floor. This keeps stair seconds
+    // and horizontal lengths comparable even when floor map scales differ.
+    const referenceCellMeters = 0.5;
+    const horizontalCost = floor => cellMetersForFloor(floor) / referenceCellMeters;
+    const cellsPerSecond = Math.max(0.1, parseNum(speedInput, 1.2)) / referenceCellMeters;
+    routeStairCosts = new Map(stairLinks.map(raw => {
+      const link = normalizeStairLink(raw);
+      const traffic = stairTrafficState.byLink[link.id];
+      const waiting = (traffic?.queue.length || 0) + (traffic?.inTransit.length || 0);
+      return [link.id, link.travelCostSec * cellsPerSecond * (1 + waiting / link.congestionCapacity)];
+    }));
+    const stairCost = dst => routeStairCosts.get(dst.linkId) ??
+      (Number(dst.travelCostSec) || 8) * cellsPerSecond;
     multiPotentialByExit = allExitPoints.map(ex =>
       computePotentialFieldFromSeedsModule(
         [{ floor: ex.floor, cx: ex.cx, cy: ex.cy }],
-        { grid, floorStates, floorCount, gridW, gridH, currentFloor, isAgentTraversableCell, getLinkedStairDestinations }
+        { grid, floorStates, floorCount, gridW, gridH, currentFloor, isAgentTraversableCell: routeWalkable, getLinkedStairDestinations, traversalCost, horizontalCost, stairCost }
       )
     );
 
@@ -2183,7 +2220,7 @@ export function initSimulation() {
       )
     );
 
-    // Rebuild the tiny render index only when routing/fire topology changes.
+    // Keep a compact index for rendering while rebuilding the route snapshot.
     // Avoid scanning every grid cell again on every canvas frame.
     fireAvoidanceIndicesByFloor = fireAvoidanceMasks.map(mask => {
       const indices = [];
@@ -2210,7 +2247,7 @@ export function initSimulation() {
     );
 
     const isFireSafeRouteCell = (floor, cx, cy) =>
-      isAgentTraversableCell(floor, cx, cy) &&
+      routeWalkable(floor, cx, cy) &&
       !isFireAvoidanceBlocked(fireAvoidanceMasks, floor, cx, cy, gridW);
 
     multiFireSafePotentialByExit = allExitPoints.map(ex => {
@@ -2221,7 +2258,7 @@ export function initSimulation() {
         );
       }
 
-      return computePotentialFieldFromSeedsModule(
+      const safe = computePotentialFieldFromSeedsModule(
         [{ floor: ex.floor, cx: ex.cx, cy: ex.cy }],
         {
           grid,
@@ -2232,18 +2269,13 @@ export function initSimulation() {
           currentFloor,
           isAgentTraversableCell: isFireSafeRouteCell,
           getLinkedStairDestinations,
-          canTraverseEdge: (fromFloor, fromCx, fromCy, toFloor, toCx, toCy) =>
-            !moveApproachesFire(
-              fireDistanceFields,
-              fromFloor,
-              fromCx,
-              fromCy,
-              toFloor,
-              toCx,
-              toCy,
-              gridW
-            )
+          traversalCost,
+          horizontalCost,
+          stairCost
         }
+      );
+      return extendPotentialIntoFireAvoidanceZone(
+        safe, floorStates, fireAvoidanceMasks, gridW, gridH, routeWalkable
       );
     });
 
@@ -2422,10 +2454,10 @@ export function initSimulation() {
         cy: chosen.cy
       };
       const exitChoice = chooseExitForAgent(seed, exitLoad);
-      if (exitChoice.idx < 0 || !exitChoice.field) continue;
-      const startPot = exitChoice.field?.[chosen.floor]?.[chosen.cy]?.[chosen.cx];
-      if (!isFinite(startPot)) continue;
-      exitLoad[exitChoice.idx] += 1;
+      const startPot = exitChoice.field?.[chosen.floor]?.[chosen.cy]?.[chosen.cx] ?? Infinity;
+      // Keep unreachable people in the observation/CSV instead of silently
+      // shrinking the requested population and reporting false completion.
+      if (exitChoice.idx >= 0) exitLoad[exitChoice.idx] += 1;
 
       agents.push({
         id: i,
@@ -2493,7 +2525,7 @@ export function initSimulation() {
       return abortSpawn("エージェント生成に失敗しました。配置条件を確認してください。");
     }
 
-    const startRule = startRuleInput?.value || "far_first";
+    const startRule = startRuleInput?.value || "simultaneous";
     if (startRule === "far_first") {
       // Evacuation priority: farther agents start earlier (staggered departure).
       agents.sort((a, b) => (b.potential0 - a.potential0));
@@ -2894,6 +2926,7 @@ export function initSimulation() {
         floorStates,
         fireDt,
         {
+          ...currentFireModelOptions(),
           timeSec: simTime,
           floorHeightMeters: state.spatial.floorHeightMeters || 3.5,
           stairLinks,
@@ -2918,9 +2951,6 @@ export function initSimulation() {
     const dirs8 = [
       {dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1},
       {dx:1,dy:1},{dx:-1,dy:1},{dx:1,dy:-1},{dx:-1,dy:-1}
-    ];
-    const dirs4 = [
-      {dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1}
     ];
     const inBounds = (x, y) => x >= 0 && y >= 0 && x < gridW && y < gridH;
     const floorInBounds = f => f >= 0 && f < floorCount;
@@ -2969,15 +2999,6 @@ export function initSimulation() {
     }
 
     const agentStartedAt = performance.now();
-    const stairStep = stepStairTraffic(stairTrafficState, stairLinks, agents, dt);
-    stairTrafficState = stairStep.trafficState;
-    stairCongestion = stairStep.congestion;
-    stairStep.agents.forEach((nextAgent, index) => {
-      const current = agents[index];
-      if (!current || current.id !== nextAgent.id) return;
-      Object.assign(current, nextAgent);
-    });
-
     // Hazards are frozen for the remainder of this 0.1 s step. Cache repeated
     // cell lookups because every agent evaluates several neighboring cells.
     const smokeMetricsCache = new Map();
@@ -3046,7 +3067,7 @@ export function initSimulation() {
         source: "none"
       };
       const fire = fireRiskAt(floor, cx, cy);
-      const hrrScale = Math.min(1, t2FireHrrKw(simTime) / Math.max(1, T2_FIRE_MAX_HRR_KW));
+      const hrrScale = Math.min(1, t2FireHrrKw(simTime) / currentFireModelOptions().maxHrrKw);
       const heatFluxKwM2 = Math.max(
         fire.heatFluxKwM2 || 0,
         fire.heat * 8.0 * (0.35 + 0.65 * hrrScale)
@@ -3123,12 +3144,25 @@ export function initSimulation() {
         Math.max(0, 1 - visibilityFactor) * FDS_ROUTE_VISIBILITY_WEIGHT +
         (hard ? HIGH_SMOKE_BLOCK_SCORE : 0);
 
-      return { blocked: false, penalty, visibilityFactor, risk: er };
+      return { blocked: false, hard, penalty, visibilityFactor, risk: er };
     }
+
+    const stairStep = stepStairTraffic(stairTrafficState, stairLinks, agents, dt, {
+      maxOccupancyPerCell: MAX_OCCUPANCY_PER_CELL,
+      canArrive: ep => isAgentTraversableCell(ep.floorIndex, ep.cx, ep.cy) &&
+        !routeRiskAt(ep.floorIndex, ep.cx, ep.cy).blocked
+    });
+    stairTrafficState = stairStep.trafficState;
+    stairCongestion = stairStep.congestion;
+    stairStep.agents.forEach((nextAgent, index) => {
+      const current = agents[index];
+      if (!current || current.id !== nextAgent.id) return;
+      Object.assign(current, nextAgent);
+    });
 
     const occupancyDynamicByFloor = resetOccupancyBuffers();
     agents.forEach(a => {
-      if (a.finished || a.dead) return;
+      if (a.finished || a.dead || a.stairTransition?.status === "in_transit") return;
       const f = clamp(Math.floor(a.floor ?? 0), 0, floorCount - 1);
       const cx = Math.round(a.x);
       const cy = Math.round(a.y);
@@ -3147,6 +3181,7 @@ export function initSimulation() {
     });
 
     if (simTime >= nextRouteReplanAt) {
+      rebuildPotentialCache(routeRiskAt);
       agents.forEach(a => {
         if (a.dead || a.finished || a.fallen) return;
         const f = clamp(Math.floor(a.floor ?? 0), 0, floorCount - 1);
@@ -3196,7 +3231,8 @@ export function initSimulation() {
           Number.isFinite(currentChoice.score);
         const exitCommitted =
           currentExitReachable &&
-          currentExitDistanceMeters <= EXIT_COMMIT_RADIUS_METERS;
+          currentExitDistanceMeters <= EXIT_COMMIT_RADIUS_METERS &&
+          currentChoice.score <= choice.score + switchMargin;
         const shouldSwitch =
           (choice.idx >= 0) &&
           (choice.idx !== a.targetExitIndex) &&
@@ -3210,6 +3246,11 @@ export function initSimulation() {
             )
           );
 
+        if (!shouldSwitch) {
+          // Even when exit hysteresis keeps the target, never retain an old field.
+          a.potentialField = currentChoice.field;
+          a.routeUsesFireFallback = !!currentChoice.usesFireFallback;
+        }
         if (choice.idx === a.targetExitIndex && choice.field) {
           // Refresh the field after fire spread even when the chosen exit stays the same.
           a.potentialField = choice.field;
@@ -3353,8 +3394,7 @@ export function initSimulation() {
             const same = (ncx === cx && ncy === cy);
             if (
               inBounds(ncx, ncy) &&
-              !floorStates[floor].grid[ncy][ncx].fire &&
-              (same || occupancyAt(occupancyDynamicByFloor, floor, ncx, ncy) < MAX_OCCUPANCY_PER_CELL)
+              canWalkSegment(a.x, a.y, nxp, nyp, (x, y) => isAgentTraversableCell(floor, x, y))
             ) {
               a.x = nxp;
               a.y = nyp;
@@ -3384,14 +3424,8 @@ export function initSimulation() {
 
       const potentialField = a.potentialField || multiCombinedPotential;
       if (!potentialField) return;
-      const curPot = potentialField?.[floor]?.[cy]?.[cx];
-      if (!isFinite(curPot)) {
-        // Unreachable is not the same as evacuated. Keep the agent active so
-        // replanning / hazard escape can recover instead of falsely finishing.
-        a.stuckTime = (a.stuckTime || 0) + dt;
-        return;
-      }
-      if (isInsideExitCaptureRegion(a, floor) || curPot < 0.01) {
+      let curPot = potentialField?.[floor]?.[cy]?.[cx];
+      if (isInsideExitCaptureRegion(a, floor) && isAgentTraversableCell(floor, cx, cy)) {
         a.finished = true;
         a.finishTime = simTime;
         a.behaviorState = "evacuated";
@@ -3402,6 +3436,29 @@ export function initSimulation() {
         return;
       }
 
+      if (!Number.isFinite(curPot)) {
+        // A hazard may block the cell a person already occupies. The route
+        // graph must still forbid entry into it, but let its occupant leave
+        // toward a legal neighbour with a finite exit route.
+        const escapeDirections = dirs8;
+        let escapeCost = Infinity;
+        for (const d of escapeDirections) {
+          const nx = cx + d.dx, ny = cy + d.dy;
+          if (!canWalkSegment(cx, cy, nx, ny,
+            (x, y) => isAgentTraversableCell(floor, x, y))) continue;
+          const risk = routeRiskAt(floor, nx, ny);
+          const remaining = potentialField?.[floor]?.[ny]?.[nx];
+          if (risk.blocked || !Number.isFinite(remaining)) continue;
+          escapeCost = Math.min(escapeCost,
+            remaining + Math.hypot(d.dx, d.dy) * cellMetersForFloor(floor) / 0.5 * (1 + risk.penalty));
+        }
+        if (!Number.isFinite(escapeCost)) {
+          a.stuckTime = (a.stuckTime || 0) + dt;
+          return;
+        }
+        curPot = escapeCost;
+        a.routeUsesFireFallback = true;
+      }
       const localSmoke = smokeAt(floor, cx, cy);
       const localFire = fireRiskAt(floor, cx, cy);
       a.visibility = Math.max(MIN_VISIBILITY, 1 - localSmoke * VISIBILITY_SMOKE_COEF);
@@ -3427,7 +3484,7 @@ export function initSimulation() {
       }
 
       let best = { dx: 0, dy: 0, nx: cx, ny: cy, nf: floor, score: -Infinity, linkId: null };
-      const dirPool = a.visibility < LOW_VISIBILITY_THRESHOLD ? dirs4 : dirs8;
+      const dirPool = dirs8;
       const candidates = dirPool.map(d => ({ ...d, nf: floor })).concat([{ dx: 0, dy: 0, nf: floor }]);
       const candidateKeys = new Set(
         candidates.map(c => stairEndpointKey(c.nf ?? floor, cx + (c.dx ?? 0), cy + (c.dy ?? 0)))
@@ -3470,8 +3527,8 @@ export function initSimulation() {
         }
       }
       if (a.behaviorState === "seek_clear_air" || a.behaviorState === "stuck_escape") {
-        const clearAir = chooseClearAirStep(a, floorStates, { allowDiagonal: a.visibility >= LOW_VISIBILITY_THRESHOLD });
-        if (clearAir && clearAir.improvement >= 0) {
+        const clearAir = chooseClearAirStep(a, floorStates, { allowDiagonal: true });
+        if (clearAir && clearAir.improvement > 0) {
           pushCandidate({
             dx: clearAir.dx,
             dy: clearAir.dy,
@@ -3493,7 +3550,12 @@ export function initSimulation() {
         const ny = Number.isFinite(c.ny) ? c.ny : (cy + (c.dy ?? 0));
         const nf = c.nf ?? floor;
         if (!isAgentTraversableCell(nf, nx, ny)) continue;
+        if (nf === floor && !canWalkSegment(cx, cy, nx, ny,
+          (x, y) => isAgentTraversableCell(floor, x, y))) continue;
 
+        if (!a.routeUsesFireFallback &&
+            !isFireAvoidanceBlocked(fireAvoidanceMasks, floor, cx, cy, gridW) &&
+            isFireAvoidanceBlocked(fireAvoidanceMasks, nf, nx, ny, gridW)) continue;
         const routeRisk = routeRiskAt(nf, nx, ny);
         if (routeRisk.blocked) continue;
         const nextPot = potentialField?.[nf]?.[ny]?.[nx];
@@ -3515,16 +3577,6 @@ export function initSimulation() {
           ny,
           gridW
         );
-        const fireApproach = moveApproachesFire(
-          fireDistanceFields,
-          floor,
-          cx,
-          cy,
-          nf,
-          nx,
-          ny,
-          gridW
-        );
         const fireEscapeGain =
           nf === floor &&
           Number.isFinite(currentFireDistance) &&
@@ -3539,31 +3591,21 @@ export function initSimulation() {
           c, nx, ny, nf, smokeTarget, heatPenalty,
           fireHeat: fireTarget.heat,
           fireAvoid: fireTarget.heat > 1e-9,
-          fireApproach,
           fireEscapeGain,
           routeRiskPenalty: routeRisk.penalty,
           routeVisibilityFactor: routeRisk.visibilityFactor,
+          edgeCost: nf !== floor
+            ? (routeStairCosts.get(c.linkId) ?? 1) + routeRisk.penalty
+            : Math.hypot(nx - cx, ny - cy) * cellMetersForFloor(floor) / 0.5 * (1 + routeRisk.penalty),
           potGain, uphill, isBacktrack
         });
       }
 
-      // Never step closer to an active flame. If every physical move would
-      // reduce nearest-fire distance, stay put instead of walking into danger.
-      const isStayCandidate = e => e.nf === floor && e.nx === cx && e.ny === cy;
-      const nonApproach = evaluated.filter(e => !e.fireApproach);
-      const safeMovingOptions = nonApproach.filter(e => !e.fireAvoid && !isStayCandidate(e));
-      let preferredEvaluated;
-      if (safeMovingOptions.length) {
-        preferredEvaluated = nonApproach.filter(e => !e.fireAvoid);
-      } else {
-        const nonApproachMoves = nonApproach.filter(e => !isStayCandidate(e));
-        preferredEvaluated = nonApproachMoves.length
-          ? nonApproach
-          : nonApproach.filter(isStayCandidate);
-      }
-      if (!preferredEvaluated.length) {
-        preferredEvaluated = evaluated.filter(isStayCandidate);
-      }
+      // The exit field already includes hazards and wall topology. Prefer a
+      // descending step whenever one is available; local crowd/heading terms
+      // must not turn an open route into a permanent local minimum.
+      const descending = evaluated.filter(e => e.potGain > 1e-6);
+      const preferredEvaluated = descending.length ? descending : evaluated;
 
       const stuckTime = a.stuckTime || 0;
       const strictBacktrack = stuckTime < STUCK_BACKTRACK_RELEASE_SEC;
@@ -3583,11 +3625,16 @@ export function initSimulation() {
           c, nx, ny, nf, smokeTarget, heatPenalty,
           fireHeat, fireEscapeGain, routeRiskPenalty, routeVisibilityFactor, potGain, uphill, isBacktrack
         } = e;
-        let score = potGain * POTENTIAL_GAIN_WEIGHT;
+        // Bellman residual compares complete routes, including the cost of
+        // this edge. Raw potential gain would over-reward an expensive stair.
+        let score = (potGain - e.edgeCost) * POTENTIAL_GAIN_WEIGHT;
         score -= uphill * UPHILL_PENALTY_WEIGHT;
         score -= smokeTarget * SMOKE_AVOID_WEIGHT;
         score -= fireHeat * FIRE_AVOID_WEIGHT;
-        score += Math.max(0, fireEscapeGain) * 4.0;
+        // Distance from a fire is only relevant inside its avoidance buffer.
+        if (isFireAvoidanceBlocked(fireAvoidanceMasks, floor, cx, cy, gridW)) {
+          score += Math.max(0, fireEscapeGain) * 4.0;
+        }
         const hazardAvoidance = a.type === "teacher" ? 1.35 : (a.type === "panic" ? 0.72 : 1);
         score -= routeRiskPenalty * hazardAvoidance;
         if (routeVisibilityFactor < 0.35) {
@@ -3620,7 +3667,6 @@ export function initSimulation() {
         }
         if (c.dx === 0 && c.dy === 0 && nf === floor) score -= STAY_PENALTY;
         if (nf !== floor) score += 1.2;
-        score += (Math.random() - 0.5) * VISIBILITY_NOISE * (1 - a.visibility);
         if (a.panicFactor > 0) {
           score += (Math.random() - 0.5) * (1.8 * a.panicFactor);
         }
@@ -3680,8 +3726,14 @@ export function initSimulation() {
         // Within the final approach zone, head directly to the committed exit.
         // This prevents teacher-following, panic noise, heading inertia or a
         // discrete next-cell choice from steering a pedestrian around an exit.
-        const targetX = terminalExitApproach ? committedExit.cx : best.nx;
-        const targetY = terminalExitApproach ? committedExit.cy : best.ny;
+        let targetX = terminalExitApproach ? committedExit.cx : best.nx;
+        let targetY = terminalExitApproach ? committedExit.cy : best.ny;
+        if (!canWalkSegment(a.x, a.y, targetX, targetY,
+          (x, y) => isAgentTraversableCell(floor, x, y))) {
+          // Recenter in the corridor before turning around its wall corner.
+          targetX = cx;
+          targetY = cy;
+        }
         const dx = targetX - a.x;
         const dy = targetY - a.y;
         const mag = Math.hypot(dx, dy);
@@ -3689,6 +3741,10 @@ export function initSimulation() {
           ? { x: dx / mag, y: dy / mag }
           : { x: 0, y: 0 };
         a._terminalExitApproach = !!terminalExitApproach;
+        a._routeRiskAllowance = Math.max(
+          routeRiskAt(floor, cx, cy).penalty,
+          routeRiskAt(floor, best.nx, best.ny).penalty
+        );
         a._socialMove = true;
         socialMovementStart.set(a.id, {
           x: prevX,
@@ -3709,14 +3765,28 @@ export function initSimulation() {
         const cell = floorStates[floor]?.grid?.[cy]?.[cx];
         return !!(cell && cell.walkable);
       },
-      isPositionAllowed: (floor, cx, cy) => isAgentTraversableCell(floor, cx, cy),
+      isPositionAllowed: (floor, cx, cy, agent) => {
+        if (!isAgentTraversableCell(floor, cx, cy)) return false;
+        const targetRisk = routeRiskAt(floor, cx, cy);
+        if (targetRisk.blocked) {
+          return cx === Math.round(agent.x) && cy === Math.round(agent.y);
+        }
+        // Respect the chosen route's risk budget during continuous integration.
+        // Inertia must not cut through a riskier adjacent cell than the planned
+        // step; a necessary hazardous step and escape from an unsafe origin
+        // remain possible because their risk was included in route selection.
+        return targetRisk.penalty <= (agent._routeRiskAllowance ?? Infinity) + 1e-8;
+      },
       wallIndex: wallSpatialIndex,
       desiredDirectionFor: agent => agent._desiredDirection || { x: 0, y: 0 },
       extinctionAt: agent => {
         const floor = clamp(Math.floor(agent.floor ?? 0), 0, floorCount - 1);
         const cx = Math.round(agent.x);
         const cy = Math.round(agent.y);
-        return smokeMetricsAt(floor, cx, cy)?.extinctionCoefficientM1 || 0;
+        const fallback = smokeMetricsAt(floor, cx, cy)?.extinctionCoefficientM1 || 0;
+        const fds = getFdsRiskAt(floor, cx, cy, simTime);
+        if (Number.isFinite(fds?.opticalDensityM1)) return Math.max(0, fds.opticalDensityM1);
+        return extinctionFromVisibilityMeters(fds?.visibilityM, fallback);
       },
       canMove: agent => !!agent._socialMove,
       workspace: pedestrianWorkspace
@@ -3745,7 +3815,7 @@ export function initSimulation() {
     // is now an observation, not a hard movement constraint.
     occupancyDynamicByFloor.forEach(layer => layer.fill(0));
     agents.forEach(a => {
-      if (!a.dead && !a.finished) {
+      if (!a.dead && !a.finished && a.stairTransition?.status !== "in_transit") {
         const floor = clamp(Math.floor(a.floor ?? 0), 0, floorCount - 1);
         const cx = Math.round(a.x);
         const cy = Math.round(a.y);
@@ -3756,6 +3826,7 @@ export function initSimulation() {
       if (!previous) {
         delete a._desiredDirection;
         delete a._terminalExitApproach;
+        delete a._routeRiskAllowance;
         delete a._socialMove;
         return;
       }
@@ -3818,6 +3889,7 @@ export function initSimulation() {
 
       delete a._desiredDirection;
       delete a._terminalExitApproach;
+      delete a._routeRiskAllowance;
       delete a._socialMove;
     });
 
@@ -4138,6 +4210,7 @@ export function initSimulation() {
       panicEscapeEvents,
       activeFireCount,
       totalFireHrrKw,
+      fireModel: currentFireModelOptions(),
       at: new Date().toISOString()
     };
     state.evaluation = {

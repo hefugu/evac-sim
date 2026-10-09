@@ -10,6 +10,8 @@ import "./routing.test.mjs";
 import "./potential.test.mjs";
 import "./pedestrian-dynamics.test.mjs";
 import "./agent-behavior.test.mjs";
+import "./fire-model.test.mjs";
+import "./navigation.test.mjs";
 import assert from "node:assert/strict";
 
 import {

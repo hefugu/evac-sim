@@ -1,24 +1,21 @@
 #leftPanel {
-  width: 350px;
-  min-width: 350px;
-  padding: 10px 12px;
-  background: #25282c;
+  width: 370px;
+  min-width: 370px;
+  padding: 16px;
+  background: var(--surface);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   overflow-y: auto;
-  padding-bottom: 16px;
   position: relative;
   z-index: 2;
 }
-
-#leftPanel::before {
-  content: none;
-}
-
-#mainArea {
-  flex: 1;
-  position: relative;
-  background: #1b1d20;
+.appHeader { padding-bottom: 2px; }
+.appHeader a { display: inline-block; margin-top: 4px; font-size: 12px; }
+#mainArea { flex: 1; min-width: 0; position: relative; background: var(--bg); }
+@media (max-width: 760px) {
+  body { display: block; height: auto; min-height: 100vh; overflow: auto; }
+  #leftPanel { width: 100%; min-width: 0; overflow: visible; border-right: 0; border-bottom: 1px solid var(--border); }
+  #mainArea { height: 65vh; min-height: 420px; }
 }

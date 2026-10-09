@@ -5,6 +5,7 @@ import {
   SOCIAL_FORCE_DEFAULTS,
   sampleFdsEvacPerson,
   smokeAdjustedDesiredSpeed,
+  extinctionFromVisibilityMeters,
   buildAgentSpatialHash,
   queryNearbyAgentIndices,
   potentialDesiredDirection,
@@ -17,6 +18,15 @@ import {
 
 const nearly = (actual, expected, tolerance = 1e-9) =>
   assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} != ${expected}`);
+
+test("visibility-only smoke data maps to extinction without treating zero or missing data as clear air", () => {
+  assert.equal(extinctionFromVisibilityMeters(3), 1);
+  assert.equal(extinctionFromVisibilityMeters(null, 0.2), 0.2);
+  assert.equal(extinctionFromVisibilityMeters("", 0.2), 0.2);
+  assert.equal(extinctionFromVisibilityMeters(-1, 0.2), 0.2);
+  assert.equal(extinctionFromVisibilityMeters(NaN, 0.2), 0.2);
+  assert.equal(smokeAdjustedDesiredSpeed(1.25, extinctionFromVisibilityMeters(0)), 0.125);
+});
 
 for (const indexed of [false, true]) {
   test(`mixed floor scales match independent physics, indexed walls=${indexed}`, () => {
@@ -286,4 +296,34 @@ test("1000-agent spatial hash keeps local candidate sets bounded", () => {
   const average = totalCandidates / agents.length;
   assert.ok(average < 20, `average local candidates should stay small, got ${average}`);
   assert.ok(maxCandidates < 30, `max local candidates should stay bounded, got ${maxCandidates}`);
+});
+
+test("a fast continuous walker cannot skip an intermediate wall or cut its corner", () => {
+  const run = (direction, open) => {
+    const agents = [{ id: 1, floor: 0, x: 0, y: 0, radiusM: 0.1, massKg: 80,
+      baseDesiredSpeedMps: 4, relaxationTimeS: 1, vxMps: direction.x * 4, vyMps: direction.y * 4 }];
+    stepPedestrianDynamics(agents, 0.1, { cellSizeMeters: 0.05, isWalkable: (_f,x,y) => open(x,y),
+      desiredDirectionFor: () => direction, extinctionAt: () => 0, random: () => 0.5 },
+    { integrationMaxStepS: 0.1, wallA_N: 0, contactK_KgM2: 0, randomAccelerationStdMps2: 0 });
+    return agents[0];
+  };
+  const straight = run({ x: 1, y: 0 }, (x,y) => y === 0 && x >= 0 && x !== 1);
+  assert.equal(straight.x, 0);
+  const corner = run({ x: Math.SQRT1_2, y: Math.SQRT1_2 }, (x,y) => x >= 0 && y >= 0 && !(x === 1 && y === 0));
+  assert.ok(corner.x === 0 || corner.y === 0);
+});
+
+test("queued stair occupants repel approaching pedestrians while travelers leave the floor", () => {
+  const agents = [
+    { id: 0, floor: 0, x: 0, y: 0, radiusM: 0.255, massKg: 80,
+      baseDesiredSpeedMps: 1.25, relaxationTimeS: 1, vxMps: 0, vyMps: 0 },
+    { id: 1, floor: 0, x: 0.5, y: 0, stairTransition: { status: "queued" } },
+    { id: 2, floor: 0, x: -0.5, y: 0, stairTransition: { status: "in_transit" } }
+  ];
+  stepPedestrianDynamics(agents, 0.1, { cellSizeMeters: 0.5, isWalkable: () => true,
+    desiredDirectionFor: () => ({ x: 0, y: 0 }), extinctionAt: () => 0, random: () => 0.5 },
+  { randomAccelerationStdMps2: 0 });
+  assert.ok(agents[0].x < 0, "the entrance queue is a physical crowd obstacle");
+  assert.equal(agents[1].x, 0.5);
+  assert.equal(agents[2].x, -0.5);
 });

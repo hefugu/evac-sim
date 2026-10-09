@@ -3,13 +3,13 @@ import assert from "node:assert/strict";
 
 import {
   buildFireAvoidanceMasks,
+  buildNearestFireDistanceFields,
+  moveApproachesFire,
+  fireDistanceAt,
   isFireAvoidanceBlocked,
   extendPotentialIntoFireAvoidanceZone,
   chooseFireSafeExitField,
-  routeChoiceForExit,
-  buildNearestFireDistanceFields,
-  fireDistanceAt,
-  moveApproachesFire
+  routeChoiceForExit
 } from "../sim/js/simulation/routing.js";
 
 test("fire avoidance converts a metre radius separately on each floor", () => {

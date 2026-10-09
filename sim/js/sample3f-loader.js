@@ -29,7 +29,6 @@ export function setupSample3FLoader() {
   const mapFileInput = document.getElementById("mapFile");
   const thrRange = document.getElementById("thrRange");
   const cellSizeMetersInput = document.getElementById("cellSizeMeters");
-  const agentPresetInput = document.getElementById("agentPreset");
   const floorCountInput = document.getElementById("floorCount");
   const currentFloorSelect = document.getElementById("currentFloor");
   const btnApplyFloors = document.getElementById("btnApplyFloors");
@@ -49,7 +48,7 @@ export function setupSample3FLoader() {
 
   const hint = document.createElement("div");
   hint.className = "hint";
-  hint.textContent = "全マップ共通: 白=通路、黒=壁、緑=階段、黄=出口として自動抽出します。この3Fサンプルには黄色出口がないため、出口・開始位置・火元は読込後に配置してください。";
+  hint.textContent = "3階の図面のみを読み込みます。1・2階の図面と階段リンク、出口・開始位置は別途設定してください。";
 
   mapBlock.appendChild(row);
   mapBlock.appendChild(hint);
@@ -61,10 +60,6 @@ export function setupSample3FLoader() {
     try {
       if (thrRange) thrRange.value = "200";
       if (cellSizeMetersInput) cellSizeMetersInput.value = String(SCITECH_3F_PROFILE.cellSizeMeters);
-      if (agentPresetInput) {
-        agentPresetInput.value = "teacher_student";
-        agentPresetInput.dispatchEvent(new Event("change", { bubbles: true }));
-      }
       if (floorCountInput) floorCountInput.value = "3";
       btnApplyFloors?.click();
       if (currentFloorSelect) {

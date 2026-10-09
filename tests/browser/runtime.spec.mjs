@@ -646,9 +646,23 @@ test("mixed floor physics is independent of the displayed floor", async ({ page 
       let seed = 13579;
       Math.random = () => ((seed = (1664525 * seed + 1013904223) >>> 0) / 4294967296);
     });
+    // Freeze wall time while inspecting the clock, and compare the same
+    // number of production physics ticks on both displayed floors.
+    await page.clock.pauseAt(await page.evaluate(() => Date.now()));
     await page.locator("#btnStart").click();
-    await page.clock.runFor(2_000);
-    await page.locator("#btnStop").click();
+    await page.clock.runFor(1_800);
+    let reachedTarget = false;
+    for (let frame = 0; frame < 40; frame++) {
+      reachedTarget = await page.evaluate(async () => {
+        const { state } = await import("/sim/js/state.js");
+        if (state.sim.time < 2 - 1e-9) return false;
+        document.querySelector("#btnStop").click();
+        return true;
+      });
+      if (reachedTarget) break;
+      await page.clock.runFor(16);
+    }
+    expect(reachedTarget).toBe(true);
     return page.evaluate(async () => {
       const { state } = await import("/sim/js/state.js");
       return {
@@ -668,7 +682,7 @@ test("mixed floor physics is independent of the displayed floor", async ({ page 
   const second = await run(1);
   expect(first.floors.map(f => f.scale)).toEqual([0.5, 0.42]);
   expect(new Set(first.agents.map(a => a.floor)).size).toBe(2);
-  expect(first.time).toBeGreaterThan(1);
+  expect(first.time).toBeCloseTo(2, 10);
   expect(second).toEqual(first);
 });
 

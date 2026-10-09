@@ -507,7 +507,7 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
           const px = (x + 0.5) * cellSizePx;
           const py = (y + 0.5) * cellSizePx;
           const alpha = clamp(0.25 + m * 0.45, 0.25, 0.85);
-          drawArrow(ctx, px, py, vx, vy, `rgba(120,230,255,${alpha})`, 0.28);
+          drawArrow(ctx, px, py, vx, vy, `rgba(49,95,143,${alpha})`, 0.28);
         }
       }
     }
@@ -519,15 +519,15 @@ export function createRenderer({ ctx, cvs, cellSizePx, typeMeta, clamp }) {
       const py = (a.y + 0.5) * cellSizePx;
       if (a.dead) ctx.fillStyle = "#1a1a1a";
       else if (a.fallen) ctx.fillStyle = "#8b4a4a";
-      else if (a.helpingId != null) ctx.fillStyle = "#33ccff";
+      else if (a.helpingId != null) ctx.fillStyle = "#3f6b61";
       else if (a.finished) ctx.fillStyle = "#8888ff";
-      else ctx.fillStyle = typeMeta[a.type]?.color || "#ff3366";
+      else ctx.fillStyle = typeMeta[a.type]?.color || "#4f6f8f";
       ctx.globalAlpha = a.dead ? 0.95 : Math.max(0.25, a.visibility ?? 1);
       ctx.beginPath();
       ctx.arc(px, py, cellSizePx * 0.4, 0, Math.PI * 2);
       ctx.fill();
       if (!a.dead && (a.type === "teacher" || a.type === "leader")) {
-        ctx.strokeStyle = "#d2fff2";
+        ctx.strokeStyle = "#2d5048";
         ctx.lineWidth = 0.7;
         ctx.beginPath();
         ctx.arc(px, py, cellSizePx * 0.62, 0, Math.PI * 2);

@@ -64,21 +64,20 @@ const DEFAULT_OPTIONS = Object.freeze({
   maxFps: 30,
   legacyExtinctionPerSmokeDensity: 0.32,
   smokeVisualizationMode: "extinction",
-  // Display-only visibility boost for low but non-zero smoke. The underlying
-  // extinction/layer state remains physical and inspectable.
-  smokeDisplayMode: "analysis",
-  smokeAnalysisGamma: 0.35,
+  // Physical opacity is the default; optional analysis emphasis is display only.
+  smokeDisplayMode: "physical",
+  smokeAnalysisGamma: 0.55,
   fireVisualizationMode: "intensity",
   dataSourceOverlay: "none",
   clickDragThresholdPixels: 5,
   showSmokeLayerBounds: true,
   showStairSmokeTransfer: true,
   fireThreshold: 0.001,
-  background: "#202327",
-  floorColor: "#5a6066",
-  alternateFloorColor: "#50565c",
-  wallColor: "#353a3f",
-  wallEdgeColor: "rgba(135, 143, 151, 0.65)",
+  background: "#edf0f2",
+  floorColor: "#d6dbe0",
+  alternateFloorColor: "#cbd2d8",
+  wallColor: "#777f87",
+  wallEdgeColor: "rgba(88, 97, 107, 0.8)",
   autoResize: true,
   autoStart: false,
   showControlsHint: true
@@ -1556,19 +1555,19 @@ export function createRenderer3D({ canvas, state, options = {} } = {}) {
     const centerX = viewport.width * 0.5;
     const centerY = viewport.height * 0.5;
     context.save();
-    context.fillStyle = "rgba(42,45,49,0.94)";
-    context.strokeStyle = "#666d74";
+    context.fillStyle = "rgba(255,255,255,0.96)";
+    context.strokeStyle = "#b2bdca";
     context.lineWidth = 1.25;
     const boxWidth = Math.min(440, Math.max(210, viewport.width - 48));
     const boxHeight = 112;
     context.fillRect(centerX - boxWidth * 0.5, centerY - boxHeight * 0.5, boxWidth, boxHeight);
     context.strokeRect(centerX - boxWidth * 0.5, centerY - boxHeight * 0.5, boxWidth, boxHeight);
-    context.fillStyle = "#e0e3e6";
+    context.fillStyle = "#243140";
     context.font = "600 16px system-ui, sans-serif";
     context.textAlign = "center";
     context.textBaseline = "middle";
     context.fillText("3D表示用の校舎マップがありません", centerX, centerY - 16);
-    context.fillStyle = "#aab0b6";
+    context.fillStyle = "#586675";
     context.font = "13px system-ui, sans-serif";
     context.fillText("2D画面でマップを読み込むか、3Fサンプルを選択してください。", centerX, centerY + 15);
     context.restore();

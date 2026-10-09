@@ -1,74 +1,16 @@
-.modeButtons,
-.simButtons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 4px;
-}
+ .modeButtons, .simButtons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+button { cursor: pointer; border-radius: 3px; border: 1px solid var(--border-strong); background: var(--panel); color: var(--text-main); padding: 7px 10px; font: inherit; font-size: 12px; line-height: 1.4; box-shadow: none; }
+button:hover { border-color: var(--accent); background: var(--surface-strong); }
+button:disabled { cursor: default; color: var(--text-dim); background: var(--surface); }
+button.modeActive, button.viewActive { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+button.danger { border-color: var(--danger); color: var(--danger); }
+.primaryActions #btnStart { flex: 1 1 100%; min-height: 38px; font-size: 13px; font-weight: 600; background: var(--accent); border-color: var(--accent); color: #fff; }
+.primaryActions #btnStart:hover { background: #254c74; }
+.primaryActions #btnStop, .primaryActions #btnReset, .secondaryActions button { flex: 1 1 calc(50% - 6px); }
+/* Legacy classes remain harmless when older presets or code refer to them. */
+.pulse { animation: none; }
 
-button {
-  cursor: pointer;
-  border-radius: 2px;
-  border: 1px solid var(--border-strong);
-  background: #2b2f34;
-  color: #e1e4e7;
-  padding: 4px 7px;
-  font-size: 11px;
-  letter-spacing: 0;
-  transition: background 0.08s ease, border-color 0.08s ease;
-  position: relative;
-  box-shadow: none;
-}
-
-button::before {
-  content: none;
-}
-
-button:hover {
-  border-color: #747c85;
-  background: #343940;
-}
-
-button.modeActive {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: #dceaf6;
-}
-
-button.danger {
-  border-color: #765252;
-  color: #e0b6b6;
-}
-
-button.danger.modeActive {
-  background: #3b2a2a;
-  border-color: var(--danger);
-  color: #f0cccc;
-}
-
-.pulse {
-  animation: none;
-}
-
-.primaryActions #btnStart {
-  flex: 1 1 100%;
-  min-height: 34px;
-  font-size: 12px;
-  font-weight: 600;
-  background: #30353a;
-  border-color: #68717a;
-  color: #eef0f2;
-}
-
-.primaryActions #btnStart:hover {
-  background: #393f45;
-}
-
-.primaryActions #btnStop,
-.primaryActions #btnReset {
-  flex: 1 1 calc(50% - 4px);
-}
-
-.secondaryActions button {
-  flex: 1 1 calc(50% - 4px);
-}
+.runControls { display: flex; gap: 6px; }
+.runControls.primaryActions #btnStart { flex: none; min-height: 34px; min-width: 78px; }
+.runControls.primaryActions #btnStop, .runControls.primaryActions #btnReset { flex: none; }
+.toolbarDivider { height: 24px; border-left: 1px solid var(--border); margin: 0 3px; }
