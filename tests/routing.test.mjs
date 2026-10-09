@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 
 import {
   buildFireAvoidanceMasks,
+  buildNearestFireDistanceFields,
+  moveApproachesFire,
+  fireDistanceAt,
   isFireAvoidanceBlocked,
   extendPotentialIntoFireAvoidanceZone,
   chooseFireSafeExitField,

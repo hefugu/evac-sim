@@ -8,7 +8,9 @@ export function computePotentialFieldFromSeedsModule(seeds, ctx) {
     currentFloor,
     isAgentTraversableCell,
     getLinkedStairDestinations,
-    canTraverseEdge
+    canTraverseEdge,
+    traversalCost = () => 0,
+    stairCost = dst => Math.max(1, Number(dst.travelCostSec) || 8)
   } = ctx;
   if (!grid || !seeds || seeds.length === 0 || !floorStates.length) return null;
 
@@ -16,13 +18,38 @@ export function computePotentialFieldFromSeedsModule(seeds, ctx) {
     new Array(gridH).fill(null).map(() => new Array(gridW).fill(Infinity))
   );
 
+  // Dijkstra: nonnegative hazard and stair costs need a priority queue.
   const q = [];
+  const push = item => {
+    let i = q.length;
+    q.push(item);
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (q[parent].cost <= item.cost) break;
+      q[i] = q[parent]; i = parent;
+    }
+    q[i] = item;
+  };
+  const pop = () => {
+    const first = q[0], last = q.pop();
+    if (q.length) {
+      let i = 0;
+      while (i * 2 + 1 < q.length) {
+        let child = i * 2 + 1;
+        if (child + 1 < q.length && q[child + 1].cost < q[child].cost) child++;
+        if (q[child].cost >= last.cost) break;
+        q[i] = q[child]; i = child;
+      }
+      q[i] = last;
+    }
+    return first;
+  };
   seeds.forEach(({ floor, cx, cy }) => {
     const f = Number.isFinite(floor) ? floor : currentFloor;
     if (f < 0 || f >= floorCount) return;
     if (!isAgentTraversableCell(f, cx, cy)) return;
     potential[f][cy][cx] = 0;
-    q.push({ floor: f, cx, cy });
+    push({ floor: f, cx, cy, cost: 0 });
   });
   if (q.length === 0) return potential;
 
@@ -33,9 +60,9 @@ export function computePotentialFieldFromSeedsModule(seeds, ctx) {
     { dx: 1, dy: -1, c: 1.414 }, { dx: -1, dy: -1, c: 1.414 }
   ];
 
-  let qi = 0;
-  while (qi < q.length) {
-    const { floor, cx, cy } = q[qi++];
+  while (q.length) {
+    const { floor, cx, cy, cost } = pop();
+    if (cost !== potential[floor][cy][cx]) continue;
     const floorGrid = floorStates[floor]?.grid;
     if (!floorGrid) continue;
     const base = potential[floor][cy][cx];
@@ -56,10 +83,10 @@ export function computePotentialFieldFromSeedsModule(seeds, ctx) {
           !isAgentTraversableCell(floor, cx, cy + d.dy)
         ) continue;
       }
-      const newPot = base + d.c;
+      const newPot = base + d.c * (1 + Math.max(0, traversalCost(floor, cx, cy)));
       if (newPot < potential[floor][ny][nx]) {
         potential[floor][ny][nx] = newPot;
-        q.push({ floor, cx: nx, cy: ny });
+        push({ floor, cx: nx, cy: ny, cost: newPot });
       }
     }
     if (floorGrid[cy][cx].stair) {
@@ -73,10 +100,10 @@ export function computePotentialFieldFromSeedsModule(seeds, ctx) {
           typeof canTraverseEdge === "function" &&
           !canTraverseEdge(dst.floor, dst.cx, dst.cy, floor, cx, cy)
         ) continue;
-        const newPot = base + Math.max(1, Number(dst.travelCostSec) || 8);
+        const newPot = base + Math.max(0.001, stairCost(dst)) + Math.max(0, traversalCost(floor, cx, cy));
         if (newPot < potential[dst.floor][dst.cy][dst.cx]) {
           potential[dst.floor][dst.cy][dst.cx] = newPot;
-          q.push({ floor: dst.floor, cx: dst.cx, cy: dst.cy });
+          push({ floor: dst.floor, cx: dst.cx, cy: dst.cy, cost: newPot });
         }
       }
     }
