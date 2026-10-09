@@ -6,11 +6,20 @@ import {
 import { normalizeStairLink } from "./stairs3d.js";
 import { fdsSampleHeight, isFdsSampleAtHeight } from "./fds-csv.js";
 
+export const FIRE_GROWTH_RATES = Object.freeze({
+  slow: 0.00293,
+  medium: 0.01172,
+  fast: 0.0469,
+  ultrafast: 0.1876
+});
+
 export const DEFAULT_FIRE3D_OPTIONS = Object.freeze({
-  alphaKwPerSec2: 0.0469,
+  alphaKwPerSec2: FIRE_GROWTH_RATES.medium,
   maxHrrKw: 3000,
   initialIntensity: 0.05,
-  spreadRatePerSec: 0.018,
+  // No material-independent spread is physically defensible. Callers must
+  // provide an explicit calibrated/material spread rate to enable ignition.
+  spreadRatePerSec: 0,
   diagonalSpreadFactor: 0.7,
   doorSpreadFactor: 1.15,
   stairSpreadFactor: 1.25,
@@ -147,7 +156,7 @@ function cloneGrid(grid) {
 }
 
 /**
- * Advance growth and probabilistic spread. Supply options.random for repeatable
+ * Advance t-squared growth and optional calibrated probabilistic spread. Supply options.random for repeatable
  * tests. The result contains a fresh floor array and ignition events.
  */
 export function stepFire3D(floorsInput, dtSeconds, options = {}) {

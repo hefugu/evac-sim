@@ -9,6 +9,9 @@ import { accumulateAgentExposure, summarizeExposureMetrics } from "./exposure.js
 export const AGENT3D_TYPES = Object.freeze(["teacher", "student", "panic"]);
 
 export const AGENT_BEHAVIOR_STATES = Object.freeze([
+  "unaware",
+  "pre_movement",
+  "evacuated",
   "normal",
   "follow_teacher",
   "avoid_hazard",

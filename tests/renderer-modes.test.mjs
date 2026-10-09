@@ -109,6 +109,7 @@ test("renderer draws layers, FDS points and stair transfer from frozen shared st
     assert.equal(renderer.setSmokeVisualizationMode(mode), mode);
     const stats = renderer.renderOnce(1000);
     assert.equal(stats.smokeVisualizationMode, mode);
+    assert.equal(stats.smokeDisplayMode, 'physical', 'unconfigured 3D uses physical smoke opacity');
     assert.equal(stats.smokeSamples, 1);
     assert.equal(stats.fdsSamples, 1);
     assert.equal(stats.stairSmokeTransfers, 1);
@@ -116,7 +117,7 @@ test("renderer draws layers, FDS points and stair transfer from frozen shared st
     assert.ok(Math.abs(stats.maxLayerDepthMeters - 0.8) < 1e-12);
   }
   assert.ok(drawing.some(item => item.stroke === "#55e4ff" && item.method === "arc"), "cyan ring for FDS point");
-  assert.ok(drawing.some(item => item.stroke === "#ffbd67" && item.method === "lineTo"), "amber stair flow arrow");
+  assert.ok(drawing.some(item => item.stroke === "#68737d" && item.method === "lineTo"), "stair flow arrow");
   assert.equal(JSON.stringify(state), before);
   renderer.setSmokeLayerBounds(false);
   assert.equal(renderer.setSmokeVisualizationMode("unknown"), "extinction");

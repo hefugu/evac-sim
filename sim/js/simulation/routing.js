@@ -15,11 +15,12 @@ export function buildFireAvoidanceMasks(
 ) {
   const width = Math.max(0, Math.floor(Number(gridWidth) || 0));
   const height = Math.max(0, Math.floor(Number(gridHeight) || 0));
-  const radius = Math.max(0, Number(radiusCells) || 0);
-  const reach = Math.ceil(radius);
   const floors = Array.isArray(floorStates) ? floorStates : [];
 
-  return floors.map(floor => {
+  return floors.map((floor, index) => {
+    const radius = Math.max(0, Number(typeof radiusCells === "function"
+      ? radiusCells(floor, index) : radiusCells) || 0);
+    const reach = Math.ceil(radius);
     const mask = new Uint8Array(width * height);
     const grid = floor?.grid;
     if (!Array.isArray(grid) || width === 0 || height === 0) return mask;

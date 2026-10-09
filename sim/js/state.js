@@ -60,8 +60,8 @@ export const state = {
   viz: {
     hazardDisplay: {...DEFAULT_HAZARD_DISPLAY},
     selectedCell: null,
-    trails: true,
-    flow: true,
+    trails: false,
+    flow: false,
     potential: false,
     potentialViewMode: "combined",
     potentialExitIndex: 1

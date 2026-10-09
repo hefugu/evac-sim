@@ -5,66 +5,123 @@
 }
 
 #viewToolbar {
-  min-height: 38px;
-  padding: 5px 8px;
+  min-height: 46px;
+  padding: 7px 10px;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 5px;
-  background: linear-gradient(180deg, #19070c, #090306);
-  border-bottom: 1px solid #550011;
-  box-shadow: 0 5px 18px #0008;
+  gap: 6px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
   position: relative;
   z-index: 5;
 }
 
 #viewToolbar button {
   width: auto;
-  min-width: 54px;
-  padding-inline: 9px;
+  min-width: 58px;
+  padding-inline: 10px;
 }
 
 #viewToolbar button.viewActive {
-  color: #fff;
-  border-color: #ff7a00;
-  background: #7b2100;
-  box-shadow: 0 0 10px #ff650066;
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 #viewToolbar .buttonLink {
   display: inline-flex;
   align-items: center;
-  min-height: 26px;
-  padding: 3px 9px;
+  min-height: 32px;
+  padding: 5px 10px;
   color: var(--text-main);
   text-decoration: none;
-  border: 1px solid #640018;
-  border-radius: 2px;
-  background: #29030c;
-  font-size: 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  font-size: 12px;
+}
+
+#viewToolbar .buttonLink:focus-visible,
+#viewToolbar summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 #standaloneConnection {
-  color: #8fc9dd;
-  font-size: 10px;
-  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: 12px;
 }
 
 #viewToolbar label {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  color: var(--text-dim);
-  font-size: 10px;
-  white-space: nowrap;
+  gap: 5px;
+  color: var(--text-main);
+  font-size: 12px;
 }
 
 #viewToolbar input[type="checkbox"] {
-  accent-color: #ff6a00;
+  accent-color: var(--accent);
+}
+
+#viewToolbar select {
+  max-width: 190px;
+  min-width: 0;
+  min-height: 30px;
+  background: var(--panel);
+  color: var(--text-main);
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
 }
 
 .viewToolbarSpacer {
   flex: 1 1 18px;
+}
+
+#viewToolbar .viewSettings {
+  position: relative;
+  font-size: 12px;
+}
+
+#viewToolbar .viewSettings > summary {
+  cursor: pointer;
+  padding: 6px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  color: var(--text-main);
+  background: var(--surface);
+}
+
+#viewToolbar .viewSettingsContent {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  display: grid;
+  gap: 10px;
+  width: min(370px, calc(100vw - 28px));
+  max-height: 65vh;
+  overflow-y: auto;
+  padding: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--panel);
+}
+
+#viewToolbar .viewSettingsContent label {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+#viewToolbar [data-hazard-legend] {
+  margin: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 #viewWorkspace {
@@ -72,7 +129,7 @@
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  background: #030306;
+  background: #edf0f2;
 }
 
 .viewPane {
@@ -80,6 +137,7 @@
   min-height: 0;
   position: relative;
   overflow: hidden;
+  background: #edf0f2;
 }
 
 #pane2d,
@@ -91,8 +149,7 @@
   width: 100%;
   height: 100%;
   display: block;
-  background:
-    radial-gradient(circle at 50% 35%, #16212a 0, #080c12 48%, #020305 100%);
+  background: #edf0f2;
   touch-action: none;
 }
 
@@ -100,13 +157,14 @@
   position: absolute;
   left: 12px;
   bottom: 12px;
-  max-width: min(520px, calc(100% - 24px));
-  padding: 5px 8px;
-  color: #b9d8e6;
-  background: #061018d9;
-  border: 1px solid #235066;
+  max-width: min(560px, calc(100% - 24px));
+  padding: 6px 9px;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid var(--border);
   border-radius: 3px;
-  font-size: 10px;
+  font-size: 12px;
+  line-height: 1.5;
   pointer-events: none;
 }
 
@@ -121,7 +179,7 @@
 
 .view-mode-split #pane2d {
   grid-area: 1 / 1;
-  border-right: 1px solid #633;
+  border-right: 1px solid var(--border);
 }
 
 .view-mode-split #pane3d {
@@ -130,7 +188,7 @@
 
 .standalone3d {
   display: block;
-  background: #020305;
+  background: #edf0f2;
 }
 
 .standalone3d #standalone3dRoot {
@@ -149,10 +207,6 @@
 }
 
 @media (max-width: 980px) {
-  #viewToolbar label {
-    display: none;
-  }
-
   .view-mode-split #viewWorkspace {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: repeat(2, minmax(0, 1fr));
@@ -161,10 +215,29 @@
   .view-mode-split #pane2d {
     grid-area: 1 / 1;
     border-right: 0;
-    border-bottom: 1px solid #633;
+    border-bottom: 1px solid var(--border);
   }
 
   .view-mode-split #pane3d {
     grid-area: 2 / 1;
+  }
+}
+
+@media (max-width: 600px) {
+  #viewToolbar {
+    gap: 5px;
+    padding: 6px;
+  }
+
+  #standaloneConnection {
+    flex-basis: 100%;
+  }
+
+  #viewToolbar .viewSettingsContent {
+    position: fixed;
+    top: 100px;
+    right: 10px;
+    left: 10px;
+    width: auto;
   }
 }

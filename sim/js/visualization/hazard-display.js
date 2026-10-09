@@ -62,19 +62,19 @@ export function sourceOverlayMatches(filter, source) {
 }
 
 export const DISPLAY_METRICS = Object.freeze({
-  density: { label: 'Smoke density', unit: 'index', min: 0, max: 5 },
-  extinction: { label: 'Extinction K', unit: '1/m', min: 0, max: 2 },
-  visibility: { label: 'Visibility', unit: 'm', min: 0, max: 30, reverse: true },
-  co: { label: 'CO', unit: 'ppm', min: 0, max: 1200 },
-  temperature: { label: 'Temperature', unit: '°C', min: 20, max: 200 },
-  heat_flux: { label: 'Heat flux', unit: 'kW/m²', min: 0, max: 10 },
-  layer_depth: { label: 'Layer depth', unit: 'm', min: 0, max: 3 },
-  intensity: { label: 'Fire intensity', unit: '0–1', min: 0, max: 1 },
-  hrr: { label: 'HRR', unit: 'kW', min: 0, max: 2500 },
-  age: { label: 'Fire age', unit: 's', min: 0, max: 300 },
-  spread_front: { label: 'Spread front', unit: '0/1', min: 0, max: 1 },
-  total: { label: 'Composite display index', unit: '0–1', min: 0, max: 1 },
-  source: { label: 'Source', unit: 'category', min: 0, max: 3 }
+  density: { label: '煙濃度', unit: '指標', min: 0, max: 5 },
+  extinction: { label: '消散係数 K', unit: '1/m', min: 0, max: 2 },
+  visibility: { label: '視界距離', unit: 'm', min: 0, max: 30, reverse: true },
+  co: { label: 'CO濃度', unit: 'ppm', min: 0, max: 1200 },
+  temperature: { label: '温度', unit: '°C', min: 20, max: 200 },
+  heat_flux: { label: '熱流束', unit: 'kW/m²', min: 0, max: 10 },
+  layer_depth: { label: '煙層厚さ', unit: 'm', min: 0, max: 3 },
+  intensity: { label: '火災強度', unit: '0–1', min: 0, max: 1 },
+  hrr: { label: '発熱速度 HRR', unit: 'kW', min: 0, max: 2500 },
+  age: { label: '火災経過時間', unit: 's', min: 0, max: 300 },
+  spread_front: { label: '延焼前線', unit: '0/1', min: 0, max: 1 },
+  total: { label: '総合表示指標', unit: '0–1', min: 0, max: 1 },
+  source: { label: 'データ由来', unit: '区分', min: 0, max: 3 }
 });
 export function displayMetricValue(cell = {}, metric, { upper = false, isFront = false } = {}) {
   const fields = { density: upper ? ['upperLayerExtinctionCoefficientM1'] : ['eyeLevelSmokeDensity', 'smokeDensity'],
@@ -104,8 +104,8 @@ export function displayMetricColor(metric, value) {
 }
 export function displayLegend(metric) {
   const spec = DISPLAY_METRICS[metric] || DISPLAY_METRICS.extinction;
-  return metric === 'source' ? 'cyan FDS / gray fallback / purple mixed'
-    : `${spec.label} [${spec.unit}] ${spec.min}–${spec.max} (clipped); ${['density', 'extinction'].includes(metric) ? 'dark = high' : spec.reverse ? 'red = low, blue = high' : 'blue = low, red = high'}`;
+  return metric === 'source' ? '水色=FDS / 灰=簡易モデル / 紫=混在'
+    : `${spec.label} [${spec.unit}] ${spec.min}–${spec.max}（範囲外は端値に丸め）; ${['density', 'extinction'].includes(metric) ? '暗いほど高い' : spec.reverse ? '赤=低 / 青=高' : '青=低 / 赤=高'}`;
 }
 
 /** Normalized glyph strength; monotone display scaling, not a combustion/injury model. */
@@ -130,6 +130,33 @@ export function createFireDisplayData(cell = {}, { metric = 'intensity', isFront
     hrrKw: finiteValue(cell.hrrKw), fireAgeSec: finiteValue(cell.fireAgeSec), ignitionTime: finiteValue(cell.ignitionTime), spreadSourceCell: cell.spreadSourceCell ?? null };
 }
 
+export const INSPECTION_LABELS = Object.freeze({
+  smokeDensity: '煙濃度',
+  eyeLevelSmokeDensity: '目線高さの煙濃度',
+  extinctionCoefficientM1: '消散係数',
+  eyeLevelExtinctionCoefficientM1: '目線高さの消散係数',
+  opticalDensityBase10M1: '減光係数（常用対数）',
+  visibilityM: '視界距離',
+  coPpm: 'CO濃度',
+  upperLayerCoPpm: '上層CO濃度',
+  temperatureC: '温度',
+  smokeTemperatureC: '煙温度',
+  upperLayerTemperatureC: '上層温度',
+  eyeLevelTemperatureC: '目線高さの温度',
+  smokeLayerDepthMeters: '煙層厚さ',
+  smokeLayerInterfaceHeightMeters: '煙層境界高さ',
+  heatFluxKwM2: '熱流束',
+  fireIntensity: '火災強度',
+  hrrKw: '発熱速度 HRR',
+  fireAgeSec: '火災経過時間',
+  ignitionTime: '着火時刻',
+  fireSource: '火災発生源',
+  spreadSourceCell: '延焼元セル',
+  smokeDataSource: '煙データ由来',
+  fireDataSource: '火災データ由来',
+  hazardDataSource: '危険度データ由来'
+});
+
 export const INSPECTION_FIELDS = Object.freeze({ smokeDensity: 'index', eyeLevelSmokeDensity: 'index',
   extinctionCoefficientM1: '1/m', eyeLevelExtinctionCoefficientM1: '1/m', opticalDensityBase10M1: '1/m (base 10)',
   visibilityM: 'm', coPpm: 'ppm', upperLayerCoPpm: 'ppm', temperatureC: '°C', smokeTemperatureC: '°C',
@@ -143,6 +170,6 @@ export function getCellHazardInspection(state, endpoint = {}) {
   const cx = endpoint.cx, cy = endpoint.cy, cell = floor?.grid?.[cy]?.[cx];
   if (!cell) return null;
   return { floorIndex, cx, cy, source: resolveHazardDisplaySource(cell),
-    rows: Object.entries(INSPECTION_FIELDS).map(([key, unit]) => ({ key, label: key, unit,
+    rows: Object.entries(INSPECTION_FIELDS).map(([key, unit]) => ({ key, label: INSPECTION_LABELS[key] || key, unit,
       value: cell[key] ?? (key === 'visibilityM' ? cell.visibilityMeters ?? null : null), source: resolveFieldDisplaySource(cell, key) })) };
 }

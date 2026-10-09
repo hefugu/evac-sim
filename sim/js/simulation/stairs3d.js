@@ -250,7 +250,7 @@ function updateAgent(nextAgents, indexById, agentId, patch) {
  * shared agent array. Consumers may assign the returned array back to state, or
  * use the emitted events to update an existing store in place.
  */
-export function stepStairTraffic(stateInput, linksInput, agentsInput, dtSeconds) {
+export function stepStairTraffic(stateInput, linksInput, agentsInput, dtSeconds, options = {}) {
   const dt = Math.max(0, finiteNumber(dtSeconds, 0));
   const links = (Array.isArray(linksInput) ? linksInput : []).map(normalizeStairLink);
   const state = stateInput || createStairTrafficState(links);
@@ -261,13 +261,82 @@ export function stepStairTraffic(stateInput, linksInput, agentsInput, dtSeconds)
   const started = [];
   const completed = [];
 
+  const capacity = Math.max(1, options.maxOccupancyPerCell ?? 2);
+  const occupancy = new Map();
+  const changeOccupancy = (ep, delta) => {
+    const key = stairEndpointKey3D(ep);
+    occupancy.set(key, Math.max(0, (occupancy.get(key) || 0) + delta));
+  };
+  for (const agent of agents) {
+    if (agent.dead || agent.finished || agent.stairTransition?.status === "in_transit") continue;
+    changeOccupancy({ floorIndex: agent.floor ?? agent.floorIndex,
+      cx: Math.round(agent.x ?? agent.cx), cy: Math.round(agent.y ?? agent.cy) }, 1);
+  }
+
   for (const link of links) {
     const record = ensureTrafficRecord(state, link.id);
     const active = [];
+    const pairedArrivals = new Set();
+    const pairedDepartures = [];
+
+    // A full bidirectional stair can have ready arrivals blocked by its own
+    // departure queue. Exchange each departure with one ready arrival at that
+    // landing, reserving both together so neither capacity is exceeded. Normal
+    // admission is global FIFO; an exchange may bypass the opposite-direction
+    // queue head, while preserving FIFO within each travel direction.
+    if (record.inTransit.length >= link.congestionCapacity) {
+      record.queue = record.queue.filter(request => {
+        const agent = nextAgents[indexById.get(request.agentId)];
+        return agent && !agent.dead && !agent.finished;
+      });
+      while (record.queue.length) {
+        const checkedDirections = new Set();
+        let exchangeIndex = -1, arrival = null;
+        for (let i = 0; i < record.queue.length; i++) {
+          const request = record.queue[i];
+          const landingKey = stairEndpointKey3D(request.from);
+          if (checkedDirections.has(landingKey)) continue;
+          checkedDirections.add(landingKey);
+          const agent = nextAgents[indexById.get(request.agentId)];
+          const agentKey = stairEndpointKey3D({
+            floorIndex: agent.floor ?? agent.floorIndex,
+            cx: Math.round(agent.x ?? agent.cx),
+            cy: Math.round(agent.y ?? agent.cy)
+          });
+          if (agent.stairTransition?.status === "in_transit" || agentKey !== landingKey ||
+              (occupancy.get(landingKey) || 0) !== capacity) continue;
+          arrival = record.inTransit.find(transit => {
+            if (pairedArrivals.has(transit) || !sameEndpoint(transit.to, request.from)) return false;
+            const traveler = nextAgents[indexById.get(transit.agentId)];
+            return traveler && !traveler.dead && !traveler.finished &&
+              finiteNumber(transit.remainingSec, link.travelCostSec) <= dt &&
+              (typeof options.canArrive !== "function" || options.canArrive(transit.to));
+          });
+          if (arrival) {
+            exchangeIndex = i;
+            break;
+          }
+        }
+        if (!arrival) break;
+        const request = record.queue.splice(exchangeIndex, 1)[0];
+        pairedArrivals.add(arrival);
+        pairedDepartures.push(request);
+        changeOccupancy(request.from, -1);
+        changeOccupancy(arrival.to, 1);
+      }
+    }
 
     for (const transit of record.inTransit) {
+      const traveler = nextAgents[indexById.get(transit.agentId)];
+      if (!traveler || traveler.dead || traveler.finished) continue;
       const remainingSec = Math.max(0, finiteNumber(transit.remainingSec, link.travelCostSec) - dt);
-      if (remainingSec <= 0) {
+      const paired = pairedArrivals.has(transit);
+      const landingAvailable = paired || (
+        (occupancy.get(stairEndpointKey3D(transit.to)) || 0) < capacity &&
+        (typeof options.canArrive !== "function" || options.canArrive(transit.to))
+      );
+      if (remainingSec <= 0 && landingAvailable) {
+        if (!paired) changeOccupancy(transit.to, 1);
         const previousAgent = agents[indexById.get(transit.agentId)];
         const restoredState = transit.previousBehaviorState && transit.previousBehaviorState !== "stair_transition"
           ? transit.previousBehaviorState
@@ -306,8 +375,9 @@ export function stepStairTraffic(stateInput, linksInput, agentsInput, dtSeconds)
     }
 
     record.inTransit = active;
-    while (record.queue.length && record.inTransit.length < link.congestionCapacity) {
-      const request = record.queue.shift();
+    while ((pairedDepartures.length || record.queue.length) && record.inTransit.length < link.congestionCapacity) {
+      const paired = pairedDepartures.length > 0;
+      const request = paired ? pairedDepartures.shift() : record.queue.shift();
       if (!indexById.has(request.agentId)) continue;
       const agent = nextAgents[indexById.get(request.agentId)];
       if (agent?.dead || agent?.finished) continue;
@@ -317,6 +387,7 @@ export function stepStairTraffic(stateInput, linksInput, agentsInput, dtSeconds)
         startedAtSec: state.elapsedSec + dt,
         previousBehaviorState: agent?.behaviorState || "normal"
       };
+      if (!paired) changeOccupancy(request.from, -1);
       record.inTransit.push(transit);
       updateAgent(nextAgents, indexById, request.agentId, {
         behaviorState: "stair_transition",

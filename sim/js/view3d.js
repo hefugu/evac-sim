@@ -42,7 +42,7 @@ export function init3DView() {
     if (!status) return;
     const loadedFloors = (state.map.floorStates || []).filter(floor => floor?.baseImage || floor?.grid?.some(row => row?.some(cell => cell?.walkable))).length;
     status.textContent = loadedFloors
-      ? `${loadedFloors}フロア / agent ${state.agents.length} / ドラッグ: 回転 / Shift+ドラッグ: 移動 / ホイール: ズーム`
+      ? `${loadedFloors}フロア / 避難者 ${state.agents.length}人 / ドラッグ: 回転 / Shift+ドラッグ: 移動 / ホイール: ズーム`
       : "2D側でマップを読み込むと、同じ状態をここへ表示します。";
   }
 

@@ -19,7 +19,7 @@ function decodeImageFile(file) {
     };
     image.onerror = () => {
       URL.revokeObjectURL(url);
-      reject(new Error("sample image decode failed"));
+      reject(new Error("サンプル画像を読み込めませんでした"));
     };
     image.src = url;
   });
@@ -109,7 +109,7 @@ async function loadStandaloneSample() {
     renderer.resetCamera();
     if (status) status.textContent = "3Fサンプル表示 / 2Dページを開くとライブ状態へ自動同期します。";
   } catch (error) {
-    console.warn("Standalone 3F sample could not be loaded.", error);
+    console.warn("3Fサンプルを読み込めませんでした。", error);
     if (status) status.textContent = `3Fサンプル読込失敗: ${error instanceof Error ? error.message : error}`;
   }
 }
@@ -119,7 +119,7 @@ const receiver = create3DStateReceiver(state, {
     getInspectionPanel(state).refresh();
     if (connection) connection.textContent = "2D状態と同期中";
     if (status && message.type === "dynamic") {
-      status.textContent = `ライブ表示 / ${Number(message.simTime || 0).toFixed(1)}s / agent ${message.agents?.length || 0}`;
+      status.textContent = `ライブ表示 / ${Number(message.simTime || 0).toFixed(1)}s / 避難者 ${message.agents?.length || 0}人`;
     }
   }
 });

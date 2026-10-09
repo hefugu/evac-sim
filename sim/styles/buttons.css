@@ -1,70 +1,16 @@
-.modeButtons,
-.simButtons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 4px;
-}
+ .modeButtons, .simButtons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+button { cursor: pointer; border-radius: 3px; border: 1px solid var(--border-strong); background: var(--panel); color: var(--text-main); padding: 7px 10px; font: inherit; font-size: 12px; line-height: 1.4; box-shadow: none; }
+button:hover { border-color: var(--accent); background: var(--surface-strong); }
+button:disabled { cursor: default; color: var(--text-dim); background: var(--surface); }
+button.modeActive, button.viewActive { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+button.danger { border-color: var(--danger); color: var(--danger); }
+.primaryActions #btnStart { flex: 1 1 100%; min-height: 38px; font-size: 13px; font-weight: 600; background: var(--accent); border-color: var(--accent); color: #fff; }
+.primaryActions #btnStart:hover { background: #254c74; }
+.primaryActions #btnStop, .primaryActions #btnReset, .secondaryActions button { flex: 1 1 calc(50% - 6px); }
+/* Legacy classes remain harmless when older presets or code refer to them. */
+.pulse { animation: none; }
 
-button {
-  cursor: pointer;
-  border-radius: 3px;
-  border: 1px solid #550011;
-  background: #190008;
-  color: var(--text-main);
-  padding: 4px 6px;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  transition: all 0.12s ease-out;
-  position: relative;
-  overflow: hidden;
-}
-
-button::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(120deg, transparent, #ff003022, transparent);
-  transform: translateX(-120%);
-  transition: transform 0.25s linear;
-}
-
-button:hover::before {
-  transform: translateX(120%);
-}
-
-button:hover {
-  border-color: var(--accent);
-  box-shadow: 0 0 12px #ff002044;
-  background: #26000c;
-}
-
-button.modeActive {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  box-shadow: 0 0 10px #ff003055;
-}
-
-button.danger {
-  border-color: var(--accent-warn);
-  color: var(--accent-warn);
-}
-
-button.danger.modeActive {
-  background: #661a00;
-  color: #ffe0c0;
-}
-
-@keyframes pulseWarn {
-  0%, 100% {
-    box-shadow: 0 0 6px #ff660033;
-  }
-  50% {
-    box-shadow: 0 0 16px #ff6600aa;
-  }
-}
-
-.pulse {
-  animation: pulseWarn 1.2s infinite;
-}
+.runControls { display: flex; gap: 6px; }
+.runControls.primaryActions #btnStart { flex: none; min-height: 34px; min-width: 78px; }
+.runControls.primaryActions #btnStop, .runControls.primaryActions #btnReset { flex: none; }
+.toolbarDivider { height: 24px; border-left: 1px solid var(--border); margin: 0 3px; }
