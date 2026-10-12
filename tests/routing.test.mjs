@@ -9,7 +9,10 @@ import {
   isFireAvoidanceBlocked,
   extendPotentialIntoFireAvoidanceZone,
   chooseFireSafeExitField,
-  routeChoiceForExit
+  routeChoiceForExit,
+  buildNearestFireDistanceFields,
+  fireDistanceAt,
+  moveApproachesFire
 } from "../sim/js/simulation/routing.js";
 
 test("fire avoidance converts a metre radius separately on each floor", () => {
