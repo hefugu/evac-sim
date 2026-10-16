@@ -4,7 +4,11 @@
   "type": "module",
   "scripts": {
     "test": "node --test tests/3d-modules.test.mjs",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "test:benchmarks": "node --test benchmarks/*.test.mjs",
+    "bench": "node benchmarks/run.mjs",
+    "bench:smoke": "node benchmarks/run.mjs --smoke",
+    "bench:verify": "node benchmarks/verify.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1"
