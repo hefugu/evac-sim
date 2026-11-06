@@ -3432,10 +3432,44 @@ export function initSimulation() {
         return;
       }
 
-      // A missing safe route must not silently fall back to a hazardous exit.
+      // A missing safe exit must not restore a hazardous exit field.
+      // If the person is already beside flames, they can still move *away*
+      // from the fire while remaining uncompleted (not a successful evacuation).
       const potentialField = a.potentialField;
       if (!potentialField) {
         a.behaviorState = "no_safe_route";
+        const currentDistance = fireDistanceAt(fireDistanceFields, floor, cx, cy, gridW);
+        let escapeStep = null;
+        if (Number.isFinite(currentDistance)) {
+          for (const d of dirs8) {
+            const nx = cx + d.dx, ny = cy + d.dy;
+            if (!isAgentTraversableCell(floor, nx, ny)) continue;
+            if (!canWalkSegment(cx, cy, nx, ny,
+              (x, y) => isAgentTraversableCell(floor, x, y))) continue;
+            const nextDistance = fireDistanceAt(fireDistanceFields, floor, nx, ny, gridW);
+            if (!Number.isFinite(nextDistance) || nextDistance <= currentDistance + 0.05) continue;
+            const risk = routeRiskAt(floor, nx, ny);
+            if (risk.blocked) continue;
+            const score = (nextDistance - currentDistance) * 4 - risk.penalty * 0.015;
+            if (!escapeStep || score > escapeStep.score) {
+              escapeStep = { nx, ny, risk, score };
+            }
+          }
+        }
+        if (escapeStep) {
+          const dx = escapeStep.nx - a.x, dy = escapeStep.ny - a.y;
+          const length = Math.hypot(dx, dy);
+          if (length > 1e-9) {
+            a._desiredDirection = { x: dx / length, y: dy / length };
+            a._routeRiskAllowance = Math.max(
+              routeRiskAt(floor, cx, cy).penalty,
+              escapeStep.risk.penalty
+            );
+            a._socialMove = true;
+            socialMovementStart.set(a.id, { x: a.x, y: a.y, floor, cx, cy });
+            return;
+          }
+        }
         a.vxMps = 0;
         a.vyMps = 0;
         a.stuckTime = (a.stuckTime || 0) + dt;
