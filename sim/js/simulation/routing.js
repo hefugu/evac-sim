@@ -49,6 +49,27 @@ export function isFireAvoidanceBlocked(masks, floor, cx, cy, gridWidth) {
   return !!masks?.[floor]?.[index];
 }
 
+// A closed fire door may be opened by evacuees. Only an explicitly impassable
+// door is excluded from the pedestrian route graph.
+export function isDoorPassableForEvacuation(cell) {
+  if (!cell?.door) return true;
+  const state = String(cell.doorState || "").toLowerCase();
+  return cell.doorPassable !== false &&
+    state !== "blocked" && state !== "locked" && state !== "sealed";
+}
+
+// Check the actual exit cell, not only the potential field leading toward it.
+// Use the current hazard sample for completion checks (even between replans).
+export function isEvacuationExitUsable(exit, floors, masks, gridWidth, routeRiskAt = null) {
+  const { floor, cx, cy } = exit || {};
+  if (![floor, cx, cy].every(Number.isInteger) || floor < 0 || cx < 0 || cy < 0) return false;
+  const cell = floors?.[floor]?.grid?.[cy]?.[cx];
+  if (!cell?.walkable || cell.fire || !isDoorPassableForEvacuation(cell)) return false;
+  if (isFireAvoidanceBlocked(masks, floor, cx, cy, gridWidth)) return false;
+  const risk = typeof routeRiskAt === "function" ? routeRiskAt(floor, cx, cy) : null;
+  return !risk?.blocked && !risk?.hard;
+}
+
 export function buildNearestFireDistanceFields(
   floorStates,
   gridWidth,
@@ -252,11 +273,15 @@ export function chooseFireSafeExitField(
   fallbackFields,
   floor,
   cx,
-  cy
+  cy,
+  { allowUnsafeFallback = true } = {}
 ) {
   const safe = bestFieldChoice(safeFields, floor, cx, cy);
   if (safe.idx >= 0 && Number.isFinite(safe.score)) {
     return { ...safe, usesFireFallback: false };
+  }
+  if (!allowUnsafeFallback) {
+    return { idx: -1, field: null, score: Infinity, usesFireFallback: false };
   }
   const fallback = bestFieldChoice(fallbackFields, floor, cx, cy);
   return { ...fallback, usesFireFallback: true };
@@ -268,7 +293,8 @@ export function routeChoiceForExit(
   fallbackFields,
   floor,
   cx,
-  cy
+  cy,
+  { allowUnsafeFallback = true } = {}
 ) {
   const safeField = safeFields?.[exitIndex] || null;
   const safeScore = finiteCell(safeField?.[floor]?.[cy]?.[cx]);
@@ -281,6 +307,9 @@ export function routeChoiceForExit(
     };
   }
 
+  if (!allowUnsafeFallback) {
+    return { idx: -1, field: null, score: Infinity, usesFireFallback: false };
+  }
   const fallbackField = fallbackFields?.[exitIndex] || null;
   const fallbackScore = finiteCell(fallbackField?.[floor]?.[cy]?.[cx]);
   return {

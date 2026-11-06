@@ -191,10 +191,11 @@ test("a crowd uses both connected stairways and finishes on the exit floor", asy
 });
 
 
-test("an agent already beside a flame can leave its blocked origin cell", async ({ page }) => {
+test("an agent already beside a flame can escape toward a safe exit", async ({ page }) => {
   await configureAgent(page);
   await marker(page, "modeSpawn", 2, 2);
-  await marker(page, "modeExit", 2, 9);
+  // y=9 is inside the 4m danger buffer; y=10 is just outside it.
+  await marker(page, "modeExit", 2, 10);
   await marker(page, "modeFire", 3, 2);
   await page.evaluate(() => { Math.random = () => 0.5; });
   await page.locator("#btnStart").click();
@@ -210,6 +211,22 @@ test("an agent already beside a flame can leave its blocked origin cell", async 
   expect(result.y).toBeGreaterThan(2.5);
   await page.clock.runFor(18_000);
   expect(await page.evaluate(async () => (await import("/sim/js/state.js")).state.agents[0].finished)).toBe(true);
+});
+
+
+test("an exit inside the fire buffer is not counted as successful evacuation", async ({ page }) => {
+  await configureAgent(page);
+  await marker(page, "modeSpawn", 2, 2);
+  await marker(page, "modeExit", 2, 9);
+  await marker(page, "modeFire", 3, 2);
+  await page.evaluate(() => { Math.random = () => 0.5; });
+  await page.locator("#btnStart").click();
+  await page.clock.runFor(2_000);
+  const agent = await page.evaluate(async () => (await import("/sim/js/state.js")).state.agents[0]);
+  expect(agent.targetExitIndex).toBe(-1);
+  expect(agent.routeUsesFireFallback).toBe(false);
+  expect(agent.finished).toBe(false);
+  expect(Math.hypot(agent.x - 3, agent.y - 2)).toBeGreaterThan(1.1);
 });
 
 test("fire scenario settings survive presets, control source growth and appear in CSV", async ({ page }) => {
