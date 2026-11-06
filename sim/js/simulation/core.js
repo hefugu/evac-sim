@@ -9,6 +9,8 @@ import { computePotentialFieldFromSeedsModule } from "./potential.js";
 import {
   buildFireAvoidanceMasks,
   isFireAvoidanceBlocked,
+  isDoorPassableForEvacuation,
+  isEvacuationExitUsable,
   buildNearestFireDistanceFields,
   fireDistanceAt,
   extendPotentialIntoFireAvoidanceZone,
@@ -1042,22 +1044,24 @@ export function initSimulation() {
     );
   }
 
-  function isInsideExitCaptureRegion(agent, floor) {
+  function isInsideExitCaptureRegion(agent, floor, exitAllowed = () => true) {
     const exitsOnFloor = exitPointsByFloor[floor] || [];
     if (!exitsOnFloor.length) return false;
     const halfExtent = exitCaptureHalfExtentCells(agent, floor);
     return exitsOnFloor.some(exit =>
+      exitAllowed(exit) &&
       pointInsideExpandedExitCell(agent.x, agent.y, exit, halfExtent) &&
       canWalkSegment(agent.x, agent.y, exit.cx, exit.cy,
         (x, y) => isAgentTraversableCell(floor, x, y))
     );
   }
 
-  function crossedExitCaptureRegion(agent, floor, fromX, fromY, toX, toY) {
+  function crossedExitCaptureRegion(agent, floor, fromX, fromY, toX, toY, exitAllowed = () => true) {
     const exitsOnFloor = exitPointsByFloor[floor] || [];
     if (!exitsOnFloor.length) return false;
     const halfExtent = exitCaptureHalfExtentCells(agent, floor);
     return exitsOnFloor.some(exit =>
+      exitAllowed(exit) &&
       segmentIntersectsExpandedExitCell(
         fromX, fromY, toX, toY, exit, halfExtent
       ) && canWalkSegment(toX, toY, exit.cx, exit.cy,
@@ -1079,7 +1083,7 @@ export function initSimulation() {
     if (floor < 0 || floor >= floorStates.length) return false;
     if (cx < 0 || cy < 0 || cx >= gridW || cy >= gridH) return false;
     const cell = floorStates[floor]?.grid?.[cy]?.[cx];
-    return !!(cell && cell.walkable && !cell.fire);
+    return !!(cell && cell.walkable && !cell.fire && isDoorPassableForEvacuation(cell));
   }
 
   function applyFloorSetup(preserve = true) {
@@ -2252,7 +2256,7 @@ export function initSimulation() {
 
     multiFireSafePotentialByExit = allExitPoints.map(ex => {
       // An exit inside the active fire buffer is never a normal safe choice.
-      if (isFireAvoidanceBlocked(fireAvoidanceMasks, ex.floor, ex.cx, ex.cy, gridW)) {
+      if (!isEvacuationExitUsable(ex, floorStates, fireAvoidanceMasks, gridW, routeRisk)) {
         return new Array(floorCount).fill(null).map(() =>
           new Array(gridH).fill(null).map(() => new Array(gridW).fill(Infinity))
         );
@@ -2314,7 +2318,8 @@ export function initSimulation() {
       multiPotentialByExit,
       agent.floor,
       agent.cx,
-      agent.cy
+      agent.cy,
+      { allowUnsafeFallback: false }
     );
   }
 
@@ -3200,9 +3205,10 @@ export function initSimulation() {
                 multiPotentialByExit,
                 f,
                 cx,
-                cy
+                cy,
+                { allowUnsafeFallback: false }
               )
-            : { idx: -1, field: null, score: Infinity, usesFireFallback: true };
+            : { idx: -1, field: null, score: Infinity, usesFireFallback: false };
         const localRouteRisk = routeRiskAt(f, cx, cy);
         const switchMargin = a.type === "teacher"
           ? 0.5
@@ -3250,6 +3256,10 @@ export function initSimulation() {
           // Even when exit hysteresis keeps the target, never retain an old field.
           a.potentialField = currentChoice.field;
           a.routeUsesFireFallback = !!currentChoice.usesFireFallback;
+          if (currentChoice.idx < 0) {
+            a.targetExitIndex = -1;
+            a.targetExit = -1;
+          }
         }
         if (choice.idx === a.targetExitIndex && choice.field) {
           // Refresh the field after fire spread even when the chosen exit stays the same.
@@ -3422,10 +3432,19 @@ export function initSimulation() {
         return;
       }
 
-      const potentialField = a.potentialField || multiCombinedPotential;
-      if (!potentialField) return;
+      // A missing safe route must not silently fall back to a hazardous exit.
+      const potentialField = a.potentialField;
+      if (!potentialField) {
+        a.behaviorState = "no_safe_route";
+        a.vxMps = 0;
+        a.vyMps = 0;
+        a.stuckTime = (a.stuckTime || 0) + dt;
+        return;
+      }
       let curPot = potentialField?.[floor]?.[cy]?.[cx];
-      if (isInsideExitCaptureRegion(a, floor) && isAgentTraversableCell(floor, cx, cy)) {
+      if (isInsideExitCaptureRegion(a, floor,
+        exit => isEvacuationExitUsable(exit, floorStates, fireAvoidanceMasks, gridW, routeRiskAt)
+      ) && isAgentTraversableCell(floor, cx, cy)) {
         a.finished = true;
         a.finishTime = simTime;
         a.behaviorState = "evacuated";
@@ -3763,7 +3782,7 @@ export function initSimulation() {
       cellSizeMetersForFloor: cellMetersForFloor,
       isWalkable: (floor, cx, cy) => {
         const cell = floorStates[floor]?.grid?.[cy]?.[cx];
-        return !!(cell && cell.walkable);
+        return !!(cell && cell.walkable && !cell.fire && isDoorPassableForEvacuation(cell));
       },
       isPositionAllowed: (floor, cx, cy, agent) => {
         if (!isAgentTraversableCell(floor, cx, cy)) return false;
@@ -3801,7 +3820,9 @@ export function initSimulation() {
       if (!previous) return;
       const nowFloor = clamp(Math.floor(a.floor ?? previous.floor), 0, floorCount - 1);
       if (nowFloor !== previous.floor) return;
-      if (crossedExitCaptureRegion(a, nowFloor, previous.x, previous.y, a.x, a.y)) {
+      if (crossedExitCaptureRegion(a, nowFloor, previous.x, previous.y, a.x, a.y,
+        exit => isEvacuationExitUsable(exit, floorStates, fireAvoidanceMasks, gridW, routeRiskAt)
+      )) {
         a.finished = true;
         a.finishTime = simTime;
         a.behaviorState = "evacuated";
