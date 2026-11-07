@@ -39,3 +39,6 @@ Thumbs.db
 .patch_backups/
 test-results/
 playwright-report/
+
+# 大容量の生ベンチマーク出力。採用した基準だけ baselines/ に保存する。
+benchmarks/results/

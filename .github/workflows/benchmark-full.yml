@@ -1,0 +1,43 @@
+name: Manual benchmark
+on:
+  workflow_dispatch:
+    inputs:
+      scenarios:
+        description: 'シナリオ（all または B01,B08）'
+        default: 'all'
+      populations:
+        description: '人数（100,400,1000）'
+        default: '100,400,1000'
+      repeats:
+        description: '反復回数'
+        default: '3'
+      seconds:
+        description: '観測上限（シミュレーション秒）'
+        default: '60'
+permissions:
+  contents: read
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      BENCH_SCENARIOS: ${{ inputs.scenarios }}
+      BENCH_POPULATIONS: ${{ inputs.populations }}
+      BENCH_REPEATS: ${{ inputs.repeats }}
+      BENCH_SECONDS: ${{ inputs.seconds }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - name: Run controlled benchmark
+        run: npm run bench -- --scenarios "$BENCH_SCENARIOS" --populations "$BENCH_POPULATIONS" --repeats "$BENCH_REPEATS" --seconds "$BENCH_SECONDS"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-full
+          path: benchmarks/results/
+          retention-days: 14
